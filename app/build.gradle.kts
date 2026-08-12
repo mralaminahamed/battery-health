@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.myapplication"
+    namespace = "com.mralaminahamed.batteryhealth"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.example.myapplication"
+        applicationId = "com.mralaminahamed.batteryhealth"
         minSdk = 24
         targetSdk = 37
         versionCode = 1

@@ -1,4 +1,4 @@
-package com.example.myapplication
+package com.mralaminahamed.batteryhealth
 
 import org.junit.Test
 

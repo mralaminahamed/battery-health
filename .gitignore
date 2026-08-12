@@ -14,5 +14,7 @@
 .cxx
 local.properties
 
+.claude
 .idea
 .remember
+/.superpowers

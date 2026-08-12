@@ -1,4 +1,4 @@
-package com.example.myapplication.ui.theme
+package com.mralaminahamed.batteryhealth.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
