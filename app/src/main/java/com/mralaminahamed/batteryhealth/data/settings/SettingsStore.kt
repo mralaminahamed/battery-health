@@ -1,6 +1,7 @@
 package com.mralaminahamed.batteryhealth.data.settings
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -8,6 +9,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,15 +19,18 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 @Singleton
 class SettingsStore @Inject constructor(private val context: Context) {
 
+    // distinctUntilChanged because both flows derive from the same underlying
+    // dataStore.data: writing either key would otherwise re-emit an unchanged value on the
+    // other, needlessly re-running the design-capacity lookup downstream.
     val designCapacityOverrideMah: Flow<Int?> =
-        context.dataStore.data.map { it[DESIGN_CAPACITY_OVERRIDE] }
+        context.dataStore.data.map { it[DESIGN_CAPACITY_OVERRIDE] }.distinctUntilChanged()
 
     /**
      * The charge recorder is opt-in. A battery app that installs a permanent
      * notification and continuous wakeups without being asked undermines its premise.
      */
     val recorderEnabled: Flow<Boolean> =
-        context.dataStore.data.map { it[RECORDER_ENABLED] ?: false }
+        context.dataStore.data.map { it[RECORDER_ENABLED] ?: false }.distinctUntilChanged()
 
     suspend fun setDesignCapacityOverride(mah: Int?) {
         context.dataStore.edit { prefs ->
@@ -35,6 +40,16 @@ class SettingsStore @Inject constructor(private val context: Context) {
 
     suspend fun setRecorderEnabled(enabled: Boolean) {
         context.dataStore.edit { it[RECORDER_ENABLED] = enabled }
+    }
+
+    /**
+     * Resets every key. Exists only so the instrumented test can be hermetic: DataStore is
+     * reached through a fixed-name Context delegate, so a test has no separate file to
+     * write and must clean up after itself or leave the user's real settings altered.
+     */
+    @VisibleForTesting
+    suspend fun clearForTesting() {
+        context.dataStore.edit { it.clear() }
     }
 
     private companion object {
