@@ -7,7 +7,6 @@ import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
 import com.mralaminahamed.batteryhealth.domain.HealthReport
 import com.mralaminahamed.batteryhealth.domain.Reading
-import com.mralaminahamed.batteryhealth.domain.SessionType
 import com.mralaminahamed.batteryhealth.domain.Source
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -50,12 +49,16 @@ class BatteryRepository @Inject constructor(
     }
 
     fun measuredHealth(): Flow<Reading<HealthReport>> = combine(
-        sessionDao.observeCompletedSessions(limit = SESSION_WINDOW),
+        // Filtered to charge sessions in SQL, not after the LIMIT: the window must be
+        // spent on rows that can actually qualify. A recency window across both session
+        // types burns half its rows on discharges before Kotlin ever sees them, which can
+        // push genuinely qualifying charges outside the window forever for a user whose
+        // recent charges are frequent top-ups.
+        sessionDao.observeCompletedSessionsOfType(SESSION_TYPE_CHARGE, limit = SESSION_WINDOW),
         designCapacity.designCapacityMah,
     ) { sessions, designMah ->
         val observations = sessions
             .mapNotNull { it.toDomain() }
-            .filter { it.type == SessionType.Charge }
             .map { it.toObservation() }
         estimator.estimate(observations, designMah)
     }

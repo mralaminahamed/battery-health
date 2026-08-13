@@ -52,6 +52,9 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE endedAtMs IS NOT NULL AND type = :type ORDER BY startedAtMs DESC LIMIT :limit")
     suspend fun completedSessionsOfType(type: String, limit: Int): List<SessionEntity>
 
+    @Query("SELECT * FROM sessions WHERE endedAtMs IS NOT NULL AND type = :type ORDER BY startedAtMs DESC LIMIT :limit")
+    fun observeCompletedSessionsOfType(type: String, limit: Int): Flow<List<SessionEntity>>
+
     @Query("DELETE FROM sessions WHERE endedAtMs IS NOT NULL AND endedAtMs < :cutoffMs")
     suspend fun deleteOlderThan(cutoffMs: Long): Int
 }
