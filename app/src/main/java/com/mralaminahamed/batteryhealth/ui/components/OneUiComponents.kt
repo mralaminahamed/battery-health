@@ -84,6 +84,20 @@ fun KeyValueRow(
     }
 }
 
+/**
+ * The right-hand value of a [KeyValueRow]. Lifted out of the individual screens once a
+ * third one needed the same rendering: a titleMedium numeral in the primary text color.
+ */
+@Composable
+fun Value(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleMedium,
+        color = LocalOneUiColors.current.textPrimary,
+        modifier = modifier,
+    )
+}
+
 @Composable
 fun BigMetric(
     value: String,

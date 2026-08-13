@@ -22,6 +22,7 @@ import com.mralaminahamed.batteryhealth.ui.components.KeyValueRow
 import com.mralaminahamed.batteryhealth.ui.components.OneUiCard
 import com.mralaminahamed.batteryhealth.ui.components.ReadingSlot
 import com.mralaminahamed.batteryhealth.ui.components.SectionHeader
+import com.mralaminahamed.batteryhealth.ui.components.Value
 import com.mralaminahamed.batteryhealth.ui.format.Formatters
 import com.mralaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 
@@ -124,13 +125,4 @@ fun LiveContent(snapshot: BatterySnapshot?, modifier: Modifier = Modifier) {
             }
         }
     }
-}
-
-@Composable
-private fun Value(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleMedium,
-        color = LocalOneUiColors.current.textPrimary,
-    )
 }

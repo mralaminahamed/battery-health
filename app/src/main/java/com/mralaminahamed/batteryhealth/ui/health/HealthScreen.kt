@@ -33,6 +33,7 @@ import com.mralaminahamed.batteryhealth.ui.components.OneUiCard
 import com.mralaminahamed.batteryhealth.ui.components.ProgressTrack
 import com.mralaminahamed.batteryhealth.ui.components.ReadingSlot
 import com.mralaminahamed.batteryhealth.ui.components.SectionHeader
+import com.mralaminahamed.batteryhealth.ui.components.Value
 import com.mralaminahamed.batteryhealth.ui.format.Formatters
 import com.mralaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 import com.mralaminahamed.batteryhealth.data.repo.HealthEstimator
@@ -214,14 +215,5 @@ private fun SourceChip(source: Source) {
             .clip(RoundedCornerShape(999.dp))
             .background(colors.divider)
             .padding(horizontal = 8.dp, vertical = 3.dp),
-    )
-}
-
-@Composable
-private fun Value(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleMedium,
-        color = LocalOneUiColors.current.textPrimary,
     )
 }
