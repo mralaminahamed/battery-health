@@ -13,7 +13,7 @@ import javax.inject.Singleton
 @Singleton
 class BatteryManagerSource @Inject constructor(
     private val batteryManager: BatteryManager,
-    private val capabilities: Set<BatteryProperty>,
+    private val capabilities: @JvmSuppressWildcards Set<BatteryProperty>,
 ) {
     fun chargeCounterUah(): Reading<Long> = read(BatteryProperty.ChargeCounter) { it.toLong() }
 
