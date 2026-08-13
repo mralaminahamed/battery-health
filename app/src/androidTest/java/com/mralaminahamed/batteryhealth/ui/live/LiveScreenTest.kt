@@ -1,9 +1,9 @@
 package com.mralaminahamed.batteryhealth.ui.live
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
@@ -57,11 +57,12 @@ class LiveScreenTest {
         }
         // Wattage needs both volts and amps. Without current it must not fall back to 0.
         compose.onNodeWithText("0.00").assertDoesNotExist()
-        // Two rows are legitimately Unsupported here (the derived wattage, and the raw
-        // current reading it depends on), so both correctly render the same reason text.
-        // onFirst rather than onNodeWithText: the assertion is that the reason is shown
-        // somewhere, not that it is the only occurrence of that string on screen.
-        compose.onAllNodesWithText("Not available on this device").onFirst().assertIsDisplayed()
+        // Two rows are legitimately Unsupported here: the raw current reading, and the
+        // derived wattage that propagates its absence (BatterySnapshot.milliwatts returns
+        // currentUa itself when currentUa is not Available). Both must independently show
+        // the reason rather than a numeral, so the count is asserted exactly, not just
+        // that the text exists somewhere -- a regression in either row alone must fail.
+        compose.onAllNodesWithText("Not available on this device").assertCountEquals(2)
     }
 
     @Test
