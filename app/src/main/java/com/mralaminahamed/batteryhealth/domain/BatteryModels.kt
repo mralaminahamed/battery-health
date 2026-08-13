@@ -1,0 +1,104 @@
+package com.mralaminahamed.batteryhealth.domain
+
+enum class SessionType { Charge, Discharge }
+
+enum class CapacityMethod { Counter, Coulomb }
+
+enum class ChargeState { Charging, Discharging, Full, NotCharging, Unknown }
+
+enum class PlugType { None, Ac, Usb, Wireless, Dock }
+
+enum class HealthBand {
+    Good, Fair, Poor;
+
+    companion object {
+        fun of(percent: Int): HealthBand = when {
+            percent >= 80 -> Good
+            percent >= 65 -> Fair
+            else -> Poor
+        }
+    }
+}
+
+/** One instant of battery state, every field independently available or not. */
+data class BatterySnapshot(
+    val levelPct: Reading<Int>,
+    val chargeState: Reading<ChargeState>,
+    val plugType: Reading<PlugType>,
+    val voltageMv: Reading<Int>,
+    val currentUa: Reading<Int>,
+    val temperatureDeciC: Reading<Int>,
+    val technology: Reading<String>,
+    val chargeCounterUah: Reading<Long>,
+    val cycleCount: Reading<Int>,
+    val stateOfHealthPct: Reading<Int>,
+    val firstUsageDateEpochDay: Reading<Long>,
+    val manufacturingDateEpochDay: Reading<Long>,
+    val chargeTimeRemainingMs: Reading<Long>,
+) {
+    /**
+     * Instantaneous power in milliwatts, derived from voltage (mV) and current (µA).
+     *
+     * Absent inputs propagate their own reason rather than collapsing to Unsupported:
+     * a caller must be able to tell "this device cannot report power" from "granting
+     * Shizuku would report it". Provenance is the least direct of the two inputs, so a
+     * derived number never claims to be more directly measured than its weakest input.
+     */
+    val milliwatts: Reading<Int>
+        get() {
+            if (voltageMv !is Reading.Available) return voltageMv
+            if (currentUa !is Reading.Available) return currentUa
+            val milliwatts = (voltageMv.value.toLong() * currentUa.value / 1_000_000L).toInt()
+            return Reading.Available(milliwatts, leastDirectOf(voltageMv.source, currentUa.source))
+        }
+}
+
+/**
+ * Provenance of a value derived from two readings. Measured is the least direct claim
+ * (the app inferred it), then Privileged (read through a shell), then Framework (read
+ * straight from the platform).
+ */
+private fun leastDirectOf(first: Source, second: Source): Source = when {
+    first == Source.Measured || second == Source.Measured -> Source.Measured
+    first == Source.Privileged || second == Source.Privileged -> Source.Privileged
+    else -> Source.Framework
+}
+
+data class HealthReport(
+    val healthPct: Int,
+    val measuredFullUah: Long,
+    val designCapacityMah: Int,
+    val method: CapacityMethod,
+    val sessionsUsed: Int,
+) {
+    val band: HealthBand get() = HealthBand.of(healthPct)
+    val measuredFullMah: Int get() = (measuredFullUah / 1000L).toInt()
+}
+
+/** A completed charge or discharge session as stored and displayed. */
+data class ChargeSession(
+    val id: Long,
+    val type: SessionType,
+    val startedAtMs: Long,
+    val endedAtMs: Long,
+    val startLevelPct: Int,
+    val endLevelPct: Int,
+    val startCounterUah: Long?,
+    val endCounterUah: Long?,
+    val peakTempDeciC: Int?,
+    val avgMilliwatts: Int?,
+    val screenOnMs: Long,
+    /** Integrated current over the session, in uAh; null until a later task populates it. */
+    val coulombUah: Long? = null,
+) {
+    val durationMs: Long get() = endedAtMs - startedAtMs
+    val deltaLevelPct: Int get() = endLevelPct - startLevelPct
+}
+
+/** The estimator's input: one session reduced to what the capacity math needs. */
+data class CapacityObservation(
+    val sessionId: Long,
+    val deltaLevelPct: Int,
+    val counterDeltaUah: Long?,
+    val coulombUah: Long?,
+)

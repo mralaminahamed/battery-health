@@ -2,4 +2,14 @@
 <resources>
 
     <style name="Theme.BatteryHealth" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      The splash keeps the brand field in both light and dark rather than following the
+      system, so the first frame is always the same recognisable blue.
+    -->
+    <style name="Theme.BatteryHealth.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/brand_blue</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.BatteryHealth</item>
+    </style>
 </resources>
