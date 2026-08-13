@@ -1,5 +1,6 @@
 package com.mralaminahamed.batteryhealth.ui.health
 
+import com.mralaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
 import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
 import com.mralaminahamed.batteryhealth.domain.HealthReport
 import com.mralaminahamed.batteryhealth.domain.Reading
@@ -20,6 +21,13 @@ data class HealthUiState(
     val recorderStartFailed: Boolean = false,
     /** True once the user has denied POST_NOTIFICATIONS (API 33+) for this session. */
     val notificationsDenied: Boolean = false,
+    /**
+     * The design capacity `HealthEstimator` is actually measuring against, and whether
+     * that came from the model table or the user's override. Defaults to
+     * [EffectiveDesignCapacity.None] only as the cold-start placeholder before the real
+     * flow first emits -- production always replaces it immediately.
+     */
+    val designCapacity: EffectiveDesignCapacity = EffectiveDesignCapacity.None,
 ) {
     /**
      * A value the platform reports directly beats one this app inferred, but beyond

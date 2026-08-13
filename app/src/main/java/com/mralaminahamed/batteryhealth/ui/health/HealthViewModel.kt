@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mralaminahamed.batteryhealth.data.repo.BatteryRepository
+import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.sampling.ChargeRecorderService
@@ -22,6 +23,7 @@ import javax.inject.Inject
 class HealthViewModel @Inject constructor(
     repository: BatteryRepository,
     private val settings: SettingsStore,
+    designCapacity: DesignCapacityProvider,
     // @ApplicationContext, explicitly: lint's StaticFieldLeak check flags any bare
     // Context field on a long-lived class like a ViewModel, since it can't tell
     // whether an injected Context is Activity- or Application-scoped just from the
@@ -47,7 +49,12 @@ class HealthViewModel @Inject constructor(
             recorderStartFailed,
             notificationsDenied,
         ) { snapshot, measured, enabled, startFailed, notifDenied ->
+            // combine() has no six-flow overload, so the design-capacity flow is joined
+            // separately below rather than folded into this one -- not because it's less
+            // important, only because the five-arg form is what the library provides.
             HealthUiState(snapshot, measured, enabled, startFailed, notifDenied)
+        }.combine(designCapacity.effective) { partial, capacity ->
+            partial.copy(designCapacity = capacity)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -81,5 +88,18 @@ class HealthViewModel @Inject constructor(
     /** Called with the result of requesting POST_NOTIFICATIONS (API 33+) from the screen. */
     fun onNotificationPermissionResult(granted: Boolean) {
         notificationsDenied.value = !granted
+    }
+
+    /**
+     * `mah` has already passed `DesignCapacityValidation` in the dialog -- this is a
+     * plain write, not a second place that could reject it differently.
+     */
+    fun setDesignCapacityOverride(mah: Int) {
+        viewModelScope.launch { settings.setDesignCapacityOverride(mah) }
+    }
+
+    /** Removes the override; `DesignCapacityProvider` falls back to the model table. */
+    fun clearDesignCapacityOverride() {
+        viewModelScope.launch { settings.setDesignCapacityOverride(null) }
     }
 }

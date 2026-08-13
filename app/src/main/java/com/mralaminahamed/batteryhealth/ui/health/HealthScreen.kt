@@ -5,23 +5,38 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mralaminahamed.batteryhealth.data.settings.DesignCapacitySource
+import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityValidation
+import com.mralaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
 import com.mralaminahamed.batteryhealth.domain.CapacityMethod
 import com.mralaminahamed.batteryhealth.domain.HealthBand
 import com.mralaminahamed.batteryhealth.domain.Reading
@@ -40,6 +55,15 @@ import com.mralaminahamed.batteryhealth.data.repo.HealthEstimator
 
 object HealthScreenTags {
     const val ROOT = "health-root"
+}
+
+object DesignCapacityTags {
+    const val ROW = "design-capacity-row"
+    const val DIALOG = "design-capacity-dialog"
+    const val INPUT = "design-capacity-input"
+    const val SAVE = "design-capacity-save"
+    const val CLEAR = "design-capacity-clear"
+    const val ERROR = "design-capacity-error"
 }
 
 @Composable
@@ -78,6 +102,8 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
             }
             viewModel.setRecorderEnabled(enabled)
         },
+        onSaveDesignCapacity = viewModel::setDesignCapacityOverride,
+        onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
     )
 }
 
@@ -86,9 +112,12 @@ fun HealthContent(
     state: HealthUiState,
     modifier: Modifier = Modifier,
     onRecorderEnabledChange: (Boolean) -> Unit = {},
+    onSaveDesignCapacity: (Int) -> Unit = {},
+    onClearDesignCapacity: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
+    var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -184,7 +213,7 @@ fun HealthContent(
                     "Notifications are off, so you won't see when it's recording"
                 else -> null
             }
-            KeyValueRow("Record charge sessions", showDivider = warning != null) {
+            KeyValueRow("Record charge sessions", showDivider = true) {
                 Switch(checked = state.recorderEnabled, onCheckedChange = onRecorderEnabledChange)
             }
             if (warning != null) {
@@ -192,11 +221,130 @@ fun HealthContent(
                     text = warning,
                     style = MaterialTheme.typography.bodyMedium,
                     color = LocalOneUiColors.current.textSecondary,
-                    modifier = Modifier.padding(top = 3.dp),
+                    modifier = Modifier.padding(top = 3.dp, bottom = 6.dp),
                 )
+            }
+            KeyValueRow(
+                "Design capacity",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = { showDesignCapacityDialog = true })
+                    .testTag(DesignCapacityTags.ROW),
+                showDivider = false,
+            ) {
+                Value(designCapacityValueText(state.designCapacity))
             }
         }
     }
+
+    if (showDesignCapacityDialog) {
+        DesignCapacityDialog(
+            currentOverrideMah = when (state.designCapacity.source) {
+                DesignCapacitySource.Override -> state.designCapacity.mah
+                DesignCapacitySource.Table, DesignCapacitySource.None -> null
+            },
+            onSave = { mah ->
+                onSaveDesignCapacity(mah)
+                showDesignCapacityDialog = false
+            },
+            onClear = {
+                onClearDesignCapacity()
+                showDesignCapacityDialog = false
+            },
+            onDismiss = { showDesignCapacityDialog = false },
+        )
+    }
+}
+
+/**
+ * "None" is included in this `when` only so the compiler can enforce exhaustiveness if a
+ * fourth source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
+ * is already `None`, so the early return above is what actually handles that case.
+ */
+private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
+    val mah = info.mah ?: return "Not set — tap to add"
+    return when (info.source) {
+        DesignCapacitySource.Override -> "$mah mAh, your override"
+        DesignCapacitySource.Table -> "$mah mAh, model table"
+        DesignCapacitySource.None -> "Not set — tap to add"
+    }
+}
+
+@Composable
+private fun DesignCapacityDialog(
+    currentOverrideMah: Int?,
+    onSave: (Int) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // Pre-filled only with the user's own existing override, never with the table value
+    // or any other guess -- an empty field here means "nothing of the user's to edit",
+    // not "here's a plausible starting point".
+    var text by remember { mutableStateOf(currentOverrideMah?.toString() ?: "") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag(DesignCapacityTags.DIALOG),
+        title = { Text("Design capacity") },
+        text = {
+            Column {
+                Text(
+                    text = "The battery's rated capacity when new, in mAh " +
+                        "(${DesignCapacityValidation.MIN_MAH}–${DesignCapacityValidation.MAX_MAH}).",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        error = null
+                    },
+                    label = { Text("mAh") },
+                    singleLine = true,
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .testTag(DesignCapacityTags.INPUT),
+                )
+                val currentError = error
+                if (currentError != null) {
+                    Text(
+                        text = currentError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .testTag(DesignCapacityTags.ERROR),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when (val result = DesignCapacityValidation.validate(text)) {
+                        is DesignCapacityValidation.Result.Valid -> onSave(result.mah)
+                        is DesignCapacityValidation.Result.Invalid -> error = result.message
+                    }
+                },
+                modifier = Modifier.testTag(DesignCapacityTags.SAVE),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            Row {
+                if (currentOverrideMah != null) {
+                    TextButton(
+                        onClick = onClear,
+                        modifier = Modifier.testTag(DesignCapacityTags.CLEAR),
+                    ) { Text("Clear") }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
 }
 
 @Composable
