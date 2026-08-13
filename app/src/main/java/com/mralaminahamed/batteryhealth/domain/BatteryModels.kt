@@ -36,13 +36,32 @@ data class BatterySnapshot(
     val manufacturingDateEpochDay: Reading<Long>,
     val chargeTimeRemainingMs: Reading<Long>,
 ) {
-    /** Instantaneous power in milliwatts, present only when both inputs are. */
+    /**
+     * Instantaneous power in milliwatts, derived from voltage (mV) and current (µA).
+     *
+     * Absent inputs propagate their own reason rather than collapsing to Unsupported:
+     * a caller must be able to tell "this device cannot report power" from "granting
+     * Shizuku would report it". Provenance is the least direct of the two inputs, so a
+     * derived number never claims to be more directly measured than its weakest input.
+     */
     val milliwatts: Reading<Int>
         get() {
-            val v = voltageMv.valueOrNull() ?: return Reading.Unsupported
-            val i = currentUa.valueOrNull() ?: return Reading.Unsupported
-            return Reading.Available((v.toLong() * i / 1_000_000L).toInt(), Source.Framework)
+            if (voltageMv !is Reading.Available) return voltageMv
+            if (currentUa !is Reading.Available) return currentUa
+            val milliwatts = (voltageMv.value.toLong() * currentUa.value / 1_000_000L).toInt()
+            return Reading.Available(milliwatts, leastDirectOf(voltageMv.source, currentUa.source))
         }
+}
+
+/**
+ * Provenance of a value derived from two readings. Measured is the least direct claim
+ * (the app inferred it), then Privileged (read through a shell), then Framework (read
+ * straight from the platform).
+ */
+private fun leastDirectOf(first: Source, second: Source): Source = when {
+    first == Source.Measured || second == Source.Measured -> Source.Measured
+    first == Source.Privileged || second == Source.Privileged -> Source.Privileged
+    else -> Source.Framework
 }
 
 data class HealthReport(
