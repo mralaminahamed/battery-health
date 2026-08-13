@@ -19,14 +19,6 @@ class BatteryManagerSource @Inject constructor(
 
     fun currentUa(): Reading<Int> = read(BatteryProperty.CurrentNow) { it }
 
-    fun stateOfHealthPct(): Reading<Int> = read(BatteryProperty.StateOfHealth) { it }
-
-    fun firstUsageEpochDay(): Reading<Long> =
-        read(BatteryProperty.FirstUsageDate) { it.toLong() / SECONDS_PER_DAY }
-
-    fun manufacturingEpochDay(): Reading<Long> =
-        read(BatteryProperty.ManufacturingDate) { it.toLong() / SECONDS_PER_DAY }
-
     fun chargeTimeRemainingMs(): Reading<Long> {
         val remaining = batteryManager.computeChargeTimeRemaining()
         return if (remaining > 0) {
@@ -41,9 +33,5 @@ class BatteryManagerSource @Inject constructor(
         val raw = batteryManager.getIntProperty(property.id)
         if (raw == Int.MIN_VALUE) return Reading.Unsupported
         return Reading.Available(transform(raw), Source.Framework)
-    }
-
-    private companion object {
-        const val SECONDS_PER_DAY = 86_400L
     }
 }

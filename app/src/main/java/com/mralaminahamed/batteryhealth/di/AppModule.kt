@@ -2,7 +2,6 @@ package com.mralaminahamed.batteryhealth.di
 
 import android.content.Context
 import android.os.BatteryManager
-import android.os.Build
 import android.os.PowerManager
 import com.mralaminahamed.batteryhealth.data.framework.BatteryProperty
 import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
@@ -36,6 +35,5 @@ object AppModule {
     fun provideCapabilities(batteryManager: BatteryManager): Set<BatteryProperty> =
         CapabilityProbe(
             reader = IntPropertyReader { batteryManager.getIntProperty(it) },
-            sdkInt = Build.VERSION.SDK_INT,
         ).probe()
 }

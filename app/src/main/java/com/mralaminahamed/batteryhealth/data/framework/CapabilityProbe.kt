@@ -5,18 +5,15 @@ package com.mralaminahamed.batteryhealth.data.framework
  * real value rather than a sentinel. Nothing else in the app re-probes, so a property
  * that lies once cannot intermittently reappear.
  *
- * A handful of properties (StateOfHealth, ManufacturingDate, FirstUsageDate) are gated
- * behind the signature-level BATTERY_STATS permission on real hardware; a reader backed
- * by the real BatteryManager throws SecurityException for them rather than returning a
- * sentinel. That is just another way of saying "not available to this app", so it is
- * treated the same as Int.MIN_VALUE/-1 rather than crashing the probe.
+ * The reader can also throw SecurityException — a real BatteryManager denies some
+ * properties to unprivileged apps outright rather than returning a sentinel. That is
+ * just another way of saying "not available to this app", so it is caught and treated
+ * the same as any other unsupported reading rather than crashing the probe.
  */
 class CapabilityProbe(
     private val reader: IntPropertyReader,
-    private val sdkInt: Int,
 ) {
     fun probe(): Set<BatteryProperty> = BatteryProperty.entries
-        .filter { sdkInt >= it.minSdk }
         .filter { property -> isPlausible(property, readOrSentinel(property)) }
         .toSet()
 
@@ -27,14 +24,15 @@ class CapabilityProbe(
             Int.MIN_VALUE
         }
 
-    private fun isPlausible(property: BatteryProperty, raw: Int): Boolean {
-        if (raw == Int.MIN_VALUE || raw == -1) return false
-        return when (property) {
-            // Discharge current is legitimately negative, and zero is a real reading.
-            BatteryProperty.CurrentNow, BatteryProperty.CurrentAverage -> true
-            BatteryProperty.StateOfHealth -> raw in 1..100
-            BatteryProperty.ChargeCounter -> raw > 0
-            BatteryProperty.ManufacturingDate, BatteryProperty.FirstUsageDate -> raw > 0
-        }
+    /**
+     * The sentinel rule is per-property, not global: -1 is the documented "unsupported"
+     * value for ChargeCounter, but current can genuinely read -1 microamps (a tiny real
+     * draw), so only the unambiguous Int.MIN_VALUE sentinel disqualifies it. Folding both
+     * sentinels into one check ahead of this `when` would silently disable current
+     * whenever a real reading happened to land on -1.
+     */
+    private fun isPlausible(property: BatteryProperty, raw: Int): Boolean = when (property) {
+        BatteryProperty.CurrentNow, BatteryProperty.CurrentAverage -> raw != Int.MIN_VALUE
+        BatteryProperty.ChargeCounter -> raw != Int.MIN_VALUE && raw != -1 && raw > 0
     }
 }
