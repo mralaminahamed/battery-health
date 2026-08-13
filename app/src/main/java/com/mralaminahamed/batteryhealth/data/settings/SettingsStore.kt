@@ -51,10 +51,17 @@ class SettingsStore @Inject constructor(private val context: Context) {
      * `ForegroundServiceDidNotStartInTimeException` on a rapid enable-then-disable, which
      * happened for real (see `ChargeRecorderService`'s class doc for the on-device
      * evidence).
+     *
+     * The flag is written `true` regardless of whether the start call below actually
+     * succeeds: a refusal is a transient process-state problem, not a change of intent,
+     * and the flag staying on is what lets the Health screen's own re-arm-on-launch
+     * retry later from a context the start is unambiguously permitted in. The return
+     * value exists so a caller (the Health screen) can reflect an immediate refusal in
+     * the UI instead of it disappearing into `Log.w` with nothing visible anywhere.
      */
-    suspend fun setRecorderEnabled(enabled: Boolean) {
+    suspend fun setRecorderEnabled(enabled: Boolean): Boolean {
         context.dataStore.edit { it[RECORDER_ENABLED] = enabled }
-        if (enabled) ChargeRecorderService.start(context)
+        return if (enabled) ChargeRecorderService.start(context) else true
     }
 
     /**

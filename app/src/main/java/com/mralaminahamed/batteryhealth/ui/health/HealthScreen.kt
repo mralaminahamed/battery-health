@@ -1,5 +1,9 @@
 package com.mralaminahamed.batteryhealth.ui.health
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -39,11 +44,35 @@ object HealthScreenTags {
 @Composable
 fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
-    HealthContent(state, modifier)
+
+    // A no-op on API < 33 (there is no such runtime permission to request) and a no-op
+    // if the permission is already granted -- safe to launch unconditionally rather
+    // than pre-checking the current grant state.
+    val requestNotificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> viewModel.onNotificationPermissionResult(granted) }
+
+    HealthContent(
+        state = state,
+        modifier = modifier,
+        onRecorderEnabledChange = { enabled ->
+            // The notification is the honest signal that measurement is running (Task
+            // 12's persistent-service rationale rests on it being visible), so this is
+            // asked for at the moment the user opts in, not silently skipped.
+            if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            viewModel.setRecorderEnabled(enabled)
+        },
+    )
 }
 
 @Composable
-fun HealthContent(state: HealthUiState, modifier: Modifier = Modifier) {
+fun HealthContent(
+    state: HealthUiState,
+    modifier: Modifier = Modifier,
+    onRecorderEnabledChange: (Boolean) -> Unit = {},
+) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
 
@@ -130,6 +159,27 @@ fun HealthContent(state: HealthUiState, modifier: Modifier = Modifier) {
                 ReadingSlot(state.snapshot?.voltageMv ?: Reading.NotYetMeasured) { mv, _ ->
                     Value("$mv mV")
                 }
+            }
+        }
+
+        OneUiCard {
+            SectionHeader("Measurement")
+            val warning = when {
+                state.recorderStartFailed -> "Couldn't start recording — reopen the app to try again"
+                state.recorderEnabled && state.notificationsDenied ->
+                    "Notifications are off, so you won't see when it's recording"
+                else -> null
+            }
+            KeyValueRow("Record charge sessions", showDivider = warning != null) {
+                Switch(checked = state.recorderEnabled, onCheckedChange = onRecorderEnabledChange)
+            }
+            if (warning != null) {
+                Text(
+                    text = warning,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LocalOneUiColors.current.textSecondary,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.mralaminahamed.batteryhealth.sampling
 
+import android.annotation.SuppressLint
 import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationChannel
@@ -61,8 +62,8 @@ import javax.inject.Inject
  * Stopping is asymmetric with starting, on purpose: `SettingsStore` never calls
  * `Context.stopService()` on this class -- there is no such method to call. Disabling
  * the setting only writes the flag; the service watches that same flag itself (see
- * `onCreate()`) and calls `stopSelf()` once it turns false. An external stop call was
- * tried first and rejected: it can race ahead of a just-started service's own
+ * `onCreate()`) and calls `stopSelfResult()` once it turns false. An external stop call
+ * was tried first and rejected: it can race ahead of a just-started service's own
  * `onCreate()`, and did so directly on-device -- enabling immediately followed by
  * disabling, with no delay between the two, crashed the app with
  * `ForegroundServiceDidNotStartInTimeException` (`SettingsStoreTest.recorderFlagRoundTrips`
@@ -82,8 +83,21 @@ class ChargeRecorderService : Service() {
     @Inject lateinit var settings: SettingsStore
 
     private val scope = CoroutineScope(SupervisorJob())
-    private var samplingJob: Job? = null
-    private var sessionId: Long? = null
+
+    // Volatile: written from the plug-state collector coroutine, read from onDestroy()
+    // on the main thread. Plain fields here is the regression this project already made
+    // once -- Task 12's WorkManager round had these as doWork()'s own local variables,
+    // which made the cross-thread question moot by construction; moving the state back
+    // into a Service revived the fields, and with them, the need for a real
+    // happens-before edge. A stale null read at onDestroy() skips closing the session
+    // and strands it open, invisible to completedSessions until a lucky future
+    // openSession() recovers it.
+    @Volatile private var samplingJob: Job? = null
+    @Volatile private var sessionId: Long? = null
+
+    // The most recently delivered startId, used to make a self-stop resilient to a
+    // start that lands concurrently with it (see onStartCommand and the watcher below).
+    @Volatile private var lastStartId: Int = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -102,7 +116,7 @@ class ChargeRecorderService : Service() {
             // preempt the specific one ("but the setting says no"), so the flag is
             // re-read here rather than trusted from whoever called start().
             if (!settings.recorderEnabled.first()) {
-                stopSelf()
+                stopSelfResult(lastStartId)
                 return@launch
             }
             observePlugState()
@@ -119,12 +133,31 @@ class ChargeRecorderService : Service() {
             // inside the already-running service cannot hit that race: by the time this
             // line can observe `false`, this service's own startForeground() call is
             // necessarily long done.
+            //
+            // stopSelfResult(lastStartId), not a bare stopSelf(): a bare call tears the
+            // service down unconditionally, even if a newer start (a re-enable) has
+            // already been delivered by the time this line runs -- stopSelfResult only
+            // proceeds if lastStartId is still the most recent one the system recorded,
+            // so a concurrent re-enable is not silently discarded.
             settings.recorderEnabled.first { !it }
-            stopSelf()
+            stopSelfResult(lastStartId)
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
+        // Re-validated independently of onCreate()'s watcher, tied to this specific
+        // startId: a start that lands just as the setting flips back off corrects
+        // itself immediately, rather than waiting for the watcher's own next flag read
+        // (which, for a service that was already running, might not come at all if
+        // nothing else changes the flag afterward).
+        scope.launch {
+            if (!settings.recorderEnabled.first()) {
+                stopSelfResult(startId)
+            }
+        }
+        return START_NOT_STICKY
+    }
 
     override fun onDestroy() {
         samplingJob?.cancel()
@@ -132,15 +165,25 @@ class ChargeRecorderService : Service() {
         // recorded session stays open forever and never reaches the estimator. Approved
         // as an exception to the no-runBlocking-on-teardown rule: the write is one Room
         // UPDATE, and an unclosed session silently breaks the health number.
-        runBlocking { sessionId?.let { closeSession(it) } }
+        runBlocking { sessionId?.let { closeSession(it, endedAtMs = nowMs.get()) } }
         scope.cancel()
         super.onDestroy()
     }
 
     /**
      * The single place plug state is watched and acted on, for as long as the service
-     * lives. `distinctUntilChanged()` collapses the stream to real transitions -- a
-     * duplicate "still plugged in" reading from an unrelated battery-changed broadcast
+     * lives. Built on `rawBroadcasts()`, not the conflated `broadcasts()`: this handler
+     * treats each transition itself as the payload, and conflation upstream of the
+     * `distinctUntilChanged()` below can silently collapse a genuine
+     * disconnect-then-reconnect (or the reverse) that lands while this handler is still
+     * busy with the previous event into a single unchanged value -- turning a real
+     * unplug into silence rather than a visible gap, with no error and nothing for the
+     * 30-second integration guard to catch, since no gap that size occurs. A cable
+     * wiggle at plug-in is exactly the kind of event pair that lands close enough
+     * together to hit this if conflated.
+     *
+     * `distinctUntilChanged()` collapses the (unconflated) stream to real transitions --
+     * a duplicate "still plugged in" reading from an unrelated battery-changed broadcast
      * (level ticking down a percent, temperature drifting) never reaches the handler
      * below, so it can never be mistaken for a second connect event. The `if
      * (samplingJob == null)` / `else` guards are a second, independent line of defence
@@ -149,14 +192,21 @@ class ChargeRecorderService : Service() {
      * already running, and a spurious duplicate disconnect is a safe no-op.
      */
     private fun observePlugState() {
-        broadcasts.broadcasts()
+        broadcasts.rawBroadcasts()
             .map { it.plugType != PlugType.None }
             .distinctUntilChanged()
             .onEach { plugged ->
                 if (plugged) {
                     if (samplingJob != null) return@onEach
-                    val id = openSession() ?: return@onEach
-                    sessionId = id
+                    val id = openSession()
+                    if (id == null) {
+                        // Left unlogged before, this failure was invisible: the cable is
+                        // in, nothing above changes, and the notification keeps saying
+                        // "Waiting for the charger" -- actively wrong about the state
+                        // the device is actually in.
+                        Log.w(TAG, "Could not open a session while plugged in; will retry on the next transition")
+                        return@onEach
+                    }
                     updateNotification(isCharging = true)
                     samplingJob = scope.launch {
                         while (true) {
@@ -167,7 +217,17 @@ class ChargeRecorderService : Service() {
                 } else {
                     samplingJob?.cancel()
                     samplingJob = null
-                    sessionId?.let { closeSession(it) }
+                    // nowMs.get(), not the last sample's timestamp: this is the live
+                    // disconnect happening now, and the most recent sample can be up to
+                    // one sampling interval stale -- stamping from it truncates a short
+                    // session by however long has elapsed since that last 5-second tick
+                    // (measured directly: 5,126ms recorded for a session that was
+                    // actually connected for roughly 8s). The stale-session-recovery
+                    // path in openSession() is different and deliberately keeps the
+                    // last-sample fallback: there, "now" would be whenever the recovery
+                    // happened to run, which can be arbitrarily later than the session
+                    // actually ended.
+                    sessionId?.let { closeSession(it, endedAtMs = nowMs.get()) }
                     sessionId = null
                     updateNotification(isCharging = false)
                 }
@@ -179,6 +239,9 @@ class ChargeRecorderService : Service() {
         // A session left open by an earlier crash is closed by its own id, before this
         // one is inserted -- closeSession() below only ever acts on the specific id it
         // is given, so it cannot be confused with the session about to be opened here.
+        // No explicit endedAtMs: the honest end time for a session recovered this way is
+        // whenever it was last actually recorded, not whenever this recovery happened to
+        // run, so closeSession falls back to the last sample's own timestamp.
         sessionDao.openSession()?.let { closeSession(it.id) }
 
         val firstSampleId = sampleWriter.writeOne() ?: return null
@@ -202,26 +265,37 @@ class ChargeRecorderService : Service() {
                 screenOnMs = 0,
             )
         )
+        // Published as soon as the row exists, not after attachToSession below returns:
+        // onDestroy() reads this field on a completely different call path, and the
+        // window between the insert above and the assignment previously sitting at the
+        // call site was a real, deterministic strand -- a destroy landing in that window
+        // closed nothing, then cancelled this coroutine before it could ever assign the
+        // id, leaving the row open forever (recoverable only by a future openSession(),
+        // which needs the recorder re-enabled *and* a plug event).
+        sessionId = id
         sampleDao.attachToSession(sessionId = id, fromMs = first.timestampMs)
         return id
     }
 
-    private suspend fun closeSession(id: Long) {
+    /**
+     * @param endedAtMs The honest end time, chosen by the caller. The live unplug path
+     * passes `nowMs.get()`; the stale-session-recovery path in [openSession] passes
+     * nothing and falls back to the last attached sample's own timestamp (or, if the
+     * session somehow has no samples at all, its own start time -- never "now", which
+     * for a session recovered days later would inflate its duration by however long the
+     * device sat unplugged in between).
+     */
+    private suspend fun closeSession(id: Long, endedAtMs: Long? = null) {
         // Asks for the open session with this exact id, not "whichever session happens
         // to be open right now" -- so this can never close a different session than the
         // one the caller means.
         val open = sessionDao.openSessionById(id) ?: return
         val samples = sampleDao.samplesForSession(id)
         val aggregate = SessionAggregator.aggregate(samples)
-        // The last sample's own timestamp is the honest end time. `nowMs.get()` would be
-        // right for an unplug closing its own live session, but wrong for a stale
-        // session recovered days later at the next charge -- it would stamp that
-        // recovery moment as the session's end and inflate its duration by however long
-        // the device sat unplugged in between.
-        val endedAtMs = samples.lastOrNull()?.timestampMs ?: nowMs.get()
+        val resolvedEndedAtMs = endedAtMs ?: samples.lastOrNull()?.timestampMs ?: open.startedAtMs
         sessionDao.update(
             open.copy(
-                endedAtMs = endedAtMs,
+                endedAtMs = resolvedEndedAtMs,
                 endLevelPct = aggregate.endLevelPct,
                 endCounterUah = aggregate.endCounterUah,
                 coulombUah = aggregate.coulombUah,
@@ -271,25 +345,35 @@ class ChargeRecorderService : Service() {
 
         /**
          * Called only from a recognised foreground start context (the settings toggle,
-         * or the boot receiver responding to `ACTION_BOOT_COMPLETED`) -- never from a
-         * background trigger, which is what made the previous two designs unreliable.
-         * The catch is defensive, not expected to fire from either call site, but stays
-         * because a caller mistake here should not crash the app.
+         * the boot receiver responding to `ACTION_BOOT_COMPLETED`, or the Health screen
+         * re-arming on launch) -- never from a background trigger, which is what made
+         * the previous two designs unreliable. Returns whether the start call itself
+         * succeeded, so a caller can reflect a refusal instead of it disappearing into
+         * a log line.
          *
          * There is deliberately no companion `stop()`: an external `Context.stopService()`
          * call can race ahead of a just-started service's own `onCreate()` and crash with
          * `ForegroundServiceDidNotStartInTimeException` if the two land close enough
          * together -- confirmed directly on-device. The service watches its own
-         * `recorderEnabled` flag (see `onCreate()`) and calls `stopSelf()` once that flag
-         * turns false, which cannot hit that race: by the time it can observe `false`,
-         * this same service's `startForeground()` call is necessarily long done.
+         * `recorderEnabled` flag (see `onCreate()`) and calls `stopSelfResult()` once
+         * that flag turns false, which cannot hit that race: by the time it can observe
+         * `false`, this same service's `startForeground()` call is necessarily long done.
+         *
+         * `ForegroundServiceStartNotAllowedException` is API 31+, but minSdk here is 26
+         * -- lint flags this (`NewApi`) as it would for a call to a new *method*, but
+         * catching an exception *type* introduced later is a different, safe case:
+         * ART's verifier resolves catch-handler types lazily, and on API 26-30 this
+         * exception can never actually be thrown (the class does not exist in the
+         * framework there yet, and nothing on those platforms constructs one), so the
+         * catch clause is simply dead code on those versions, not a crash risk.
          */
-        fun start(context: Context) {
-            try {
-                context.startForegroundService(Intent(context, ChargeRecorderService::class.java))
-            } catch (e: ForegroundServiceStartNotAllowedException) {
-                Log.w(TAG, "Charge recorder could not start", e)
-            }
+        @SuppressLint("NewApi")
+        fun start(context: Context): Boolean = try {
+            context.startForegroundService(Intent(context, ChargeRecorderService::class.java))
+            true
+        } catch (e: ForegroundServiceStartNotAllowedException) {
+            Log.w(TAG, "Charge recorder could not start", e)
+            false
         }
     }
 }

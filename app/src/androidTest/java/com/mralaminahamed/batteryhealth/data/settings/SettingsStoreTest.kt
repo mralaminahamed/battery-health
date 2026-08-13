@@ -16,8 +16,16 @@ import org.junit.Test
  * Context delegate with a fixed name and there is no injectable alternative here. That
  * makes hermeticity the test's own responsibility: without the clear-before and
  * clear-after below, running this suite would leave the opt-in recorder flag switched on
- * — turning on the very thing the opt-in default exists to prevent. `clearForTesting()`
- * also stops the charge recorder service for the same reason.
+ * — turning on the very thing the opt-in default exists to prevent.
+ *
+ * `clearForTesting()` does *not* stop the charge recorder service directly -- there is
+ * no such call left anywhere (see `ChargeRecorderService`'s class doc). It resets the
+ * flag to its false default, which a running service's own internal watcher reacts to
+ * the same way an ordinary `setRecorderEnabled(false)` does, asynchronously and on its
+ * own schedule. `recorderFlagRoundTrips` below is, incidentally, the exact test that
+ * first surfaced the external-`stopService()` race this design avoids: enabling
+ * immediately followed by disabling, with no delay, used to crash the app with
+ * `ForegroundServiceDidNotStartInTimeException` before the self-stop fix.
  */
 class SettingsStoreTest {
 

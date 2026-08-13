@@ -68,21 +68,33 @@ class ChargeRecorderExerciseSupport {
         if (!keepEnabled) store.setRecorderEnabled(false)
     }
 
+    // Explicit Unit return type: setRecorderEnabled now returns Boolean (whether the
+    // start attempt succeeded), and without this, the inferred return type of this
+    // expression-bodied @Test method would be Boolean too -- JUnit4 requires test
+    // methods to be void and fails the whole class at collection time otherwise
+    // ("Invalid test class ... should be void"), confirmed directly by running the
+    // full suite after setRecorderEnabled's signature changed.
     @Test
-    fun disableRecorderAfterManualExercise() = runBlocking {
+    fun disableRecorderAfterManualExercise(): Unit = runBlocking {
         store.setRecorderEnabled(false)
     }
 
     /**
-     * See the class doc for why enabling and holding are one method. Without
-     * `-e keepRecorderEnabled true` this still enables (and immediately gets torn down
-     * by `@After` plus the instrumentation teardown, same as before), but does not
-     * block -- so a full-suite run is never held up by this method.
+     * See the class doc for why enabling and holding are one method. Gated on
+     * `-e keepRecorderEnabled true` for enabling too, not just the hold: an earlier
+     * version called `setRecorderEnabled(true)` unconditionally, so every full
+     * instrumented run -- including plain `connectedPlayDebugAndroidTest`, with no
+     * arguments at all -- started a real foreground service that the harness then tore
+     * down before it could finish creating itself. That is the actual source of the
+     * `Bringing down service while still waiting for start foreground` warning seen
+     * during ordinary automated runs; without the argument, this method now does
+     * nothing at all, so a full-suite run never starts the service in the first place.
      */
     @Test
     fun enableRecorderForManualExerciseAndHoldTheProcessAlive() = runBlocking {
-        store.setRecorderEnabled(true)
         val keepEnabled = InstrumentationRegistry.getArguments()?.getString("keepRecorderEnabled") == "true"
-        if (keepEnabled) delay(300_000L)
+        if (!keepEnabled) return@runBlocking
+        store.setRecorderEnabled(true)
+        delay(300_000L)
     }
 }

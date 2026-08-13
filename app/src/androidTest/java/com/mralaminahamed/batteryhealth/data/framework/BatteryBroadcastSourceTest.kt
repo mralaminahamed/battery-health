@@ -20,4 +20,14 @@ class BatteryBroadcastSourceTest {
         assertTrue(broadcast.present)
         assertNotNull(broadcast.technology)
     }
+
+    /** The unconflated path must still behave like a normal Flow for a single read. */
+    @Test
+    fun rawBroadcastsAlsoEmitsStickyStateImmediately() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val broadcast = withTimeout(5_000) { BatteryBroadcastSource(context).rawBroadcasts().first() }
+
+        assertNotNull("sticky broadcast must carry a level", broadcast.levelPct)
+        assertTrue(broadcast.levelPct!! in 0..100)
+    }
 }

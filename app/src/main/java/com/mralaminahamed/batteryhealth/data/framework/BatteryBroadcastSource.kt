@@ -21,7 +21,25 @@ import javax.inject.Singleton
 class BatteryBroadcastSource @Inject constructor(
     private val context: Context,
 ) {
-    fun broadcasts(): Flow<BatteryBroadcast> = callbackFlow {
+    /**
+     * Every intent this receiver observes, delivered in full -- never coalesced into
+     * "just the latest." `callbackFlow`'s default channel capacity buffers emissions the
+     * collector hasn't caught up to yet rather than dropping them, which is what makes
+     * this safe to leave unconflated: battery-changed broadcasts are infrequent enough
+     * that the buffer is never remotely at risk of overflowing.
+     *
+     * Needed by anything that treats a transition itself as the payload, not just the
+     * resulting state -- edge detection for plug/unplug being the motivating case. Two
+     * events can legitimately land milliseconds apart (a cable wiggle produces
+     * disconnect-then-reconnect, or the reverse, well inside the time a slow collector
+     * takes to process the first one). [broadcasts] below is correct for every existing
+     * reader, which only ever wants the newest state and would otherwise pile up stale
+     * intermediate ones -- but conflation on that path would silently collapse exactly
+     * the two-events-in-a-row case an edge detector exists to see, turning a real
+     * disconnect into silence rather than a visible gap. A downstream `buffer()` cannot
+     * undo an upstream `conflate()`, so this has to be a separate, earlier tap.
+     */
+    fun rawBroadcasts(): Flow<BatteryBroadcast> = callbackFlow {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 intent?.let { trySend(it.toBatteryBroadcast()) }
@@ -30,7 +48,10 @@ class BatteryBroadcastSource @Inject constructor(
         val sticky = context.registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         sticky?.let { trySend(it.toBatteryBroadcast()) }
         awaitClose { context.unregisterReceiver(receiver) }
-    }.conflate()
+    }
+
+    /** Conflated: for readers that only ever want the newest reading. */
+    fun broadcasts(): Flow<BatteryBroadcast> = rawBroadcasts().conflate()
 
     private fun Intent.toBatteryBroadcast(): BatteryBroadcast = BatteryBroadcast.fromExtras(
         level = getIntExtra(BatteryManager.EXTRA_LEVEL, -1),
