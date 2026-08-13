@@ -5,15 +5,26 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
+        <!--
+        See backup_rules.xml (the pre-API-31 path) for the full reasoning. battery-health.db
+        (Room; exclude its -wal/-shm companions too, or a checkpoint-pending WAL still
+        ships the rows the .db exclude was meant to stop) and the settings DataStore
+        (recorderEnabled, and a design-capacity override entered for one specific model)
+        both describe one physical battery. Restoring them onto a different phone via
+        cloud backup would let this app recompute a confident "Measured" health number
+        from the OLD battery's charge history against the NEW phone's design capacity,
+        and would silently re-enable the charge recorder without consent.
         -->
+        <exclude domain="database" path="."/>
+        <exclude domain="file" path="datastore/"/>
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!--
+        Device-to-device transfer (e.g. Android's own migration flow) is a separate
+        path from cloud backup with its own rule set; both need the same exclusions
+        for the same reason, since either one can hand this exact data to a new phone.
+        -->
+        <exclude domain="database" path="."/>
+        <exclude domain="file" path="datastore/"/>
     </device-transfer>
-    -->
 </data-extraction-rules>

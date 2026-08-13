@@ -24,3 +24,25 @@ enum class BatteryProperty(val id: Int) {
     CurrentNow(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW),
     CurrentAverage(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE),
 }
+
+/**
+ * Whether a raw `getIntProperty` result is data rather than a sentinel, for this
+ * property specifically. The rule is per-property, not global, and both
+ * [CapabilityProbe] (which samples each property once, at startup) and
+ * [BatteryManagerSource] (which reads properties on every call afterwards) share this
+ * one definition rather than each re-deriving it -- a fix that repeats the check in a
+ * second place is exactly how this codebase reintroduced its own already-fixed defect
+ * one layer down.
+ *
+ * -1 is the documented "unsupported" value for [ChargeCounter] (charge never goes
+ * negative), but [CurrentNow] and [CurrentAverage] can genuinely read -1 microamps -- a
+ * tiny real draw, observed for real on the Galaxy A35 this app was verified against.
+ * Folding both sentinels into one check ahead of a per-property branch disqualifies
+ * current every time it happens to land on -1, which is exactly the defect Task 4 found
+ * on real hardware: the wattage metric silently disabled for the whole process
+ * lifetime. Only the unambiguous [Int.MIN_VALUE] sentinel disqualifies current.
+ */
+fun BatteryProperty.isPlausibleReading(raw: Int): Boolean = when (this) {
+    BatteryProperty.CurrentNow, BatteryProperty.CurrentAverage -> raw != Int.MIN_VALUE
+    BatteryProperty.ChargeCounter -> raw != Int.MIN_VALUE && raw != -1 && raw > 0
+}

@@ -1,6 +1,9 @@
 package com.mralaminahamed.batteryhealth.data.framework
 
 import android.os.BatteryManager
+import android.os.Build
+import androidx.annotation.ChecksSdkIntAtLeast
+import androidx.annotation.VisibleForTesting
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.domain.Source
@@ -54,15 +57,17 @@ class BatteryManagerSource @Inject constructor(
      * gives an immediate answer when the reading is unambiguous; failing that, this returns
      * Unsupported -- no invented data, even temporarily.
      *
-     * [Int.MIN_VALUE] is rejected before any scale is even considered, let alone multiplied
-     * through: it is BatteryManager's sentinel for "no value", not a real reading of zero or
-     * a large negative discharge current, and multiplying a sentinel by a scale factor would
-     * turn "unsupported" into a wrong-but-plausible-looking number.
+     * The sentinel check below shares [BatteryProperty.isPlausibleReading] with
+     * [CapabilityProbe] and [read] rather than re-deriving it: [Int.MIN_VALUE] is rejected
+     * before any scale is even considered, let alone multiplied through, but that alone is
+     * not the whole rule -- see [BatteryProperty.isPlausibleReading]'s doc for why folding
+     * every property's sentinel into one check here would repeat the exact defect Task 4
+     * fixed one layer up, in [CapabilityProbe].
      */
     fun currentUa(): Reading<Int> {
         if (BatteryProperty.CurrentNow !in capabilities) return Reading.Unsupported
         val raw = batteryManager.getIntProperty(BatteryProperty.CurrentNow.id)
-        if (raw == Int.MIN_VALUE) return Reading.Unsupported
+        if (!BatteryProperty.CurrentNow.isPlausibleReading(raw)) return Reading.Unsupported
         val scale = validatedScale ?: CurrentScaleDetector.fromMagnitude(raw) ?: return Reading.Unsupported
         val trueMicroamps = scale.toMicroamps(raw)
         // Guards against a corrupt or wildly implausible register value silently wrapping
@@ -84,7 +89,22 @@ class BatteryManagerSource @Inject constructor(
      */
     fun currentRawUnits(): Reading<Int> = read(BatteryProperty.CurrentNow) { it }
 
+    /**
+     * `BatteryManager#computeChargeTimeRemaining` is API 28
+     * ([Build.VERSION_CODES.P]), guarded explicitly rather than called unconditionally:
+     * minSdk is 26, chosen deliberately elsewhere in this app, and is not being raised
+     * just to make this one check unnecessary. Below API 28 the call itself does not
+     * exist on the device -- calling it anyway throws `NoSuchMethodError` out of
+     * whichever coroutine first collects a snapshot, which is every device on Android
+     * 8.0/8.1 that this app's own manifest claims to support. `Reading.Unsupported` is
+     * the honest answer there, not a bug being papered over: the platform genuinely
+     * cannot supply this figure on those OS versions.
+     *
+     * Do not "simplify" this guard away without also raising minSdk -- that trade was
+     * already considered and rejected.
+     */
     fun chargeTimeRemainingMs(): Reading<Long> {
+        if (!isChargeTimeRemainingSupported(Build.VERSION.SDK_INT)) return Reading.Unsupported
         val remaining = batteryManager.computeChargeTimeRemaining()
         return if (remaining > 0) {
             Reading.Available(remaining, Source.Framework)
@@ -93,10 +113,34 @@ class BatteryManagerSource @Inject constructor(
         }
     }
 
+    /**
+     * The sentinel rule lives on [BatteryProperty] itself (see
+     * [BatteryProperty.isPlausibleReading]) and is shared with [CapabilityProbe], which
+     * samples each property once at startup. This is the same rule applied again on an
+     * ordinary later read, after the property already passed that probe -- not a global
+     * `raw == Int.MIN_VALUE` check, which would silently disable [BatteryProperty.ChargeCounter]
+     * every time it transiently reads its own documented -1 sentinel, the exact defect
+     * Task 4 fixed in the probe itself.
+     */
     private fun <T> read(property: BatteryProperty, transform: (Int) -> T): Reading<T> {
         if (property !in capabilities) return Reading.Unsupported
         val raw = batteryManager.getIntProperty(property.id)
-        if (raw == Int.MIN_VALUE) return Reading.Unsupported
+        if (!property.isPlausibleReading(raw)) return Reading.Unsupported
         return Reading.Available(transform(raw), Source.Framework)
+    }
+
+    companion object {
+        /**
+         * Pure so the minSdk-26 boundary is provable on the JVM without a real API
+         * 26/27 device. [Build.VERSION_CODES.P] is 28; referenced by its constant name
+         * for the reader, not the raw literal. `@ChecksSdkIntAtLeast` is what lets lint's
+         * own `NewApi` check see through this helper as a version gate at the call site
+         * in [chargeTimeRemainingMs] -- without it, lint cannot tell this function apart
+         * from an arbitrary `Boolean`-returning method and keeps flagging the guarded
+         * call as unconditional.
+         */
+        @VisibleForTesting
+        @ChecksSdkIntAtLeast(api = Build.VERSION_CODES.P)
+        fun isChargeTimeRemainingSupported(sdkInt: Int): Boolean = sdkInt >= Build.VERSION_CODES.P
     }
 }

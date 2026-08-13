@@ -68,4 +68,34 @@ class HealthUiStateTest {
         val state = HealthUiState(snapshot = null, measured = Reading.NotYetMeasured)
         assertEquals(Reading.NotYetMeasured, state.headlinePct)
     }
+
+    @Test
+    fun needsShizukuSurvivesWhenMeasurementIsUnsupported() {
+        // What production actually emits: BatteryRepository sets stateOfHealthPct to
+        // NeedsShizuku unconditionally (never Unsupported), and measured is Unsupported
+        // for any model outside the ten-entry design-capacity table with no override --
+        // nearly every Samsung. The headline must not contradict the "Needs Shizuku" row
+        // right below it by claiming "not available on this device" about the same
+        // data source.
+        val state = HealthUiState(
+            snapshot = snapshot(Reading.NeedsShizuku),
+            measured = Reading.Unsupported,
+        )
+        assertEquals(Reading.NeedsShizuku, state.headlinePct)
+    }
+
+    @Test
+    fun measurementWinsOverNeedsShizukuWhenAvailable() {
+        val state = HealthUiState(snapshot = snapshot(Reading.NeedsShizuku), measured = measured)
+        assertEquals(Reading.Available(84, Source.Measured), state.headlinePct)
+    }
+
+    @Test
+    fun notYetMeasuredBeatsNeedsShizuku() {
+        val state = HealthUiState(
+            snapshot = snapshot(Reading.NeedsShizuku),
+            measured = Reading.NotYetMeasured,
+        )
+        assertEquals(Reading.NotYetMeasured, state.headlinePct)
+    }
 }
