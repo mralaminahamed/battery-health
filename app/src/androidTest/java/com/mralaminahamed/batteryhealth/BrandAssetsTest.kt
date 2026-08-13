@@ -1,6 +1,8 @@
 package com.mralaminahamed.batteryhealth
 
 import android.graphics.drawable.AdaptiveIconDrawable
+import android.os.Build
+import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -16,14 +18,26 @@ class BrandAssetsTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
-    fun launcherIconIsAdaptiveWithAllThreeLayers() {
+    fun launcherIconIsAdaptive() {
         val icon = context.packageManager.getApplicationIcon(context.packageName)
         assertTrue("launcher icon must be adaptive", icon is AdaptiveIconDrawable)
         val adaptive = icon as AdaptiveIconDrawable
         assertNotNull("background layer missing", adaptive.background)
         assertNotNull("foreground layer missing", adaptive.foreground)
-        // Themed icons on Android 13+ and One UI 5+ need the monochrome layer.
-        assertNotNull("monochrome layer missing", adaptive.monochrome)
+    }
+
+    /**
+     * Themed icons on Android 13+ and One UI 5+ need the monochrome layer, but
+     * AdaptiveIconDrawable.getMonochrome() only exists from API 33. minSdk here is 26, so
+     * calling it unguarded throws NoSuchMethodError on API 26-32 — the test would error out
+     * rather than fail cleanly. Suppressing below 33 keeps the assertion honest on the
+     * devices where the layer is actually consumed.
+     */
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.TIRAMISU)
+    fun launcherIconCarriesMonochromeLayerForThemedIcons() {
+        val icon = context.packageManager.getApplicationIcon(context.packageName)
+        assertNotNull("monochrome layer missing", (icon as AdaptiveIconDrawable).monochrome)
     }
 
     @Test
