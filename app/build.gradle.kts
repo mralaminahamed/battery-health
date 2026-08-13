@@ -77,14 +77,13 @@ dependencies {
     ksp(libs.hilt.ext.compiler)
     ksp(libs.androidx.room.compiler)
 
-    // AGP's test consistent resolution pins the androidTest classpath's kotlinx-serialization
-    // to whatever the main classpath resolves (currently 1.7.3, pulled in by datastore). Room's
-    // androidTest-only room-testing/room-migration needs >=1.8.1 for its schema-bundle
-    // serializers; without this floor the mismatch throws AbstractMethodError at runtime when
-    // MigrationTestHelper deserializes the exported schema.
+    // Room's androidTest-only room-migration needs a newer kotlinx-serialization than
+    // androidx.datastore contributes to the main classpath. AGP's test-consistent-resolution
+    // mirrors the main classpath's resolved version onto androidTest as a strict constraint,
+    // so the floor has to be raised here rather than on androidTestImplementation.
     constraints {
-        implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
-        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+        implementation(libs.kotlinx.serialization.core)
+        implementation(libs.kotlinx.serialization.json)
     }
 
     testImplementation(libs.junit)
