@@ -4,9 +4,11 @@ import android.content.Context
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
+import androidx.work.WorkManager
 import com.mralaminahamed.batteryhealth.data.framework.BatteryProperty
 import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
 import com.mralaminahamed.batteryhealth.data.framework.IntPropertyReader
+import com.mralaminahamed.batteryhealth.sampling.NowMs
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -42,4 +44,13 @@ object AppModule {
     @Provides
     @Named("deviceModel")
     fun provideDeviceModel(): String = Build.MODEL ?: ""
+
+    @Provides
+    @Singleton
+    fun provideNowMs(): NowMs = NowMs { System.currentTimeMillis() }
+
+    @Provides
+    @Singleton
+    fun provideWorkManager(@ApplicationContext context: Context): WorkManager =
+        WorkManager.getInstance(context)
 }
