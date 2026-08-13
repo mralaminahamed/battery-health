@@ -1,7 +1,5 @@
 package com.mralaminahamed.batteryhealth.sampling
 
-import android.annotation.SuppressLint
-import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -62,15 +60,17 @@ import javax.inject.Inject
  * Stopping is asymmetric with starting, on purpose: `SettingsStore` never calls
  * `Context.stopService()` on this class -- there is no such method to call. Disabling
  * the setting only writes the flag; the service watches that same flag itself (see
- * `onCreate()`) and calls `stopSelfResult()` once it turns false. An external stop call
- * was tried first and rejected: it can race ahead of a just-started service's own
- * `onCreate()`, and did so directly on-device -- enabling immediately followed by
- * disabling, with no delay between the two, crashed the app with
- * `ForegroundServiceDidNotStartInTimeException` (`SettingsStoreTest.recorderFlagRoundTrips`
+ * `watchRecorderEnabled()`) and calls `stopSelfResult()` once it turns false. An
+ * external stop call was tried first and rejected: it can race ahead of a
+ * just-started service's own `onCreate()`, and did so directly on-device -- enabling
+ * immediately followed by disabling, with no delay between the two, crashed the app
+ * with `ForegroundServiceDidNotStartInTimeException` (`SettingsStoreTest.recorderFlagRoundTrips`
  * reproduced it as an ordinary DataStore round-trip test, with no awareness it was also
  * exercising a service lifecycle). Self-stopping cannot hit that race, because the
  * suspend point that observes `false` is only reachable after this same service's
- * `startForeground()` call has already completed.
+ * `startForeground()` call has already completed. `watchRecorderEnabled()` also loops
+ * rather than watching once -- see its own doc for why a one-shot watcher is a second,
+ * subtler version of the same "who is allowed to stop this" question.
  */
 @AndroidEntryPoint
 class ChargeRecorderService : Service() {
@@ -109,48 +109,71 @@ class ChargeRecorderService : Service() {
         // flag turns out to be false, once the check completes.
         startForeground(NOTIFICATION_ID, buildNotification(isCharging = false))
 
-        scope.launch {
-            // A start can arrive after the setting has already flipped back to false --
-            // e.g. a rapid on/off toggle, or a stale start Intent redelivered by the
-            // system. This is the general rule ("the service is running") that must not
-            // preempt the specific one ("but the setting says no"), so the flag is
-            // re-read here rather than trusted from whoever called start().
-            if (!settings.recorderEnabled.first()) {
-                stopSelfResult(lastStartId)
-                return@launch
-            }
-            observePlugState()
+        scope.launch { watchRecorderEnabled() }
+    }
 
-            // Stops itself the moment the setting turns off, rather than being stopped
-            // from outside via Context.stopService(). This suspend point is reached
-            // only after startForeground() above has already completed, which matters:
-            // SettingsStore used to call ChargeRecorderService.stop() directly on
-            // disable, and that external stop could race ahead of a just-started
-            // service's own onCreate() -- confirmed directly on-device, where
-            // SettingsStoreTest.recorderFlagRoundTrips (enable immediately followed by
-            // disable, no delay) crashed the app with
-            // ForegroundServiceDidNotStartInTimeException. Watching the same flag from
-            // inside the already-running service cannot hit that race: by the time this
-            // line can observe `false`, this service's own startForeground() call is
-            // necessarily long done.
-            //
-            // stopSelfResult(lastStartId), not a bare stopSelf(): a bare call tears the
-            // service down unconditionally, even if a newer start (a re-enable) has
-            // already been delivered by the time this line runs -- stopSelfResult only
-            // proceeds if lastStartId is still the most recent one the system recorded,
-            // so a concurrent re-enable is not silently discarded.
-            settings.recorderEnabled.first { !it }
-            stopSelfResult(lastStartId)
+    /**
+     * The only continuous watcher this service has for `recorderEnabled`; everything
+     * about stopping goes through here, and it loops rather than running once. That
+     * loop is the fix for a real failure mode: `stopSelfResult(id)` is refused
+     * whenever `id` is not AMS's *current* latest start id, and AMS bumps that id at
+     * start-request time -- before `onStartCommand` ever runs and updates
+     * [lastStartId]. A disable that reaches the `stopSelfResult` call just as a
+     * re-enable lands (10-100ms of scheduling delay on `Dispatchers.Default` is
+     * unremarkable under load) makes the stop attempt fail, correctly: a newer start
+     * really is in flight. But a watcher that simply returns after that refusal, as
+     * an earlier version of this method did, leaves the service with *no observer at
+     * all* from then on -- the flag can turn false again later and nothing will ever
+     * notice, so nothing will ever call `stopSelfResult` again. For an opt-in
+     * recorder with a persistent notification, a setting that reads off while
+     * recording continues forever (short of a force-stop, reboot, or process death)
+     * is a consent problem, not just a stray foreground service. Looping back after
+     * a refusal, instead of returning, is what keeps an observer alive for the *next*
+     * disable, which the earlier one implicitly promised to watch for.
+     *
+     * The same loop also covers the narrower version of this bug at creation time: if
+     * the flag is already false when this runs, [lastStartId] may still be `0`
+     * (`onStartCommand` normally wins this race -- its own first suspension point, a
+     * DataStore read, is slower than this coroutine reaching the check below -- but
+     * "normally" is not "always"). `0` was never issued by AMS, so `stopSelfResult(0)`
+     * is guaranteed to be refused; looping back and retrying, rather than returning
+     * unconditionally after one attempt, is what stops that from stranding a
+     * foreground service that observes nothing and that nothing can ever stop.
+     */
+    private suspend fun watchRecorderEnabled() {
+        var observing = false
+        while (true) {
+            if (settings.recorderEnabled.first()) {
+                if (!observing) {
+                    observePlugState()
+                    observing = true
+                }
+                settings.recorderEnabled.first { !it }
+            }
+            // The flag reads false right now, either on entry or because the suspend
+            // above just returned. Try to stop.
+            val startId = lastStartId
+            if (startId == 0) {
+                delay(STOP_RETRY_DELAY_MS)
+                continue
+            }
+            if (stopSelfResult(startId)) return
+            // Refused: a newer start is already in flight, which can only mean
+            // recorderEnabled has already been written back to true by that start's
+            // caller. Loop back to the top instead of exiting -- the check there will
+            // see the true value, leave `observing` (and the already-running
+            // observePlugState() collector, if one exists) alone, and suspend again
+            // on the *next* disable rather than retrying this one.
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
-        // Re-validated independently of onCreate()'s watcher, tied to this specific
+        // Re-validated independently of the watcher above, tied to this specific
         // startId: a start that lands just as the setting flips back off corrects
-        // itself immediately, rather than waiting for the watcher's own next flag read
-        // (which, for a service that was already running, might not come at all if
-        // nothing else changes the flag afterward).
+        // itself immediately, rather than waiting for the watcher's own next flag
+        // read. A refusal here is harmless and left unhandled -- the watcher above is
+        // the durable observer and will catch a genuine false reading on its own.
         scope.launch {
             if (!settings.recorderEnabled.first()) {
                 stopSelfResult(startId)
@@ -343,6 +366,9 @@ class ChargeRecorderService : Service() {
         private const val SAMPLE_INTERVAL_MS = 5_000L
         private const val TAG = "ChargeRecorderService"
 
+        /** Bounds the retry spin in [watchRecorderEnabled] for the startId-not-yet-set case. */
+        private const val STOP_RETRY_DELAY_MS = 50L
+
         /**
          * Called only from a recognised foreground start context (the settings toggle,
          * the boot receiver responding to `ACTION_BOOT_COMPLETED`, or the Health screen
@@ -355,23 +381,27 @@ class ChargeRecorderService : Service() {
          * call can race ahead of a just-started service's own `onCreate()` and crash with
          * `ForegroundServiceDidNotStartInTimeException` if the two land close enough
          * together -- confirmed directly on-device. The service watches its own
-         * `recorderEnabled` flag (see `onCreate()`) and calls `stopSelfResult()` once
-         * that flag turns false, which cannot hit that race: by the time it can observe
-         * `false`, this same service's `startForeground()` call is necessarily long done.
+         * `recorderEnabled` flag (see `watchRecorderEnabled()`) and calls
+         * `stopSelfResult()` once that flag turns false, which cannot hit that race: by
+         * the time it can observe `false`, this same service's `startForeground()` call
+         * is necessarily long done.
          *
-         * `ForegroundServiceStartNotAllowedException` is API 31+, but minSdk here is 26
-         * -- lint flags this (`NewApi`) as it would for a call to a new *method*, but
-         * catching an exception *type* introduced later is a different, safe case:
-         * ART's verifier resolves catch-handler types lazily, and on API 26-30 this
-         * exception can never actually be thrown (the class does not exist in the
-         * framework there yet, and nothing on those platforms constructs one), so the
-         * catch clause is simply dead code on those versions, not a crash risk.
+         * Catches `IllegalStateException`, not the API-31-only
+         * `ForegroundServiceStartNotAllowedException`: on API 26-30, a disallowed
+         * `startForegroundService()` throws plain `IllegalStateException` (the same
+         * documented condition -- "the application is in a state where the service can
+         * not be started" -- API 31 just gave it a dedicated subclass for easier
+         * catching). `HealthViewModel.init` calls this after an async DataStore read, so
+         * a user backgrounding the app inside that window on a pre-31 device hits this
+         * for real; catching only the newer subtype would let that crash. Catching the
+         * broad supertype is safe specifically here because this call site's only
+         * documented reason to throw `IllegalStateException` at all, on any API level, is
+         * this exact refusal -- it is not a catch-all masking some unrelated bug.
          */
-        @SuppressLint("NewApi")
         fun start(context: Context): Boolean = try {
             context.startForegroundService(Intent(context, ChargeRecorderService::class.java))
             true
-        } catch (e: ForegroundServiceStartNotAllowedException) {
+        } catch (e: IllegalStateException) {
             Log.w(TAG, "Charge recorder could not start", e)
             false
         }

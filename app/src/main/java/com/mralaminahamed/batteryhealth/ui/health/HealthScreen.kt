@@ -59,6 +59,19 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
             // The notification is the honest signal that measurement is running (Task
             // 12's persistent-service rationale rests on it being visible), so this is
             // asked for at the moment the user opts in, not silently skipped.
+            //
+            // Launched before setRecorderEnabled below, not after: the permission
+            // request briefly puts a system dialog on top of this Activity while the
+            // foreground-service start underneath it is issued from a now-covered, but
+            // still resumed, Activity -- confirmed working on-device (API 37). Do not
+            // "fix" this by reordering to request-then-start-after-the-callback: that
+            // would leave the switch looking on with nothing actually started until
+            // the user answers the dialog, and if they never answer (e.g. they leave
+            // the app), the recorder would never start at all despite the flag already
+            // reading true. The current order starts unconditionally and only the
+            // notification's visibility depends on the answer, which self-heals on the
+            // next launch via HealthViewModel's re-arm if the service is ever refused
+            // for an unrelated reason in that same window.
             if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }

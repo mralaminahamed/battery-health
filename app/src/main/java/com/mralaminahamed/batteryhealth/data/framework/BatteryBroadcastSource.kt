@@ -22,11 +22,16 @@ class BatteryBroadcastSource @Inject constructor(
     private val context: Context,
 ) {
     /**
-     * Every intent this receiver observes, delivered in full -- never coalesced into
-     * "just the latest." `callbackFlow`'s default channel capacity buffers emissions the
-     * collector hasn't caught up to yet rather than dropping them, which is what makes
-     * this safe to leave unconflated: battery-changed broadcasts are infrequent enough
-     * that the buffer is never remotely at risk of overflowing.
+     * Every intent this receiver observes, delivered in full -- never deliberately
+     * coalesced into "just the latest" the way [broadcasts] is. `callbackFlow`'s
+     * default channel capacity buffers emissions a collector hasn't caught up to yet;
+     * only once that buffer is actually full does `trySend()` start failing, and the
+     * intent it was called with -- the newest arrival, not anything already buffered
+     * -- is the one silently dropped. That is a real limit, not an absolute
+     * guarantee, but not a practical one here: exhausting the default buffer would
+     * need on the order of tens of `ACTION_BATTERY_CHANGED` broadcasts arriving
+     * faster than this flow's single collector can process a plug/unplug transition,
+     * which battery-changed broadcasts are nowhere near frequent enough to do.
      *
      * Needed by anything that treats a transition itself as the payload, not just the
      * resulting state -- edge detection for plug/unplug being the motivating case. Two
