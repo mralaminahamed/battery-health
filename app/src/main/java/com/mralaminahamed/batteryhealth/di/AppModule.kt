@@ -2,6 +2,7 @@ package com.mralaminahamed.batteryhealth.di
 
 import android.content.Context
 import android.os.BatteryManager
+import android.os.Build
 import android.os.PowerManager
 import com.mralaminahamed.batteryhealth.data.framework.BatteryProperty
 import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
@@ -11,6 +12,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Named
 import javax.inject.Singleton
 
 @Module
@@ -36,4 +38,8 @@ object AppModule {
         CapabilityProbe(
             reader = IntPropertyReader { batteryManager.getIntProperty(it) },
         ).probe()
+
+    @Provides
+    @Named("deviceModel")
+    fun provideDeviceModel(): String = Build.MODEL ?: ""
 }
