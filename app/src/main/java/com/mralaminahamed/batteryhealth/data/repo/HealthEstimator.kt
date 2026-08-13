@@ -16,6 +16,13 @@ import kotlin.math.roundToInt
  * Pure by construction: no Android types, no clock, no IO. Every guard below exists
  * because the naive version of this calculation produces a confident wrong number, and
  * a confident wrong number is worse than an honest absence.
+ *
+ * Ordering matters here more than it looks like it should. The derived-counter check
+ * must see every qualifying session, not just the ones a later, more general rule
+ * (wide-set narrowing) decided to keep -- narrowing can discard exactly the narrow-window
+ * evidence that would have convicted a synthesised counter. And once a counter is judged
+ * synthesised, the coulomb retry must run before any later rule gets a chance to preempt
+ * it. Read the `if`s below top to bottom before reordering any of them.
  */
 @Singleton
 class HealthEstimator @Inject constructor() {
@@ -30,9 +37,25 @@ class HealthEstimator @Inject constructor() {
         if (designCapacityMah == null || designCapacityMah <= 0) return Reading.Unsupported
         val designUah = designCapacityMah.toLong() * UAH_PER_MAH
 
-        val qualifying = observations
-            .filter { it.deltaLevelPct >= MIN_DELTA_LEVEL_PCT }
-            .mapNotNull { it.toMeasurement() }
+        // One row per charge session: a duplicated row would otherwise satisfy MIN_SESSIONS
+        // and pull the median on its own repeated say, defeating the reason several
+        // independent sessions are required to agree in the first place.
+        val deduped = observations.distinctBy { it.sessionId }
+        val levelQualifying = deduped.filter { it.deltaLevelPct >= MIN_DELTA_LEVEL_PCT }
+        val qualifying = levelQualifying.mapNotNull { it.toMeasurement() }
+
+        // The derived-counter check must run on every qualifying counter session, before
+        // wide-set narrowing below throws any of them away. Narrowing can shrink the
+        // window spread below the detection threshold, hiding a synthesised counter that
+        // the discarded, narrower sessions would have exposed.
+        val counterQualifying = qualifying.filter { it.method == CapacityMethod.Counter }
+        if (looksDerivedFromLevel(counterQualifying, designUah)) {
+            // The counter is synthesised. Integrated current is an independent measurement
+            // of the same thing, so retry from it rather than discarding the session set.
+            val coulombOnly = levelQualifying.mapNotNull { it.toCoulombMeasurement() }
+            if (coulombOnly.size < MIN_SESSIONS) return Reading.Unsupported
+            return report(coulombOnly, designCapacityMah, designUah)
+        }
 
         val wide = qualifying.filter { it.deltaLevelPct >= WIDE_DELTA_LEVEL_PCT }
         // Selection narrows the set. It never weights it: there is no weighted average
@@ -40,12 +63,27 @@ class HealthEstimator @Inject constructor() {
         val chosen = if (wide.size >= MIN_SESSIONS) wide else qualifying
 
         if (chosen.size < MIN_SESSIONS) return Reading.NotYetMeasured
-        if (looksDerivedFromLevel(chosen, designUah)) return Reading.Unsupported
+        return report(chosen, designCapacityMah, designUah)
+    }
 
-        val median = chosen.map { it.fullUah }.median()
-        val healthPct = (median.toDouble() / designUah * 100).roundToInt().coerceIn(1, 100)
+    /** Shared by the counter path and the coulomb retry so neither duplicates this block. */
+    private fun report(
+        measurements: List<Measurement>,
+        designCapacityMah: Int,
+        designUah: Long,
+    ): Reading<HealthReport> {
+        val median = measurements.map { it.fullUah }.median()
+
+        // A measurement this far from design is a unit or scale fault, not a battery: some
+        // OEMs report CHARGE_COUNTER in mAh rather than uAh, which lands ~1000x low. A dead
+        // battery and a broken unit are indistinguishable at that extreme, so this must not
+        // clamp to a confident 1% -- it must decline to answer.
+        val ratio = median.toDouble() / designUah
+        if (ratio < MIN_PLAUSIBLE_RATIO || ratio > MAX_PLAUSIBLE_RATIO) return Reading.Unsupported
+
+        val healthPct = (ratio * 100).roundToInt().coerceIn(1, 100)
         val method =
-            if (chosen.count { it.method == CapacityMethod.Counter } * 2 >= chosen.size) {
+            if (measurements.count { it.method == CapacityMethod.Counter } * 2 >= measurements.size) {
                 CapacityMethod.Counter
             } else {
                 CapacityMethod.Coulomb
@@ -57,17 +95,25 @@ class HealthEstimator @Inject constructor() {
                 measuredFullUah = median,
                 designCapacityMah = designCapacityMah,
                 method = method,
-                sessionsUsed = chosen.size,
+                sessionsUsed = measurements.size,
             ),
             Source.Measured,
         )
     }
 
     private fun CapacityObservation.toMeasurement(): Measurement? {
+        // Guarded locally, not just by the caller's filter: a future caller must not be
+        // able to reintroduce a division by zero here by skipping that filter.
+        if (deltaLevelPct <= 0) return null
         val counter = counterDeltaUah?.takeIf { it > 0 }
         if (counter != null) {
             return Measurement(deltaLevelPct, counter * 100 / deltaLevelPct, CapacityMethod.Counter)
         }
+        return toCoulombMeasurement()
+    }
+
+    private fun CapacityObservation.toCoulombMeasurement(): Measurement? {
+        if (deltaLevelPct <= 0) return null
         val coulomb = coulombUah?.takeIf { it > 0 } ?: return null
         return Measurement(deltaLevelPct, coulomb * 100 / deltaLevelPct, CapacityMethod.Coulomb)
     }
@@ -78,6 +124,10 @@ class HealthEstimator @Inject constructor() {
      * pristine. Genuine measurements drift with window width; a synthesised counter
      * does not. Requiring a wide spread of window sizes keeps a truly new battery from
      * being misclassified on three similar charges.
+     *
+     * Callers must pass the full qualifying population, not a narrowed subset: narrowing
+     * can shrink the spread below the threshold and hide a synthesised counter that the
+     * wider, discarded sessions would have exposed.
      */
     private fun looksDerivedFromLevel(measurements: List<Measurement>, designUah: Long): Boolean {
         val counterOnly = measurements.filter { it.method == CapacityMethod.Counter }
@@ -116,5 +166,12 @@ class HealthEstimator @Inject constructor() {
         private const val UAH_PER_MAH = 1_000L
         private const val MIN_SPREAD_FOR_DERIVED_TEST = 10
         private const val DERIVED_TOLERANCE = 0.005 // 0.5%
+
+        /**
+         * A measurement outside this band is more likely a unit or scale fault (e.g. a
+         * counter reported in mAh instead of uAh, landing ~1000x low) than a real battery.
+         */
+        private const val MIN_PLAUSIBLE_RATIO = 0.40
+        private const val MAX_PLAUSIBLE_RATIO = 1.30
     }
 }
