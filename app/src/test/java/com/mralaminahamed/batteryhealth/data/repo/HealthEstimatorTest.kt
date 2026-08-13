@@ -203,6 +203,33 @@ class HealthEstimatorTest {
     }
 
     @Test
+    fun coulombRetryPrefersWideSessionsTheSameWayTheCounterPathDoes() {
+        // Seven sessions, all with a synthesised counter landing exactly on design capacity
+        // (spread 35 >= the detection threshold, so this triggers the coulomb retry). Three
+        // are wide (delta 45/50/55) with coulomb implying 4_000_000; four are narrow (delta
+        // 20/22/24/25) with coulomb implying a materially different 2_000_000. Dividing by a
+        // small deltaLevelPct carries the same quantisation error on the coulomb side as it
+        // does on the counter side, so the retry must apply the same wide-set narrowing the
+        // counter path uses -- if it didn't, the narrow sessions would pull the median down.
+        val observations = listOf(
+            CapacityObservation(1, deltaLevelPct = 45, counterDeltaUah = 2_250_000, coulombUah = 1_800_000),
+            CapacityObservation(2, deltaLevelPct = 50, counterDeltaUah = 2_500_000, coulombUah = 2_000_000),
+            CapacityObservation(3, deltaLevelPct = 55, counterDeltaUah = 2_750_000, coulombUah = 2_200_000),
+            CapacityObservation(4, deltaLevelPct = 20, counterDeltaUah = 1_000_000, coulombUah = 400_000),
+            CapacityObservation(5, deltaLevelPct = 22, counterDeltaUah = 1_100_000, coulombUah = 440_000),
+            CapacityObservation(6, deltaLevelPct = 24, counterDeltaUah = 1_200_000, coulombUah = 480_000),
+            CapacityObservation(7, deltaLevelPct = 25, counterDeltaUah = 1_250_000, coulombUah = 500_000),
+        )
+        val report = estimator.estimate(observations, 5000).valueOrNull()!!
+        // Median over all seven coulomb values would be 2_000_000 (40%); wide-only gives
+        // 4_000_000 (80%) -- the same shape as the counter path's own narrowing test.
+        assertEquals(4_000_000, report.measuredFullUah)
+        assertEquals(80, report.healthPct)
+        assertEquals(3, report.sessionsUsed)
+        assertEquals(CapacityMethod.Coulomb, report.method)
+    }
+
+    @Test
     fun mahScaleCounterIsUnsupportedRatherThanReportingADeadBattery() {
         // The counter is reported in mAh instead of uAh: every value lands ~1000x low
         // (5_000 implied full capacity against a 5_000_000 design). A dead battery and a

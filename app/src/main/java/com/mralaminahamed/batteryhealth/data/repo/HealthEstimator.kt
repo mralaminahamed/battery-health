@@ -52,18 +52,31 @@ class HealthEstimator @Inject constructor() {
         if (looksDerivedFromLevel(counterQualifying, designUah)) {
             // The counter is synthesised. Integrated current is an independent measurement
             // of the same thing, so retry from it rather than discarding the session set.
+            // It divides by the same deltaLevelPct the counter path does, so it carries the
+            // same quantisation error and must be narrowed the same way, in the same order:
+            // narrow first, then check MIN_SESSIONS against the narrowed set -- checking
+            // count before narrowing would let a set that narrows below three through.
             val coulombOnly = levelQualifying.mapNotNull { it.toCoulombMeasurement() }
-            if (coulombOnly.size < MIN_SESSIONS) return Reading.Unsupported
-            return report(coulombOnly, designCapacityMah, designUah)
+            val coulombChosen = preferWide(coulombOnly)
+            if (coulombChosen.size < MIN_SESSIONS) return Reading.Unsupported
+            return report(coulombChosen, designCapacityMah, designUah)
         }
 
-        val wide = qualifying.filter { it.deltaLevelPct >= WIDE_DELTA_LEVEL_PCT }
-        // Selection narrows the set. It never weights it: there is no weighted average
-        // anywhere in this calculation.
-        val chosen = if (wide.size >= MIN_SESSIONS) wide else qualifying
-
+        val chosen = preferWide(qualifying)
         if (chosen.size < MIN_SESSIONS) return Reading.NotYetMeasured
         return report(chosen, designCapacityMah, designUah)
+    }
+
+    /**
+     * Prefers wide charge windows when there are enough of them. A measurement divided by a
+     * small deltaLevelPct carries large quantisation error, so a set of wide sessions is
+     * strictly better evidence than a mixed one. Selection narrows the set; it never weights
+     * it. Shared by the counter path and the coulomb retry so there is one rule, not two
+     * copies that can drift apart.
+     */
+    private fun preferWide(measurements: List<Measurement>): List<Measurement> {
+        val wide = measurements.filter { it.deltaLevelPct >= WIDE_DELTA_LEVEL_PCT }
+        return if (wide.size >= MIN_SESSIONS) wide else measurements
     }
 
     /** Shared by the counter path and the coulomb retry so neither duplicates this block. */
