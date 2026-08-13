@@ -39,23 +39,23 @@
             </intent-filter>
         </activity>
 
+        <!--
+            The charge recorder runs inside ChargeRecorderWorker via WorkManager's own
+            setForeground(), not a service we declare ourselves. WorkManager's bundled
+            SystemForegroundService is the actual foreground-service surface for every
+            worker that calls setForeground(); on API 34+ its foregroundServiceType must
+            include the type the worker requests, and the PROPERTY_SPECIAL_USE_FGS_SUBTYPE
+            justification string is tied to this exact service element, not to the
+            worker class, so both are declared here, merged onto the library's own entry.
+        -->
         <service
-            android:name=".sampling.ChargeRecorderService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="specialUse"
+            tools:node="merge">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Samples battery charge counters every five seconds while charging to measure full capacity, which cannot be derived from 15-minute periodic work" />
         </service>
-
-        <receiver
-            android:name=".sampling.PowerReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
-                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
-            </intent-filter>
-        </receiver>
     </application>
 
 </manifest>

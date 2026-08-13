@@ -27,15 +27,24 @@ object SessionAggregator {
     /**
      * A 5-second sampling cadence honestly supports gaps up to a few cadences wide; six
      * cadences (Doze, process death, a killed service) is treated as sampling having
-     * stalled rather than a plateau, so the interval is dropped instead of integrated --
-     * doing otherwise would fabricate charge that was never measured.
+     * stalled rather than a plateau, so the interval is dropped from every attributed
+     * total instead of counted -- doing otherwise would fabricate charge, or screen-on
+     * time, that was never observed. The rule applies identically to both metrics: a gap
+     * is missing data, not a plateau, regardless of which quantity would be attributed.
      */
-    private const val MAX_INTEGRATION_GAP_MS = 30_000L
+    private const val MAX_ATTRIBUTABLE_GAP_MS = 30_000L
     private const val MS_PER_HOUR = 3_600_000L
 
     fun aggregate(samples: List<SampleEntity>): SessionAggregate {
         if (samples.isEmpty()) {
-            return SessionAggregate(null, null, null, null, 0L, null)
+            return SessionAggregate(
+                endLevelPct = null,
+                endCounterUah = null,
+                peakTempDeciC = null,
+                avgMilliwatts = null,
+                screenOnMs = 0L,
+                coulombUah = null,
+            )
         }
 
         val ordered = samples.sortedBy { it.timestampMs }
@@ -57,16 +66,18 @@ object SessionAggregator {
             val next = ordered[index + 1]
             val intervalMs = next.timestampMs - current.timestampMs
 
+            // The gap rule is shared and evaluated first, so it excludes a stalled
+            // interval from both metrics identically. The null-current rule is separate
+            // and independent: it only ever disqualifies coulomb for its own interval,
+            // never the screen-on attribution, and never the interval that follows.
+            if (intervalMs > MAX_ATTRIBUTABLE_GAP_MS) continue
+
             if (current.screenOn) {
                 screenOnMs += intervalMs
             }
 
-            // Each interval is judged independently against both rules, on the original
-            // sample order -- neither rule consumes or shifts the other's view of the
-            // list, so a null-current sample skips only the interval it starts, and a
-            // stalled interval skips only itself, never the interval that follows it.
             val currentUa = current.currentUa
-            if (currentUa != null && intervalMs <= MAX_INTEGRATION_GAP_MS) {
+            if (currentUa != null) {
                 coulombUah += currentUa.toLong() * intervalMs / MS_PER_HOUR
                 hasUsableInterval = true
             }

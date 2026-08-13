@@ -21,6 +21,15 @@ interface SampleDao {
     @Query("SELECT * FROM samples ORDER BY timestampMs DESC LIMIT 1")
     suspend fun latest(): SampleEntity?
 
+    /**
+     * Fetches the exact row just inserted, by the id `insert()` returned. Deliberately
+     * not "the latest sample": a concurrent writer (the baseline worker) can insert a
+     * newer row between this call's insert and any later query, so "latest" can silently
+     * return someone else's sample instead of the one this caller just wrote.
+     */
+    @Query("SELECT * FROM samples WHERE id = :id")
+    suspend fun byId(id: Long): SampleEntity?
+
     @Query("SELECT * FROM samples WHERE sessionId = :sessionId ORDER BY timestampMs ASC")
     suspend fun samplesForSession(sessionId: Long): List<SampleEntity>
 
@@ -42,6 +51,15 @@ interface SessionDao {
 
     @Query("SELECT * FROM sessions WHERE endedAtMs IS NULL ORDER BY startedAtMs DESC LIMIT 1")
     suspend fun openSession(): SessionEntity?
+
+    /**
+     * The open session identified by `id`, specifically -- not "whichever session
+     * happens to be open right now, if its id happens to match". Closing code must be
+     * able to ask for the exact session it means, so a caller can never be misled into
+     * closing a different session than the one it intended to.
+     */
+    @Query("SELECT * FROM sessions WHERE id = :id AND endedAtMs IS NULL")
+    suspend fun openSessionById(id: Long): SessionEntity?
 
     @Query("SELECT * FROM sessions WHERE endedAtMs IS NOT NULL ORDER BY startedAtMs DESC LIMIT :limit")
     suspend fun completedSessions(limit: Int): List<SessionEntity>

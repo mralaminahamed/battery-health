@@ -98,6 +98,23 @@ class SessionAggregatorTest {
         assertNull(SessionAggregator.aggregate(listOf(sample(1_000, tempDeciC = null))).peakTempDeciC)
     }
 
+    @Test
+    fun screenOnTimeExcludesAStalledIntervalTheSameWayCoulombDoes() {
+        // 0 -> 5_000 is a normal interval and counts (5_000). 5_000 -> 305_000 is a
+        // 300_000ms (5 minute) stall -- a gap is missing data, not a plateau, for
+        // screen-on time exactly as it is for coulombUah, so it must not count even
+        // though the screen-on sample sits right at its left endpoint. Without the
+        // shared gap guard this would total 305_000 instead of 5_000.
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, screenOn = true),
+                sample(5_000, screenOn = true),
+                sample(305_000, screenOn = true),
+            )
+        )
+        assertEquals(5_000L, aggregate.screenOnMs)
+    }
+
     // --- coulombUah: Sigma(I * dt) across the session, left-endpoint attribution ---
     //
     // Charge(uAh) = Current(uA) * Time(h) = Current(uA) * Time(ms) / 3_600_000, since
