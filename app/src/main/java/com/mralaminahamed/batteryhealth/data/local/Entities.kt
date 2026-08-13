@@ -37,6 +37,12 @@ data class SessionEntity(
     val peakTempDeciC: Int?,
     val avgMilliwatts: Int?,
     val screenOnMs: Long,
+    /**
+     * Integrated current over the session, in uAh. Added in schema version 2; a later
+     * task populates it. Nullable and never defaulted: an unmeasured value and a
+     * measured zero are different facts.
+     */
+    val coulombUah: Long? = null,
 )
 
 /** `method` is "COUNTER" or "COULOMB". */

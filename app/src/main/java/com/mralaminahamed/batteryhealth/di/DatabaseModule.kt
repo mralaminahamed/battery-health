@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.mralaminahamed.batteryhealth.data.local.BatteryDatabase
 import com.mralaminahamed.batteryhealth.data.local.EstimateDao
+import com.mralaminahamed.batteryhealth.data.local.MIGRATION_1_2
 import com.mralaminahamed.batteryhealth.data.local.SampleDao
 import com.mralaminahamed.batteryhealth.data.local.SessionDao
 import dagger.Module
@@ -24,7 +25,9 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): BatteryDatabase =
-        Room.databaseBuilder(context, BatteryDatabase::class.java, "battery-health.db").build()
+        Room.databaseBuilder(context, BatteryDatabase::class.java, "battery-health.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
 
     @Provides fun provideSampleDao(db: BatteryDatabase): SampleDao = db.samples()
 

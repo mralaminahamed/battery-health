@@ -88,6 +88,8 @@ data class ChargeSession(
     val peakTempDeciC: Int?,
     val avgMilliwatts: Int?,
     val screenOnMs: Long,
+    /** Integrated current over the session, in uAh; null until a later task populates it. */
+    val coulombUah: Long? = null,
 ) {
     val durationMs: Long get() = endedAtMs - startedAtMs
     val deltaLevelPct: Int get() = endLevelPct - startLevelPct
