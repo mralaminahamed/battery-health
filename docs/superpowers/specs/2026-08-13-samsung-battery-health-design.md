@@ -278,10 +278,13 @@ handling and accessibility semantics come from the platform:
   as data.
 - `UnlockCard` — Shizuku explainer, shown only where a `NeedsShizuku` reading
   exists
-- Charts: **Vico**, for the history line and session bars
+- Charts: hand-rolled Compose `Canvas` composables — `LevelHistoryChart` (area
+  line) and `SessionBarChart`. History needs exactly two chart forms, both
+  simple, and drawing them directly removes a dependency while giving the precise
+  control the One UI styling wants.
 
 Libraries: Compose BOM 2026.02.01, Material 3, navigation-compose, Room with KSP,
-WorkManager, Hilt, Vico, Shizuku API.
+WorkManager, Hilt, DataStore Preferences, Shizuku API.
 
 ## Screens
 
