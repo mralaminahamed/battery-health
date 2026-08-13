@@ -12,7 +12,11 @@ data class SessionAggregate(
      * Sigma(I * dt) across the session, in uAh. Populated only when CHARGE_COUNTER is
      * unusable or synthesised but CURRENT_NOW is real (see HealthEstimator). Null, never
      * zero, when no interval was usable -- an unmeasured session and a session that
-     * measured no charge are different facts.
+     * measured no charge are different facts. Only intervals whose sample carried
+     * `currentScaleValidated == true` are summed -- a magnitude guess is excluded even
+     * though `currentUa` itself is non-null, because this is exactly the figure
+     * HealthEstimator falls back to when the charge counter cannot be trusted, and a
+     * guessed number must not be laundered into a value the UI calls "Measured".
      */
     val coulombUah: Long?,
     /**
@@ -92,8 +96,17 @@ object SessionAggregator {
                 screenOnMs += intervalMs
             }
 
+            // Gated on currentScaleValidated == true, not just currentUa != null: a
+            // magnitude guess (false) and an unknown provenance (null, e.g. a
+            // pre-migration row) are both unearned numbers, and coulombUah is exactly
+            // what HealthEstimator falls back to when the charge counter itself cannot
+            // be trusted -- laundering a guess into that fallback would make a
+            // "Measured" health figure indistinguishable from one this app invented.
+            // rawCurrentIntegral below is deliberately not gated the same way: it exists
+            // specifically to resolve a guess, so it must keep working even when every
+            // currentUa in the session is unvalidated.
             val currentUa = current.currentUa
-            if (currentUa != null) {
+            if (currentUa != null && current.currentScaleValidated == true) {
                 coulombUah += currentUa.toLong() * intervalMs / MS_PER_HOUR
                 hasUsableInterval = true
             }

@@ -7,6 +7,7 @@ import com.mralaminahamed.batteryhealth.data.local.SampleDao
 import com.mralaminahamed.batteryhealth.data.local.SampleEntity
 import com.mralaminahamed.batteryhealth.domain.ChargeState
 import com.mralaminahamed.batteryhealth.domain.PlugType
+import com.mralaminahamed.batteryhealth.domain.isActivelyCharging
 import com.mralaminahamed.batteryhealth.domain.valueOrNull
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -35,13 +36,21 @@ class SampleWriter @Inject constructor(
         val broadcast = broadcasts.broadcasts().first()
         val level = broadcast.levelPct ?: return null
 
+        // One BatteryManager read feeds both currentUa and currentRawUnits: CURRENT_NOW
+        // is a volatile hardware register, and reading it twice for what is meant to be
+        // one row's two columns risks the two columns describing different instants of a
+        // value that can move between the two calls, on top of doubling the reads of a
+        // five-second sampler for no benefit.
+        val current = properties.currentSample(isCharging = broadcast.chargeState.isActivelyCharging)
+
         return sampleDao.insert(
             SampleEntity(
                 timestampMs = nowMs.get(),
                 levelPct = level,
                 chargeCounterUah = properties.chargeCounterUah().valueOrNull(),
-                currentUa = properties.currentUa().valueOrNull(),
-                currentRawUnits = properties.currentRawUnits().valueOrNull(),
+                currentUa = current.currentUa.valueOrNull(),
+                currentRawUnits = current.currentRawUnits.valueOrNull(),
+                currentScaleValidated = current.currentScaleValidated,
                 voltageMv = broadcast.voltageMv,
                 tempDeciC = broadcast.temperatureDeciC,
                 statusCode = broadcast.chargeState.toStatusCode(),

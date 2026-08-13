@@ -35,3 +35,25 @@ val MIGRATION_2_3: Migration = object : Migration(2, 3) {
         db.execSQL("ALTER TABLE samples ADD COLUMN currentRawUnits INTEGER")
     }
 }
+
+/**
+ * Adds a marker for which rule produced `currentUa` on each row: a scale
+ * `CurrentScaleDetector.fromCounterAgreement` actually confirmed against the charge
+ * counter, or only `CurrentScaleDetector.fromMagnitude`'s per-reading guess. Without
+ * this, `SessionAggregator`'s coulomb integration -- the figure `HealthEstimator` falls
+ * back to precisely when the charge counter itself cannot be trusted -- cannot tell a
+ * guessed `currentUa` from a validated one, and would silently build a "Measured"
+ * health figure out of a number this app never actually earned.
+ *
+ * Left nullable and without a DEFAULT, matching MIGRATION_2_3's own column: a row
+ * recorded before this migration has no provenance to backfill. SQLite's ADD COLUMN
+ * without DEFAULT already backfills existing rows with NULL, and NULL is the correct
+ * value here -- not `false` (which would claim every historical row was a known guess,
+ * a fact this migration cannot actually establish) and not `true` (which would launder
+ * exactly the unearned data this column exists to flag).
+ */
+val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE samples ADD COLUMN currentScaleValidated INTEGER")
+    }
+}

@@ -28,17 +28,38 @@ class BatteryManagerSource @Inject constructor(
      * The scale [CurrentScaleDetector.fromCounterAgreement] has confirmed, mirrored from
      * `SettingsStore` into a plain field because `currentUa()` is called synchronously (the
      * Live screen and the sampler both need an answer on this call, not after a suspend
-     * point). Null until the first session that moves enough charge to validate it -- see
-     * `currentUa()` for what happens while it is null. This is a live-forever collector on a
-     * `@Singleton` with the app's own lifetime, the same pattern `ChargeRecorderService`
-     * uses for `recorderEnabled`: whichever component last wrote a validated scale to
-     * `SettingsStore`, this field catches up shortly after, asynchronously.
+     * point). Null until the first session that moves enough charge to validate it, or
+     * until [scaleLoaded] becomes true for the first time -- see [scaleLoaded] and
+     * `currentUa()` for what happens while either is still unresolved. This is a
+     * live-forever collector on a `@Singleton` with the app's own lifetime, the same pattern
+     * `ChargeRecorderService` uses for `recorderEnabled`: whichever component last wrote a
+     * validated scale to `SettingsStore`, this field catches up shortly after, asynchronously.
      */
     @Volatile private var validatedScale: CurrentScale? = null
 
+    /**
+     * Whether [validatedScale] has received its first emission from DataStore yet.
+     *
+     * `validatedScale == null` is ambiguous on its own: it means either "DataStore has
+     * genuinely never validated a scale on this install" (safe to fall through to
+     * [CurrentScaleDetector.fromMagnitude]'s guess) or "a scale *was* measured and
+     * persisted on a previous run, but this fresh `@Singleton`'s collector has not
+     * received its first emission yet" (not safe -- a measured-and-persisted value
+     * exists on disk right now). Without this flag, every `currentUa()`/`currentSample()`
+     * call in that short cold-start window would answer with a guess while the earned
+     * answer sits unread a few milliseconds away, and `SampleWriter` would persist that
+     * guess into a row indistinguishable from a validated one. [scaleLoaded] lets
+     * `currentUa()` tell the two cases apart and abstain (`Reading.Unsupported`) rather
+     * than guess during the second one.
+     */
+    @Volatile private var scaleLoaded: Boolean = false
+
     init {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-            settingsStore.currentScale.collect { validatedScale = it }
+            settingsStore.currentScale.collect {
+                validatedScale = it
+                scaleLoaded = true
+            }
         }
     }
 
@@ -50,12 +71,21 @@ class BatteryManagerSource @Inject constructor(
      * report milliamps instead, so a raw passthrough here is exactly the defect this method
      * exists to not repeat.
      *
+     * [isCharging] should be `broadcast.chargeState.isActivelyCharging` from the same
+     * battery-changed broadcast a caller already has in hand -- see
+     * [com.mralaminahamed.batteryhealth.domain.isActivelyCharging] for why `Full` does not
+     * count. It is threaded in here rather than mirrored from a broadcast this class
+     * subscribes to itself, to avoid a second asynchronous collector with its own cold-start
+     * race, on top of the one [scaleLoaded] already exists to close.
+     *
      * Priority order, most to least trustworthy, and the general guess is never allowed to
      * override the specific measurement once one exists: a counter-validated [validatedScale]
      * wins unconditionally over the current reading's own magnitude, because it is a
      * measurement rather than a heuristic; failing that, [CurrentScaleDetector.fromMagnitude]
-     * gives an immediate answer when the reading is unambiguous; failing that, this returns
-     * Unsupported -- no invented data, even temporarily.
+     * gives an immediate, charge-state-gated answer when the reading is unambiguous; failing
+     * that, this returns Unsupported -- no invented data, even temporarily. See
+     * [scaleLoaded] for the one further case this method abstains on: not yet knowing
+     * whether a validated scale already exists on disk.
      *
      * The sentinel check below shares [BatteryProperty.isPlausibleReading] with
      * [CapabilityProbe] and [read] rather than re-deriving it: [Int.MIN_VALUE] is rejected
@@ -64,30 +94,79 @@ class BatteryManagerSource @Inject constructor(
      * every property's sentinel into one check here would repeat the exact defect Task 4
      * fixed one layer up, in [CapabilityProbe].
      */
-    fun currentUa(): Reading<Int> {
+    fun currentUa(isCharging: Boolean): Reading<Int> {
         if (BatteryProperty.CurrentNow !in capabilities) return Reading.Unsupported
         val raw = batteryManager.getIntProperty(BatteryProperty.CurrentNow.id)
-        if (!BatteryProperty.CurrentNow.isPlausibleReading(raw)) return Reading.Unsupported
-        val scale = validatedScale ?: CurrentScaleDetector.fromMagnitude(raw) ?: return Reading.Unsupported
+        return scaledCurrent(raw, isCharging).reading
+    }
+
+    /**
+     * Both interpretations of one physical CURRENT_NOW reading, taken from a single
+     * `getIntProperty` call -- unlike calling [currentUa] and a separate raw accessor back
+     * to back, which would read this volatile hardware register twice for what is meant to
+     * be one sample's two columns. Two reads risk the two columns describing different
+     * instants of a value that can move between them, and doubles the register reads of a
+     * five-second sampler for no benefit.
+     *
+     * [currentScaleValidated] mirrors, for this one reading, whether [currentUa] came from
+     * a counter-confirmed [validatedScale] (`true`) or only [CurrentScaleDetector.fromMagnitude]'s
+     * guess (`false`); `null` when [currentUa] itself is [Reading.Unsupported] and there is no
+     * scale to attribute provenance to. `SampleWriter` persists this alongside the value so a
+     * later aggregation can refuse to build a "Measured" figure out of a row this app never
+     * actually earned -- see `SampleEntity.currentScaleValidated`'s own doc.
+     */
+    data class CurrentSample(
+        val currentUa: Reading<Int>,
+        val currentRawUnits: Reading<Int>,
+        val currentScaleValidated: Boolean?,
+    )
+
+    fun currentSample(isCharging: Boolean): CurrentSample {
+        if (BatteryProperty.CurrentNow !in capabilities) {
+            return CurrentSample(Reading.Unsupported, Reading.Unsupported, currentScaleValidated = null)
+        }
+        val raw = batteryManager.getIntProperty(BatteryProperty.CurrentNow.id)
+        val rawReading = if (BatteryProperty.CurrentNow.isPlausibleReading(raw)) {
+            Reading.Available(raw, Source.Framework)
+        } else {
+            Reading.Unsupported
+        }
+        val (scaledReading, usedValidatedScale) = scaledCurrent(raw, isCharging)
+        val validatedFlag = if (scaledReading is Reading.Available) usedValidatedScale else null
+        return CurrentSample(scaledReading, rawReading, validatedFlag)
+    }
+
+    private data class ScaledCurrent(val reading: Reading<Int>, val usedValidatedScale: Boolean)
+
+    /**
+     * The one place [validatedScale] and [CurrentScaleDetector.fromMagnitude] are actually
+     * applied to a raw reading; [currentUa] and [currentSample] both delegate here so the
+     * priority order and the [scaleLoaded] abstain-window live in exactly one place.
+     */
+    private fun scaledCurrent(raw: Int, isCharging: Boolean): ScaledCurrent {
+        if (!BatteryProperty.CurrentNow.isPlausibleReading(raw)) {
+            return ScaledCurrent(Reading.Unsupported, usedValidatedScale = false)
+        }
+        // Not yet known whether a validated scale already exists on disk -- see
+        // [scaleLoaded]'s own doc for why this must abstain rather than fall through to a
+        // guess that could silently override a measured value this process just hasn't
+        // read back yet.
+        if (!scaleLoaded) return ScaledCurrent(Reading.Unsupported, usedValidatedScale = false)
+        val validated = validatedScale
+        val scale = validated ?: CurrentScaleDetector.fromMagnitude(raw, isCharging)
+            ?: return ScaledCurrent(Reading.Unsupported, usedValidatedScale = false)
         val trueMicroamps = scale.toMicroamps(raw)
         // Guards against a corrupt or wildly implausible register value silently wrapping
         // into a different, plausible-looking Int when narrowed below -- realistic phone
         // currents (single-digit amps) never approach this bound at either scale.
-        if (trueMicroamps !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) return Reading.Unsupported
-        return Reading.Available(trueMicroamps.toInt(), Source.Framework)
+        if (trueMicroamps !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
+            return ScaledCurrent(Reading.Unsupported, usedValidatedScale = false)
+        }
+        return ScaledCurrent(
+            Reading.Available(trueMicroamps.toInt(), Source.Framework),
+            usedValidatedScale = validated != null,
+        )
     }
-
-    /**
-     * The untouched CURRENT_NOW register value: capability- and sentinel-gated exactly like
-     * every other reading here, but deliberately never scaled. Not a claim about units --
-     * callers must not treat this as microamps or display it -- kept only so a completed
-     * session can later cross-validate the device's real scale against the charge counter
-     * (see [CurrentScaleDetector.fromCounterAgreement] and `SessionAggregator`'s
-     * `rawCurrentIntegral`). Feeding that check a value [currentUa] had already scaled would
-     * let a correct per-reading magnitude guess get mistaken for confirmation of the wrong
-     * scale.
-     */
-    fun currentRawUnits(): Reading<Int> = read(BatteryProperty.CurrentNow) { it }
 
     /**
      * `BatteryManager#computeChargeTimeRemaining` is API 28
@@ -137,7 +216,11 @@ class BatteryManagerSource @Inject constructor(
          * own `NewApi` check see through this helper as a version gate at the call site
          * in [chargeTimeRemainingMs] -- without it, lint cannot tell this function apart
          * from an arbitrary `Boolean`-returning method and keeps flagging the guarded
-         * call as unconditional.
+         * call as unconditional. That annotation is a promise to lint, not an enforced
+         * contract on this function's parameter: it only holds at a call site that
+         * actually passes `Build.VERSION.SDK_INT` (as [chargeTimeRemainingMs] does) --
+         * calling this with an arbitrary `sdkInt` for some other purpose would still
+         * type-check and still satisfy lint, without actually gating anything real.
          */
         @VisibleForTesting
         @ChecksSdkIntAtLeast(api = Build.VERSION_CODES.P)

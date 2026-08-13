@@ -6,54 +6,95 @@ import org.junit.Test
 
 class CurrentScaleTest {
 
-    // --- fromMagnitude: immediate, per-reading guess from magnitude alone ---
+    // --- fromMagnitude: immediate, per-reading guess from magnitude alone, refined by
+    // charge state. Below the microamp ceiling, magnitude alone can never decide the
+    // unit -- see the Critical fix in the function's own doc -- so every case in that
+    // band is tested twice: once with isCharging = false, which must always abstain
+    // (null), and once with isCharging = true, which is the one case allowed to answer.
 
     @Test
-    fun realA35ReadingResolvesToMilliampsByMagnitude() {
+    fun realA35ReadingResolvesToMilliampsWhileCharging() {
         // The exact raw value this defect was found with: 2409 at a real 2.4 A charge.
-        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(2_409))
+        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(2_409, isCharging = true))
     }
 
     @Test
-    fun genuineMicroampReadingResolvesToMicroamps() {
-        // The same real current (2.4 A), correctly reported in microamps.
-        assertEquals(CurrentScale.Microamps, CurrentScaleDetector.fromMagnitude(2_409_000))
+    fun sameReadingAbstainsWithoutChargeState() {
+        // Identical raw value to the case above, but with no charge-state evidence: 2409
+        // uA (an ordinary idle draw) and 2409 mA (a real charging current) are both
+        // plausible, so this must not assert either one.
+        assertNull(CurrentScaleDetector.fromMagnitude(2_409, isCharging = false))
     }
 
     @Test
-    fun negativeMagnitudeIsTreatedTheSameAsPositive() {
+    fun genuineMicroampReadingResolvesToMicroampsRegardlessOfChargeState() {
+        // The same real current (2.4 A), correctly reported in microamps. At or above the
+        // ceiling, magnitude alone already decides -- charge state adds nothing here.
+        assertEquals(
+            CurrentScale.Microamps,
+            CurrentScaleDetector.fromMagnitude(2_409_000, isCharging = false),
+        )
+        assertEquals(
+            CurrentScale.Microamps,
+            CurrentScaleDetector.fromMagnitude(2_409_000, isCharging = true),
+        )
+    }
+
+    @Test
+    fun negativeMagnitudeIsTreatedTheSameAsPositiveWhileCharging() {
         // A genuine small discharge current can read negative; sign must not change which
-        // scale is inferred, only abs(rawCurrent) matters.
-        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(-2_409))
+        // scale is inferred, only abs(rawCurrent) matters. Discharging is not charging, so
+        // isCharging = true here models a device charging at this exact register value
+        // that happens to read negative, not an actual discharge.
+        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(-2_409, isCharging = true))
     }
 
     @Test
-    fun idleReadingBelowTheFloorReturnsNull() {
-        // 50, at either scale, is too small to be unambiguous: 50 uA is a plausible idle
-        // draw, and so is 50 mA.
-        assertNull(CurrentScaleDetector.fromMagnitude(50))
+    fun idleReadingBelowTheFloorAbstainsEvenWhileCharging() {
+        // 50, at either scale, is too small to be a plausible charging current at all --
+        // isCharging = true does not rescue a magnitude this far below the floor.
+        assertNull(CurrentScaleDetector.fromMagnitude(50, isCharging = true))
     }
 
     @Test
-    fun magnitudeJustBelowTheUnambiguousMilliampsFloorReturnsNull() {
-        // 199 is one below the 200 mA floor that fromMagnitude was designed around -- still
-        // in the ambiguous band, not yet unambiguous.
-        assertNull(CurrentScaleDetector.fromMagnitude(199))
+    fun magnitudeJustBelowTheUnambiguousMilliampsFloorAbstainsEvenWhileCharging() {
+        // 199 is one below the 200 mA floor -- still in the floor's own ambiguous band,
+        // not yet a plausible charging current, regardless of charge state.
+        assertNull(CurrentScaleDetector.fromMagnitude(199, isCharging = true))
     }
 
     @Test
-    fun magnitudeAtTheUnambiguousMilliampsFloorResolvesToMilliamps() {
-        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(200))
+    fun magnitudeAtTheUnambiguousMilliampsFloorAbstainsWithoutChargeState() {
+        // Renamed from ...ResolvesToMilliamps: magnitude alone was never entitled to
+        // assert here -- 200 uA (idle) and 200 mA (a slow charge) are both plausible, and
+        // the previous version of this test pinned exactly the misclassification the
+        // Critical fix removes.
+        assertNull(CurrentScaleDetector.fromMagnitude(200, isCharging = false))
     }
 
     @Test
-    fun magnitudeJustBelowTheMicroampCeilingResolvesToMilliamps() {
-        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(19_999))
+    fun magnitudeAtTheUnambiguousMilliampsFloorResolvesToMilliampsWhileCharging() {
+        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(200, isCharging = true))
     }
 
     @Test
-    fun magnitudeAtTheMicroampCeilingResolvesToMicroamps() {
-        assertEquals(CurrentScale.Microamps, CurrentScaleDetector.fromMagnitude(20_000))
+    fun magnitudeJustBelowTheMicroampCeilingAbstainsWithoutChargeState() {
+        // Renamed from ...ResolvesToMilliamps: this is the exact case the brief calls out
+        // by direction -- 19,999 as milliamps is ~20 A, which no phone does, while 19,999
+        // uA is an ordinary idle draw, so the milliamp assertion here was the *less*
+        // plausible reading, not the safer default the old code treated it as.
+        assertNull(CurrentScaleDetector.fromMagnitude(19_999, isCharging = false))
+    }
+
+    @Test
+    fun magnitudeJustBelowTheMicroampCeilingResolvesToMilliampsWhileCharging() {
+        assertEquals(CurrentScale.Milliamps, CurrentScaleDetector.fromMagnitude(19_999, isCharging = true))
+    }
+
+    @Test
+    fun magnitudeAtTheMicroampCeilingResolvesToMicroampsRegardlessOfChargeState() {
+        assertEquals(CurrentScale.Microamps, CurrentScaleDetector.fromMagnitude(20_000, isCharging = false))
+        assertEquals(CurrentScale.Microamps, CurrentScaleDetector.fromMagnitude(20_000, isCharging = true))
     }
 
     // --- fromCounterAgreement: authoritative check against the charge counter ---

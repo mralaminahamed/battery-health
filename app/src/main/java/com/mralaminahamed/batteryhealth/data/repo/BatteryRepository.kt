@@ -8,6 +8,7 @@ import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
 import com.mralaminahamed.batteryhealth.domain.HealthReport
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.domain.Source
+import com.mralaminahamed.batteryhealth.domain.isActivelyCharging
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -33,7 +34,7 @@ class BatteryRepository @Inject constructor(
             chargeState = Reading.Available(broadcast.chargeState, Source.Framework),
             plugType = Reading.Available(broadcast.plugType, Source.Framework),
             voltageMv = broadcast.voltageMv.asReading(),
-            currentUa = properties.currentUa(),
+            currentUa = properties.currentUa(isCharging = broadcast.chargeState.isActivelyCharging),
             temperatureDeciC = broadcast.temperatureDeciC.asReading(),
             technology = broadcast.technology.asReading(),
             chargeCounterUah = properties.chargeCounterUah(),

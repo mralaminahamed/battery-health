@@ -19,28 +19,56 @@ enum class CurrentScale(val microampsPerUnit: Long) {
 
 /**
  * Two independent mechanisms for the same question, because they answer different needs.
- * [fromMagnitude] is an immediate, per-reading guess so the Live screen can show something
- * before any session has ever completed. [fromCounterAgreement] is the slower, authoritative
- * check the capacity math is allowed to trust -- a measurement against the charge counter,
- * not a heuristic. Once the counter check has an answer it must win: nothing here lets the
- * magnitude guess override a scale [fromCounterAgreement] has already confirmed.
+ * [fromMagnitude] is an immediate, per-reading guess -- gated by charge state, see its own
+ * doc -- so the Live screen can show something before any session has ever completed.
+ * [fromCounterAgreement] is the slower, authoritative check the capacity math is allowed to
+ * trust -- a measurement against the charge counter, not a heuristic. Once the counter check
+ * has an answer it must win: nothing here lets the magnitude guess override a scale
+ * [fromCounterAgreement] has already confirmed.
  */
 object CurrentScaleDetector {
 
     /**
-     * Immediate, display-oriented guess from magnitude alone.
+     * Immediate, display-oriented guess from magnitude alone, refined by whether the
+     * device is actively charging right now.
      *
-     * Only answers when the reading is unambiguous: a device actively charging or
-     * discharging at more than [UNAMBIGUOUS_MILLIAMPS] mA must report at least that many
-     * thousand microamps, so a small absolute value at a real, non-trivial rate can only be
-     * milliamps. Below [UNAMBIGUOUS_MILLIAMPS] the reading could plausibly be idle at either
-     * scale, so the caller gets null and reports the metric absent rather than picking.
+     * Exactly one assertion is safe from magnitude with no other context at all: at or
+     * above [MIN_UNAMBIGUOUS_MICROAMPS], only a microamp-scale device could plausibly
+     * report the value, because the milliamp interpretation of that magnitude is an
+     * impossible current (20 A or more) that no phone produces. Below that ceiling a
+     * single reading genuinely cannot decide the unit: an idle device drawing a few
+     * hundred *micro*amps and one drawing a few hundred *milli*amps produce
+     * indistinguishable raw magnitudes, and picking one is a guess dressed as a
+     * measurement -- [fromCounterAgreement] exists precisely because that guess is
+     * sometimes wrong. Note the direction of the risk at the top of this band: for a raw
+     * value like 19,999, the milliamp reading (20 A) is the *less* plausible one, while
+     * the microamp reading (20 mA) is an ordinary idle draw -- so a rule that defaulted
+     * to milliamps there, as an earlier version of this function did, was asserting into
+     * exactly the case where it was least likely to be right.
+     *
+     * [isCharging] is the one signal specific enough to resolve that band, and it adds
+     * nothing at or above the ceiling, where magnitude alone already decides. While the
+     * device is actively pushing current into the battery -- not merely plugged in, see
+     * [com.mralaminahamed.batteryhealth.domain.isActivelyCharging] -- that current is
+     * never a trickle: real chargers regulate to currents from roughly a hundred
+     * milliamps up to a few amps, never the 0.2-20 mA a microamp-scale reading in this
+     * band would represent. A genuinely microamp-scale device that was actually charging
+     * would therefore read in the millions here, not inside this band at all. A reading
+     * that lands in this band *while charging* thus rules out the microamp hypothesis on
+     * physical-plausibility grounds -- not on magnitude alone -- and leaves only
+     * milliamps. Without knowing charging state, that elimination is unavailable: the
+     * same magnitude could just as easily be a genuine microamp-scale idle or discharge
+     * reading, so the function must abstain (null) rather than guess. This is why the
+     * parameter exists: widening this band back out to an unconditional assertion, as a
+     * previous version of this function did, is exactly the failure this app keeps
+     * reintroducing -- a general rule answering where only a more specific one (charge
+     * state, or better yet [fromCounterAgreement]'s real measurement) was entitled to.
      */
-    fun fromMagnitude(rawCurrent: Int): CurrentScale? {
+    fun fromMagnitude(rawCurrent: Int, isCharging: Boolean): CurrentScale? {
         val magnitude = abs(rawCurrent.toLong())
         return when {
             magnitude >= MIN_UNAMBIGUOUS_MICROAMPS -> CurrentScale.Microamps
-            magnitude >= UNAMBIGUOUS_MILLIAMPS -> CurrentScale.Milliamps
+            isCharging && magnitude >= UNAMBIGUOUS_MILLIAMPS -> CurrentScale.Milliamps
             else -> null
         }
     }
@@ -78,7 +106,13 @@ object CurrentScaleDetector {
 
     private const val MS_PER_HOUR = 3_600_000L
 
-    /** Below this the device is idle enough that magnitude proves nothing. */
+    /**
+     * Below this, even a genuine charging current is implausible, so [fromMagnitude]
+     * abstains regardless of [CurrentScale]-vs-charging-state reasoning above it -- this
+     * floor is not itself validated against real low-current charging data (see the
+     * Task 15 report's note on that), so it is deliberately left generous rather than
+     * tightened on no evidence.
+     */
     private const val UNAMBIGUOUS_MILLIAMPS = 200L
 
     /** At or above this, only a microamp-scale device could plausibly report the value. */

@@ -191,8 +191,176 @@ class DatabaseMigrationTest {
         migrated.close()
     }
 
+    /**
+     * MIGRATION_3_4 only ever ALTERs `samples`, but every table is seeded and checked
+     * here for the same reason the two tests above do: the point is the template, not
+     * just this one column.
+     */
+    @Test
+    fun migrationThreeToFourPreservesExistingRowsInEveryTableAndAddsANullableColumn() {
+        helper.createDatabase(TEST_DB_3_4, 3).apply {
+            execSQL(
+                """
+                INSERT INTO sessions
+                    (id, type, startedAtMs, endedAtMs, startLevelPct, endLevelPct,
+                     startCounterUah, endCounterUah, peakTempDeciC, avgMilliwatts, screenOnMs,
+                     coulombUah)
+                VALUES
+                    (1, 'CHARGE', 1000, 9000, 20, 80, 1000000, 3580000, 380, 9000, 500, 2460000)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO samples
+                    (id, timestampMs, levelPct, chargeCounterUah, currentUa, voltageMv,
+                     tempDeciC, statusCode, pluggedCode, screenOn, sessionId, currentRawUnits)
+                VALUES
+                    (1, 4000, 55, 2000000, 500000, 3900, 300, 2, 2, 1, 1, 2409)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO capacity_estimates
+                    (id, sessionId, measuredFullUah, deltaLevelPct, method, trustworthy)
+                VALUES
+                    (1, 1, 4300000, 60, 'COUNTER', 1)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB_3_4, 4, true, MIGRATION_3_4)
+
+        val sampleCursor = migrated.query("SELECT * FROM samples WHERE id = 1")
+        assertTrue("the pre-migration sample row must still be there", sampleCursor.moveToFirst())
+        assertEquals(4000L, sampleCursor.getLong(sampleCursor.getColumnIndexOrThrow("timestampMs")))
+        assertEquals(55, sampleCursor.getInt(sampleCursor.getColumnIndexOrThrow("levelPct")))
+        assertEquals(500_000, sampleCursor.getInt(sampleCursor.getColumnIndexOrThrow("currentUa")))
+        assertEquals(2_409, sampleCursor.getInt(sampleCursor.getColumnIndexOrThrow("currentRawUnits")))
+        assertEquals(1L, sampleCursor.getLong(sampleCursor.getColumnIndexOrThrow("sessionId")))
+
+        val validatedIndex = sampleCursor.getColumnIndexOrThrow("currentScaleValidated")
+        // Undefaulted ADD COLUMN backfills existing rows with NULL: a row recorded before
+        // this migration has no provenance to backfill, and NULL -- not a fabricated
+        // false or true -- is the only honest value for "we don't know which rule wrote
+        // this row's currentUa".
+        assertTrue(
+            "a pre-migration row's new column must read null, not a fabricated true/false",
+            sampleCursor.isNull(validatedIndex),
+        )
+        sampleCursor.close()
+
+        // This migration never touches these two tables, but they are checked anyway --
+        // the point is the template, not this specific column.
+        val sessionCursor = migrated.query("SELECT * FROM sessions WHERE id = 1")
+        assertTrue("the pre-migration session row must still be there", sessionCursor.moveToFirst())
+        assertEquals("CHARGE", sessionCursor.getString(sessionCursor.getColumnIndexOrThrow("type")))
+        assertEquals(2_460_000L, sessionCursor.getLong(sessionCursor.getColumnIndexOrThrow("coulombUah")))
+        sessionCursor.close()
+
+        val estimateCursor = migrated.query("SELECT * FROM capacity_estimates WHERE id = 1")
+        assertTrue("the pre-migration estimate row must still be there", estimateCursor.moveToFirst())
+        assertEquals(1L, estimateCursor.getLong(estimateCursor.getColumnIndexOrThrow("sessionId")))
+        assertEquals(
+            4_300_000L,
+            estimateCursor.getLong(estimateCursor.getColumnIndexOrThrow("measuredFullUah")),
+        )
+        estimateCursor.close()
+
+        migrated.close()
+    }
+
+    /**
+     * Room chains the three registered migrations (1->2, 2->3, 3->4) automatically when
+     * asked to go straight from version 1 to the current version, but that chaining is
+     * not itself pinned by any of the three tests above -- each only proves its own
+     * single step in isolation. This seeds a genuine version-1 database (the same shape
+     * migrationOneToTwo... does) and migrates it straight to 4, passing every registered
+     * migration at once, so a future change that breaks the chain (an incompatible
+     * ordering, a missing registration) fails here even if each individual step still
+     * passes on its own.
+     */
+    @Test
+    fun migrationOneToFourAppliesEveryRegisteredMigrationInSequence() {
+        helper.createDatabase(TEST_DB_1_4, 1).apply {
+            execSQL(
+                """
+                INSERT INTO sessions
+                    (id, type, startedAtMs, endedAtMs, startLevelPct, endLevelPct,
+                     startCounterUah, endCounterUah, peakTempDeciC, avgMilliwatts, screenOnMs)
+                VALUES
+                    (1, 'CHARGE', 1000, 9000, 20, 80, 1000000, 3580000, 380, 9000, 500)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO samples
+                    (id, timestampMs, levelPct, chargeCounterUah, currentUa, voltageMv,
+                     tempDeciC, statusCode, pluggedCode, screenOn, sessionId)
+                VALUES
+                    (1, 4000, 55, 2000000, 500000, 3900, 300, 2, 2, 1, 1)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO capacity_estimates
+                    (id, sessionId, measuredFullUah, deltaLevelPct, method, trustworthy)
+                VALUES
+                    (1, 1, 4300000, 60, 'COUNTER', 1)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            TEST_DB_1_4,
+            4,
+            true,
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+        )
+
+        val sessionCursor = migrated.query("SELECT * FROM sessions WHERE id = 1")
+        assertTrue("the pre-migration session row must still be there", sessionCursor.moveToFirst())
+        assertEquals("CHARGE", sessionCursor.getString(sessionCursor.getColumnIndexOrThrow("type")))
+        assertEquals(1_000_000L, sessionCursor.getLong(sessionCursor.getColumnIndexOrThrow("startCounterUah")))
+        assertTrue(
+            "coulombUah did not exist at version 1; it must backfill to null, not 0",
+            sessionCursor.isNull(sessionCursor.getColumnIndexOrThrow("coulombUah")),
+        )
+        sessionCursor.close()
+
+        val sampleCursor = migrated.query("SELECT * FROM samples WHERE id = 1")
+        assertTrue("the pre-migration sample row must still be there", sampleCursor.moveToFirst())
+        assertEquals(4000L, sampleCursor.getLong(sampleCursor.getColumnIndexOrThrow("timestampMs")))
+        assertEquals(500_000, sampleCursor.getInt(sampleCursor.getColumnIndexOrThrow("currentUa")))
+        assertTrue(
+            "currentRawUnits did not exist at version 1; it must backfill to null, not 0",
+            sampleCursor.isNull(sampleCursor.getColumnIndexOrThrow("currentRawUnits")),
+        )
+        assertTrue(
+            "currentScaleValidated did not exist at version 1; it must backfill to null, " +
+                "not a fabricated true/false",
+            sampleCursor.isNull(sampleCursor.getColumnIndexOrThrow("currentScaleValidated")),
+        )
+        sampleCursor.close()
+
+        val estimateCursor = migrated.query("SELECT * FROM capacity_estimates WHERE id = 1")
+        assertTrue("the pre-migration estimate row must still be there", estimateCursor.moveToFirst())
+        assertEquals(
+            4_300_000L,
+            estimateCursor.getLong(estimateCursor.getColumnIndexOrThrow("measuredFullUah")),
+        )
+        estimateCursor.close()
+
+        migrated.close()
+    }
+
     private companion object {
         const val TEST_DB = "migration-1-2-test.db"
         const val TEST_DB_2_3 = "migration-2-3-test.db"
+        const val TEST_DB_3_4 = "migration-3-4-test.db"
+        const val TEST_DB_1_4 = "migration-1-4-test.db"
     }
 }
