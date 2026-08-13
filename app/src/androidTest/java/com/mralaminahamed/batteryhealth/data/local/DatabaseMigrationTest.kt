@@ -111,7 +111,88 @@ class DatabaseMigrationTest {
         migrated.close()
     }
 
+    /**
+     * MIGRATION_2_3 only ever ALTERs `samples`, but every table is seeded and checked here
+     * for the same reason migrationOneToTwo... does: the point is the template surviving to
+     * the next schema change, not just this one. The device this was found on had a real
+     * version-2 database with real recorded sessions -- confirmed directly by installing the
+     * fixed build over it and reading the migrated rows back -- so this test is pinning
+     * behaviour already proven on hardware, not hoping it works for the first time here.
+     */
+    @Test
+    fun migrationTwoToThreePreservesExistingRowsInEveryTableAndAddsANullableColumn() {
+        helper.createDatabase(TEST_DB_2_3, 2).apply {
+            execSQL(
+                """
+                INSERT INTO sessions
+                    (id, type, startedAtMs, endedAtMs, startLevelPct, endLevelPct,
+                     startCounterUah, endCounterUah, peakTempDeciC, avgMilliwatts, screenOnMs,
+                     coulombUah)
+                VALUES
+                    (1, 'CHARGE', 1000, 9000, 20, 80, 1000000, 3580000, 380, 9000, 500, 2460000)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO samples
+                    (id, timestampMs, levelPct, chargeCounterUah, currentUa, voltageMv,
+                     tempDeciC, statusCode, pluggedCode, screenOn, sessionId)
+                VALUES
+                    (1, 4000, 55, 2000000, 500000, 3900, 300, 2, 2, 1, 1)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO capacity_estimates
+                    (id, sessionId, measuredFullUah, deltaLevelPct, method, trustworthy)
+                VALUES
+                    (1, 1, 4300000, 60, 'COUNTER', 1)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB_2_3, 3, true, MIGRATION_2_3)
+
+        val sampleCursor = migrated.query("SELECT * FROM samples WHERE id = 1")
+        assertTrue("the pre-migration sample row must still be there", sampleCursor.moveToFirst())
+        assertEquals(4000L, sampleCursor.getLong(sampleCursor.getColumnIndexOrThrow("timestampMs")))
+        assertEquals(55, sampleCursor.getInt(sampleCursor.getColumnIndexOrThrow("levelPct")))
+        assertEquals(500_000, sampleCursor.getInt(sampleCursor.getColumnIndexOrThrow("currentUa")))
+        assertEquals(1L, sampleCursor.getLong(sampleCursor.getColumnIndexOrThrow("sessionId")))
+
+        val rawUnitsIndex = sampleCursor.getColumnIndexOrThrow("currentRawUnits")
+        // Undefaulted ADD COLUMN backfills existing rows with NULL: a row recorded before
+        // this migration genuinely has no raw reading to backfill, and inventing one would
+        // be exactly the fabricated data this whole task exists to avoid.
+        assertTrue(
+            "a pre-migration row's new column must read null, not a fabricated raw value",
+            sampleCursor.isNull(rawUnitsIndex),
+        )
+        sampleCursor.close()
+
+        // This migration never touches these two tables, but they are checked anyway --
+        // the point is the template, not this specific column.
+        val sessionCursor = migrated.query("SELECT * FROM sessions WHERE id = 1")
+        assertTrue("the pre-migration session row must still be there", sessionCursor.moveToFirst())
+        assertEquals("CHARGE", sessionCursor.getString(sessionCursor.getColumnIndexOrThrow("type")))
+        assertEquals(2_460_000L, sessionCursor.getLong(sessionCursor.getColumnIndexOrThrow("coulombUah")))
+        sessionCursor.close()
+
+        val estimateCursor = migrated.query("SELECT * FROM capacity_estimates WHERE id = 1")
+        assertTrue("the pre-migration estimate row must still be there", estimateCursor.moveToFirst())
+        assertEquals(1L, estimateCursor.getLong(estimateCursor.getColumnIndexOrThrow("sessionId")))
+        assertEquals(
+            4_300_000L,
+            estimateCursor.getLong(estimateCursor.getColumnIndexOrThrow("measuredFullUah")),
+        )
+        estimateCursor.close()
+
+        migrated.close()
+    }
+
     private companion object {
         const val TEST_DB = "migration-1-2-test.db"
+        const val TEST_DB_2_3 = "migration-2-3-test.db"
     }
 }

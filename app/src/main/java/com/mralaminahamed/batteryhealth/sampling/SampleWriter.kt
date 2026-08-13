@@ -41,6 +41,7 @@ class SampleWriter @Inject constructor(
                 levelPct = level,
                 chargeCounterUah = properties.chargeCounterUah().valueOrNull(),
                 currentUa = properties.currentUa().valueOrNull(),
+                currentRawUnits = properties.currentRawUnits().valueOrNull(),
                 voltageMv = broadcast.voltageMv,
                 tempDeciC = broadcast.temperatureDeciC,
                 statusCode = broadcast.chargeState.toStatusCode(),

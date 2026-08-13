@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.util.Log
 import com.mralaminahamed.batteryhealth.R
 import com.mralaminahamed.batteryhealth.data.framework.BatteryBroadcastSource
+import com.mralaminahamed.batteryhealth.data.framework.CurrentScaleDetector
 import com.mralaminahamed.batteryhealth.data.local.SampleDao
 import com.mralaminahamed.batteryhealth.data.local.SessionDao
 import com.mralaminahamed.batteryhealth.data.local.SessionEntity
@@ -327,6 +328,36 @@ class ChargeRecorderService : Service() {
                 screenOnMs = aggregate.screenOnMs,
             )
         )
+        detectAndPersistCurrentScale(
+            startCounterUah = open.startCounterUah,
+            endCounterUah = aggregate.endCounterUah,
+            rawCurrentIntegral = aggregate.rawCurrentIntegral,
+        )
+    }
+
+    /**
+     * Cross-validates the device's CURRENT_NOW unit scale against this same session's own
+     * charge-counter movement -- the measurement `BatteryManagerSource.currentUa()` prefers
+     * over its own per-reading magnitude guess once one exists. Runs on every session close,
+     * not just the first: the scale is a hardware/firmware characteristic that should not
+     * change between charges, but re-confirming it is one cheap write, and it is what lets a
+     * genuine change (an OS update touching the HAL) correct itself rather than being stuck
+     * behind a stale answer forever.
+     *
+     * A counter that decreased over the session means the fuel gauge reset, not that charge
+     * flowed backwards -- the same guard `Mappers.toObservation()` applies for the health
+     * estimator's own counterDeltaUah, so a synthesised or reset counter cannot be mistaken
+     * for validating evidence here either.
+     */
+    private suspend fun detectAndPersistCurrentScale(
+        startCounterUah: Long?,
+        endCounterUah: Long?,
+        rawCurrentIntegral: Long?,
+    ) {
+        if (startCounterUah == null || endCounterUah == null || rawCurrentIntegral == null) return
+        val counterDeltaUah = (endCounterUah - startCounterUah).takeIf { it > 0 } ?: return
+        val scale = CurrentScaleDetector.fromCounterAgreement(rawCurrentIntegral, counterDeltaUah) ?: return
+        settings.setCurrentScale(scale)
     }
 
     private fun createChannel() {

@@ -21,6 +21,19 @@ data class SampleEntity(
     val pluggedCode: Int,
     val screenOn: Boolean,
     val sessionId: Long?,
+    /**
+     * The untouched CURRENT_NOW register value, before any unit-scale interpretation.
+     * Never presented to the UI or fed into any arithmetic directly -- `currentUa` is the
+     * one true-microamp figure this table makes claims through. This column exists only so
+     * a completed session can later cross-validate the device's actual scale against the
+     * charge counter (see CurrentScaleDetector.fromCounterAgreement): that check needs a
+     * genuinely unscaled integral, and `currentUa` can already be a per-reading magnitude
+     * guess by the time it is written, which would let a correct guess get mistaken for
+     * confirmation of the wrong scale. Defaulted to null, unlike the other nullable columns
+     * here, because most call sites (retention, mapping, unrelated fixtures) have no stake
+     * in it.
+     */
+    val currentRawUnits: Int? = null,
 )
 
 /** `type` is "CHARGE" or "DISCHARGE"; a null `endedAtMs` marks the open session. */

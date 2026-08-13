@@ -7,7 +7,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mralaminahamed.batteryhealth.data.framework.CurrentScale
 import com.mralaminahamed.batteryhealth.sampling.ChargeRecorderService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -32,6 +34,28 @@ class SettingsStore @Inject constructor(private val context: Context) {
      */
     val recorderEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[RECORDER_ENABLED] ?: false }.distinctUntilChanged()
+
+    /**
+     * The device's CURRENT_NOW unit scale, once `CurrentScaleDetector.fromCounterAgreement`
+     * has confirmed it against a real charge-counter delta. Absent until then -- there is no
+     * default here, unlike `recorderEnabled`, because a guessed default would be exactly the
+     * invented data this whole mechanism exists to avoid. `BatteryManagerSource` falls back
+     * to a per-reading magnitude guess for as long as this stays null.
+     *
+     * Never cleared once set, and re-written (not skipped) every time a later session
+     * validates it again: the scale is a hardware/firmware characteristic that will not
+     * change between charges on the same device, so there is no "already known, don't
+     * re-check" gate here -- the cost of re-confirming the same answer is one cheap,
+     * idempotent write, and it is what lets a genuine change (an OS update touching the
+     * HAL) self-correct instead of being stuck behind a stale value forever.
+     */
+    val currentScale: Flow<CurrentScale?> = context.dataStore.data
+        .map { prefs -> prefs[CURRENT_SCALE]?.let { stored -> runCatching { CurrentScale.valueOf(stored) }.getOrNull() } }
+        .distinctUntilChanged()
+
+    suspend fun setCurrentScale(scale: CurrentScale) {
+        context.dataStore.edit { it[CURRENT_SCALE] = scale.name }
+    }
 
     suspend fun setDesignCapacityOverride(mah: Int?) {
         context.dataStore.edit { prefs ->
@@ -80,5 +104,6 @@ class SettingsStore @Inject constructor(private val context: Context) {
     private companion object {
         val DESIGN_CAPACITY_OVERRIDE = intPreferencesKey("design_capacity_override_mah")
         val RECORDER_ENABLED = booleanPreferencesKey("recorder_enabled")
+        val CURRENT_SCALE = stringPreferencesKey("current_scale")
     }
 }

@@ -15,6 +15,18 @@ data class SessionAggregate(
      * measured no charge are different facts.
      */
     val coulombUah: Long?,
+    /**
+     * Sigma(rawUnits * dt) across the session, in raw-unit-milliseconds -- the untouched
+     * CURRENT_NOW register value, never the scale-corrected currentUa. Kept apart from
+     * coulombUah so ChargeRecorderService can hand it to
+     * CurrentScaleDetector.fromCounterAgreement as a genuinely unscaled integral: feeding
+     * that check an already-guessed currentUa would let a correct per-reading magnitude
+     * guess get mistaken for confirmation of the wrong scale, and silently persist it.
+     * Null, never zero, when no interval had a usable raw reading -- independent of whether
+     * coulombUah itself is usable, since a sample can carry a raw register value even when
+     * currentUa was Unsupported (ambiguous magnitude, no validated scale yet).
+     */
+    val rawCurrentIntegral: Long?,
 )
 
 /**
@@ -44,6 +56,7 @@ object SessionAggregator {
                 avgMilliwatts = null,
                 screenOnMs = 0L,
                 coulombUah = null,
+                rawCurrentIntegral = null,
             )
         }
 
@@ -61,15 +74,18 @@ object SessionAggregator {
         var screenOnMs = 0L
         var coulombUah = 0L
         var hasUsableInterval = false
+        var rawCurrentIntegral = 0L
+        var hasUsableRawInterval = false
         for (index in 0 until ordered.lastIndex) {
             val current = ordered[index]
             val next = ordered[index + 1]
             val intervalMs = next.timestampMs - current.timestampMs
 
             // The gap rule is shared and evaluated first, so it excludes a stalled
-            // interval from both metrics identically. The null-current rule is separate
-            // and independent: it only ever disqualifies coulomb for its own interval,
-            // never the screen-on attribution, and never the interval that follows.
+            // interval from every metric identically. The null-current and
+            // null-raw-units rules are separate and independent from each other and from
+            // the gap rule: each only ever disqualifies its own interval for its own
+            // metric, never the screen-on attribution, and never the interval that follows.
             if (intervalMs > MAX_ATTRIBUTABLE_GAP_MS) continue
 
             if (current.screenOn) {
@@ -81,6 +97,16 @@ object SessionAggregator {
                 coulombUah += currentUa.toLong() * intervalMs / MS_PER_HOUR
                 hasUsableInterval = true
             }
+
+            // Deliberately not gated on currentUa above: a sample can carry a raw
+            // register value even when currentUa was reported Unsupported (ambiguous
+            // magnitude, no validated scale yet), and that is exactly the case this
+            // integral exists to rescue.
+            val rawUnits = current.currentRawUnits
+            if (rawUnits != null) {
+                rawCurrentIntegral += rawUnits.toLong() * intervalMs
+                hasUsableRawInterval = true
+            }
         }
 
         return SessionAggregate(
@@ -90,6 +116,7 @@ object SessionAggregator {
             avgMilliwatts = powerSamples.takeIf { it.isNotEmpty() }?.average()?.toInt(),
             screenOnMs = screenOnMs,
             coulombUah = coulombUah.takeIf { hasUsableInterval },
+            rawCurrentIntegral = rawCurrentIntegral.takeIf { hasUsableRawInterval },
         )
     }
 }
