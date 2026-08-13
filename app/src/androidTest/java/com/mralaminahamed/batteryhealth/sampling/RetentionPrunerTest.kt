@@ -46,6 +46,7 @@ class RetentionPrunerTest {
         endLevelPct = 80,
         startCounterUah = 1_000_000,
         endCounterUah = 4_000_000,
+        coulombUah = null,
         peakTempDeciC = 380,
         avgMilliwatts = 9_000,
         screenOnMs = 0,

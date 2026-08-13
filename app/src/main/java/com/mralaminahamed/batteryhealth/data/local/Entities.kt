@@ -38,11 +38,12 @@ data class SessionEntity(
     val avgMilliwatts: Int?,
     val screenOnMs: Long,
     /**
-     * Integrated current over the session, in uAh. Added in schema version 2; a later
-     * task populates it. Nullable and never defaulted: an unmeasured value and a
-     * measured zero are different facts.
+     * Integrated current over the session, in uAh, from SessionAggregator (Task 12).
+     * Nullable and never defaulted: an unmeasured value and a measured zero are
+     * different facts, and omitting this at a construction site must be a compile
+     * error rather than a silent null.
      */
-    val coulombUah: Long? = null,
+    val coulombUah: Long?,
 )
 
 /** `method` is "COUNTER" or "COULOMB". */
