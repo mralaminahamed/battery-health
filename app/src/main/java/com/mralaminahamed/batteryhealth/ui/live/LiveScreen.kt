@@ -94,7 +94,7 @@ fun LiveContent(snapshot: BatterySnapshot?, modifier: Modifier = Modifier) {
                     Value(Formatters.temperature(deciC))
                 }
             }
-            KeyValueRow("Charge counter") {
+            KeyValueRow("Charge counter", showDivider = false) {
                 ReadingSlot(snapshot.chargeCounterUah) { uah, _ -> Value("${uah / 1000} mAh") }
             }
         }
@@ -117,7 +117,7 @@ fun LiveContent(snapshot: BatterySnapshot?, modifier: Modifier = Modifier) {
                     )
                 }
             }
-            KeyValueRow("Time to full") {
+            KeyValueRow("Time to full", showDivider = false) {
                 ReadingSlot(snapshot.chargeTimeRemainingMs) { ms, _ ->
                     Value(Formatters.duration(ms))
                 }

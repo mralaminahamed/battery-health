@@ -61,6 +61,7 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 fun KeyValueRow(
     label: String,
     modifier: Modifier = Modifier,
+    showDivider: Boolean = true,
     value: @Composable () -> Unit,
 ) {
     val colors = LocalOneUiColors.current
@@ -77,7 +78,9 @@ fun KeyValueRow(
             )
             value()
         }
-        HorizontalDivider(color = colors.divider)
+        if (showDivider) {
+            HorizontalDivider(color = colors.divider)
+        }
     }
 }
 

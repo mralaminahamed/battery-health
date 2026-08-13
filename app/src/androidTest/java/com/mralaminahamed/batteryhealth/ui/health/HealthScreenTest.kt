@@ -1,0 +1,81 @@
+package com.mralaminahamed.batteryhealth.ui.health
+
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.Modifier
+import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
+import com.mralaminahamed.batteryhealth.domain.CapacityMethod
+import com.mralaminahamed.batteryhealth.domain.ChargeState
+import com.mralaminahamed.batteryhealth.domain.HealthReport
+import com.mralaminahamed.batteryhealth.domain.PlugType
+import com.mralaminahamed.batteryhealth.domain.Reading
+import com.mralaminahamed.batteryhealth.domain.Source
+import com.mralaminahamed.batteryhealth.ui.theme.BatteryHealthTheme
+import org.junit.Rule
+import org.junit.Test
+
+class HealthScreenTest {
+
+    @get:Rule val compose = createComposeRule()
+
+    private fun snapshot() = BatterySnapshot(
+        levelPct = Reading.Available(41, Source.Framework),
+        chargeState = Reading.Available(ChargeState.Charging, Source.Framework),
+        plugType = Reading.Available(PlugType.Usb, Source.Framework),
+        voltageMv = Reading.Available(3955, Source.Framework),
+        currentUa = Reading.Available(1_066_000, Source.Framework),
+        temperatureDeciC = Reading.Available(371, Source.Framework),
+        technology = Reading.Available("Li-ion", Source.Framework),
+        chargeCounterUah = Reading.Available(2_095_000, Source.Framework),
+        cycleCount = Reading.Unsupported,
+        stateOfHealthPct = Reading.Unsupported,
+        firstUsageDateEpochDay = Reading.Available(19_904, Source.Framework),
+        manufacturingDateEpochDay = Reading.Unsupported,
+        chargeTimeRemainingMs = Reading.Unsupported,
+    )
+
+    @Test
+    fun showsMeasuredHealthWithItsProvenance() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.Available(
+                HealthReport(84, 4_200_000, 5000, CapacityMethod.Counter, 3),
+                Source.Measured,
+            ),
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithTag(HealthScreenTags.ROOT).assertIsDisplayed()
+        compose.onNodeWithText("84").assertIsDisplayed()
+        compose.onNodeWithText("Measured").assertIsDisplayed()
+        compose.onNodeWithText("4200 mAh of 5000 mAh").assertIsDisplayed()
+        compose.onNodeWithText("2024-06-30").assertIsDisplayed()
+    }
+
+    @Test
+    fun measuringStateShowsProgressInsteadOfANumber() {
+        val state = HealthUiState(snapshot = snapshot(), measured = Reading.NotYetMeasured)
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("Measuring").assertIsDisplayed()
+        compose.onNodeWithText("Needs 3 full charge sessions").assertIsDisplayed()
+    }
+
+    @Test
+    fun unknownDesignCapacityIsStatedRatherThanGuessed() {
+        val state = HealthUiState(snapshot = snapshot(), measured = Reading.Unsupported)
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        // Three rows are independently Unsupported here: the headline (no design capacity
+        // to measure against), the cycle count, and the manufacturing date -- the fixture
+        // above sets both of the latter two to Unsupported regardless of this test's own
+        // concern. Each renders the shared reason text on its own; a singular text lookup
+        // would be ambiguous, so the count is asserted exactly rather than just that the
+        // text exists somewhere, the same way LiveScreenTest asserts multiplicity.
+        compose.onAllNodesWithText("Not available on this device").assertCountEquals(3)
+    }
+}
