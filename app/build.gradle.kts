@@ -35,8 +35,20 @@ android {
 
     buildTypes {
         release {
+            // TEMPORARY, local-verification only: reuses the debug keystore so this build
+            // type can actually be built, installed, and exercised on-device now that R8
+            // runs against it for the first time. A real signing config MUST replace this
+            // before any release build is distributed -- a debug-signed release must never
+            // ship. There is no release-signing config in this project yet (see the task
+            // report for why: no keystore is checked in on purpose).
+            signingConfig = signingConfigs.getByName("debug")
             optimization {
-                enable = false
+                enable = true
+                // keepRules.includeDefault defaults to true, which is the equivalent of
+                // getDefaultProguardFile("proguard-android-optimize.txt") -- no manual
+                // proguardFiles(...) call is needed for that baseline set under AGP 9's
+                // DSL. Project-specific rules live in app/src/main/keepRules/, which AGP
+                // discovers and combines automatically.
             }
         }
     }
