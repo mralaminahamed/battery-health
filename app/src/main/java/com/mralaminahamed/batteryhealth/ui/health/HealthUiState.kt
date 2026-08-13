@@ -22,15 +22,31 @@ data class HealthUiState(
     val notificationsDenied: Boolean = false,
 ) {
     /**
-     * A value the platform reports directly beats one this app inferred. When neither
-     * exists, the measurement's own reason is preserved so the UI can say why — falling
-     * back to a generic "unavailable" would discard the distinction between "this device
-     * cannot" and "not enough charges yet".
+     * A value the platform reports directly beats one this app inferred, but beyond
+     * that, absence is not all the same kind of absence: `BatteryRepository` sets
+     * `stateOfHealthPct` to `NeedsShizuku` unconditionally (this device's own
+     * BatteryManager can never report it directly, signature-permission-gated), so
+     * `framework is Reading.Available` is never true in practice and every other case
+     * used to fall straight through to `measured` alone. That silently discarded
+     * `NeedsShizuku` whenever `measured` was `Unsupported` — nearly every Samsung model,
+     * since the design-capacity table has ten entries and no override UI — and rendered
+     * "Not available on this device" one row above a "Needs Shizuku" line about the
+     * exact same underlying data. Explicit precedence fixes that: Available beats
+     * NotYetMeasured beats NeedsShizuku beats Unsupported, so a `NeedsShizuku` is never
+     * displaced by a plain `Unsupported`, and a real measurement still wins when one
+     * exists.
      */
     val headlinePct: Reading<Int>
         get() {
-            val framework = snapshot?.stateOfHealthPct
-            if (framework is Reading.Available) return framework
-            return measured.map { it.healthPct }
+            val framework = snapshot?.stateOfHealthPct ?: Reading.Unsupported
+            val measuredPct = measured.map { it.healthPct }
+            return if (framework.precedence() >= measuredPct.precedence()) framework else measuredPct
         }
+
+    private fun Reading<*>.precedence(): Int = when (this) {
+        is Reading.Available -> 3
+        Reading.NotYetMeasured -> 2
+        Reading.NeedsShizuku -> 1
+        Reading.Unsupported -> 0
+    }
 }
