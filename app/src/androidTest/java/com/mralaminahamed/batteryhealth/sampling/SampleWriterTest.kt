@@ -9,6 +9,7 @@ import com.mralaminahamed.batteryhealth.data.framework.BatteryManagerSource
 import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
 import com.mralaminahamed.batteryhealth.data.framework.IntPropertyReader
 import com.mralaminahamed.batteryhealth.data.local.BatteryDatabase
+import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -17,18 +18,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+/**
+ * SettingsStore reaches the app's real DataStore file (a fixed-name Context delegate with
+ * no injectable alternative), so this suite clears it before and after to stay hermetic --
+ * BatteryManagerSource now reads currentScale from it to decide the scale currentUa() uses.
+ */
 class SampleWriterTest {
 
     private lateinit var db: BatteryDatabase
+    private lateinit var settings: SettingsStore
 
     @Before
     fun open() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         db = Room.inMemoryDatabaseBuilder(context, BatteryDatabase::class.java).build()
+        settings = SettingsStore(context)
+        runBlocking { settings.clearForTesting() }
     }
 
     @After
-    fun close() = db.close()
+    fun close() {
+        runBlocking { settings.clearForTesting() }
+        db.close()
+    }
 
     @Test
     fun writesOneSampleFromLiveDeviceState() = runBlocking {
@@ -40,7 +52,7 @@ class SampleWriterTest {
 
         val writer = SampleWriter(
             broadcasts = BatteryBroadcastSource(context),
-            properties = BatteryManagerSource(batteryManager, capabilities),
+            properties = BatteryManagerSource(batteryManager, capabilities, settings),
             sampleDao = db.samples(),
             powerManager = context.getSystemService(PowerManager::class.java),
             nowMs = NowMs { 1_700_000_000_000L },

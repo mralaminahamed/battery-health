@@ -21,6 +21,35 @@ data class SampleEntity(
     val pluggedCode: Int,
     val screenOn: Boolean,
     val sessionId: Long?,
+    /**
+     * The untouched CURRENT_NOW register value, before any unit-scale interpretation.
+     * Never presented to the UI or fed into any arithmetic directly -- `currentUa` is the
+     * one true-microamp figure this table makes claims through. This column exists only so
+     * a completed session can later cross-validate the device's actual scale against the
+     * charge counter (see CurrentScaleDetector.fromCounterAgreement): that check needs a
+     * genuinely unscaled integral, and `currentUa` can already be a per-reading magnitude
+     * guess by the time it is written, which would let a correct guess get mistaken for
+     * confirmation of the wrong scale. Defaulted to null, unlike the other nullable columns
+     * here, because most call sites (retention, mapping, unrelated fixtures) have no stake
+     * in it.
+     */
+    val currentRawUnits: Int? = null,
+    /**
+     * Which rule produced [currentUa] on this row: `true` if a scale
+     * `CurrentScaleDetector.fromCounterAgreement` actually confirmed against the charge
+     * counter was used, `false` if only `CurrentScaleDetector.fromMagnitude`'s
+     * per-reading guess was, `null` if [currentUa] itself is null (no scale was applied
+     * at all, so provenance does not apply) -- see
+     * `BatteryManagerSource.CurrentSample.currentScaleValidated`'s own doc for exactly
+     * how each case arises. Exists so `SessionAggregator`'s coulomb integration -- the
+     * one `HealthEstimator` falls back to precisely when the charge counter itself
+     * cannot be trusted -- can refuse to build a "Measured" health figure out of a row
+     * this app never actually earned. Without this column, a guessed `currentUa` and a
+     * validated one are bit-for-bit identical once written, and that fallback has no
+     * way to tell them apart. Defaulted to null, like `currentRawUnits`, because most
+     * call sites (retention, mapping, unrelated fixtures) have no stake in it.
+     */
+    val currentScaleValidated: Boolean? = null,
 )
 
 /** `type` is "CHARGE" or "DISCHARGE"; a null `endedAtMs` marks the open session. */

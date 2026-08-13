@@ -15,6 +15,11 @@ class SessionAggregatorTest {
         voltageMv: Int? = 4_000,
         tempDeciC: Int? = 370,
         screenOn: Boolean = false,
+        currentRawUnits: Int? = null,
+        // Defaulted to true (an earned scale) so every test above the
+        // currentScaleValidated section can exercise coulombUah without needing to know
+        // this gate exists; the tests below are the ones that actually flip it.
+        currentScaleValidated: Boolean? = true,
     ) = SampleEntity(
         timestampMs = timestampMs,
         levelPct = levelPct,
@@ -26,6 +31,8 @@ class SessionAggregatorTest {
         pluggedCode = 2,
         screenOn = screenOn,
         sessionId = 1,
+        currentRawUnits = currentRawUnits,
+        currentScaleValidated = currentScaleValidated,
     )
 
     @Test
@@ -37,6 +44,7 @@ class SessionAggregatorTest {
         assertNull(aggregate.avgMilliwatts)
         assertEquals(0L, aggregate.screenOnMs)
         assertNull(aggregate.coulombUah)
+        assertNull(aggregate.rawCurrentIntegral)
     }
 
     @Test
@@ -199,5 +207,153 @@ class SessionAggregatorTest {
             listOf(sample(0, currentUa = 720_000))
         )
         assertNull(singleSampleHasNoInterval.coulombUah)
+    }
+
+    // --- rawCurrentIntegral: Sigma(rawUnits * dt), the untouched register value, kept
+    // separately from coulombUah so CurrentScaleDetector.fromCounterAgreement always gets a
+    // genuinely unscaled integral to test its two unit hypotheses against -- never a value
+    // BatteryManagerSource has already multiplied by a per-reading magnitude guess, which
+    // would let a correct guess get mistaken for confirmation of the wrong scale. Every
+    // hand-computed value below uses currentRawUnits = 2_409 (the exact raw register value
+    // this defect was found with) over 5_000 ms intervals: 2_409 * 5_000 = 12_045_000 per
+    // interval.
+
+    @Test
+    fun integratesRawUnitsOverEqualIntervalsCleanRun() {
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentRawUnits = 2_409),
+                sample(5_000, currentRawUnits = 2_409),
+                sample(10_000, currentRawUnits = 2_409),
+                sample(15_000, currentRawUnits = 2_409),
+            )
+        )
+        assertEquals(36_135_000L, aggregate.rawCurrentIntegral)
+    }
+
+    @Test
+    fun gapLongerThanThresholdIsExcludedFromTheRawIntegralTheSameWayCoulombIs() {
+        // 0->5_000 (included: 12_045_000), 5_000->305_000 (a 5-minute stall, excluded
+        // entirely), 305_000->310_000 (included: 12_045_000). Total 24_090_000.
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentRawUnits = 2_409),
+                sample(5_000, currentRawUnits = 2_409),
+                sample(305_000, currentRawUnits = 2_409),
+                sample(310_000, currentRawUnits = 2_409),
+            )
+        )
+        assertEquals(24_090_000L, aggregate.rawCurrentIntegral)
+    }
+
+    @Test
+    fun nullRawUnitsSkipsOnlyItsOwnIntervalNotTheFollowingOne() {
+        // 0->5_000 attributed to sample0 (2_409, included: 12_045_000); 5_000->10_000
+        // attributed to sample1 (null raw units, excluded); 10_000->15_000 attributed to
+        // sample2 (2_409, included: 12_045_000). Total 24_090_000.
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentRawUnits = 2_409),
+                sample(5_000, currentRawUnits = null),
+                sample(10_000, currentRawUnits = 2_409),
+                sample(15_000, currentRawUnits = 2_409),
+            )
+        )
+        assertEquals(24_090_000L, aggregate.rawCurrentIntegral)
+    }
+
+    @Test
+    fun noUsableRawIntervalYieldsNullRatherThanZero() {
+        val allNullRawUnits = SessionAggregator.aggregate(
+            listOf(sample(0, currentRawUnits = null), sample(5_000, currentRawUnits = null))
+        )
+        assertNull(allNullRawUnits.rawCurrentIntegral)
+
+        val singleSampleHasNoInterval = SessionAggregator.aggregate(
+            listOf(sample(0, currentRawUnits = 2_409))
+        )
+        assertNull(singleSampleHasNoInterval.rawCurrentIntegral)
+    }
+
+    @Test
+    fun rawIntegralSurvivesWhenCurrentUaIsUnsupportedButTheRegisterValueWasCaptured() {
+        // The exact scenario the split exists for: magnitude was ambiguous at write time
+        // (a small idle-range reading with no validated scale yet), so BatteryManagerSource
+        // reported currentUa as Unsupported (null here) -- but the untouched register value
+        // was still captured. coulombUah must stay null (no usable currentUa interval
+        // anywhere in this session), while rawCurrentIntegral must still have real data:
+        // 50 * 5_000 = 250_000.
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentUa = null, currentRawUnits = 50),
+                sample(5_000, currentUa = null, currentRawUnits = 50),
+            )
+        )
+        assertNull(aggregate.coulombUah)
+        assertEquals(250_000L, aggregate.rawCurrentIntegral)
+    }
+
+    // --- currentScaleValidated: the coulomb fallback must not launder a guessed scale
+    // into a health figure the UI calls "Measured" -- HealthEstimator turns to
+    // coulombUah precisely when the charge counter itself cannot be trusted, so a
+    // guessed currentUa reaching that fallback is worse than an honest absence.
+
+    @Test
+    fun guessedScaleIntervalsAreExcludedFromCoulombIntegrationEvenThoughCurrentUaIsNonNull() {
+        // 0->5_000 is attributed to sample(0) (validated by default: included, 1_000 uAh).
+        // 5_000->10_000 is attributed to sample(5_000), whose currentUa is real but came
+        // from CurrentScaleDetector.fromMagnitude's guess, not a counter-confirmed scale --
+        // that interval must be excluded even though currentUa itself is non-null.
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentUa = 720_000),
+                sample(5_000, currentUa = 720_000, currentScaleValidated = false),
+                sample(10_000, currentUa = 720_000),
+            )
+        )
+        assertEquals(1_000L, aggregate.coulombUah)
+    }
+
+    @Test
+    fun sessionWithOnlyGuessedScaleIntervalsHasNoCoulombFigureAtAllRatherThanAWrongOne() {
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentUa = 720_000, currentScaleValidated = false),
+                sample(5_000, currentUa = 720_000, currentScaleValidated = false),
+            )
+        )
+        assertNull(aggregate.coulombUah)
+    }
+
+    @Test
+    fun unknownProvenanceIsTreatedTheSameAsAGuessNotTheSameAsValidated() {
+        // A pre-migration-4 row has currentScaleValidated = null, not false -- but this
+        // fallback must refuse it exactly the same way: "we don't know this was earned"
+        // is not "it was earned".
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentUa = 720_000, currentScaleValidated = null),
+                sample(5_000, currentUa = 720_000, currentScaleValidated = null),
+            )
+        )
+        assertNull(aggregate.coulombUah)
+    }
+
+    @Test
+    fun rawIntegralIsUnaffectedByCurrentScaleValidatedBecauseItIsDeliberatelyUnscaled() {
+        // rawCurrentIntegral exists specifically to resolve a guess via
+        // fromCounterAgreement, so it must keep accumulating raw register values from
+        // guessed (or unvalidated) intervals -- gating it the same way coulombUah is
+        // gated would make it impossible for a device to ever validate its scale in the
+        // first place. 2_409 * 5_000 = 12_045_000, the same single-interval arithmetic
+        // used throughout the rawCurrentIntegral section above.
+        val aggregate = SessionAggregator.aggregate(
+            listOf(
+                sample(0, currentUa = 720_000, currentScaleValidated = false, currentRawUnits = 2_409),
+                sample(5_000, currentUa = 720_000, currentScaleValidated = false, currentRawUnits = 2_409),
+            )
+        )
+        assertNull(aggregate.coulombUah)
+        assertEquals(12_045_000L, aggregate.rawCurrentIntegral)
     }
 }

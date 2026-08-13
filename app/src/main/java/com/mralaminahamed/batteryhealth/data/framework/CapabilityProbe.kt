@@ -14,7 +14,7 @@ class CapabilityProbe(
     private val reader: IntPropertyReader,
 ) {
     fun probe(): Set<BatteryProperty> = BatteryProperty.entries
-        .filter { property -> isPlausible(property, readOrSentinel(property)) }
+        .filter { property -> property.isPlausibleReading(readOrSentinel(property)) }
         .toSet()
 
     private fun readOrSentinel(property: BatteryProperty): Int =
@@ -23,16 +23,4 @@ class CapabilityProbe(
         } catch (e: SecurityException) {
             Int.MIN_VALUE
         }
-
-    /**
-     * The sentinel rule is per-property, not global: -1 is the documented "unsupported"
-     * value for ChargeCounter, but current can genuinely read -1 microamps (a tiny real
-     * draw), so only the unambiguous Int.MIN_VALUE sentinel disqualifies it. Folding both
-     * sentinels into one check ahead of this `when` would silently disable current
-     * whenever a real reading happened to land on -1.
-     */
-    private fun isPlausible(property: BatteryProperty, raw: Int): Boolean = when (property) {
-        BatteryProperty.CurrentNow, BatteryProperty.CurrentAverage -> raw != Int.MIN_VALUE
-        BatteryProperty.ChargeCounter -> raw != Int.MIN_VALUE && raw != -1 && raw > 0
-    }
 }

@@ -6,6 +6,20 @@ enum class CapacityMethod { Counter, Coulomb }
 
 enum class ChargeState { Charging, Discharging, Full, NotCharging, Unknown }
 
+/**
+ * Whether the device is actively pushing current into the battery right now, as
+ * distinct from merely being plugged in. [ChargeState.Full] is deliberately excluded:
+ * a battery topped off at Full draws only a trickle, if anything, even though the
+ * charger is still connected -- treating it as "charging" would let a near-zero current
+ * masquerade as the substantial one a real charge implies.
+ *
+ * This is the one signal specific enough to let
+ * `CurrentScaleDetector.fromMagnitude` resolve its otherwise-ambiguous mid-range band --
+ * see that function's own doc for why a genuine charging current rules out one of its
+ * two unit hypotheses, while a merely-plugged-in Full reading does not.
+ */
+val ChargeState.isActivelyCharging: Boolean get() = this == ChargeState.Charging
+
 enum class PlugType { None, Ac, Usb, Wireless, Dock }
 
 enum class HealthBand {

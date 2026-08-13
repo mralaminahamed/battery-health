@@ -55,7 +55,7 @@ class BatteryRepositoryTest {
         ).probe()
         return BatteryRepository(
             broadcasts = BatteryBroadcastSource(context),
-            properties = BatteryManagerSource(batteryManager, capabilities),
+            properties = BatteryManagerSource(batteryManager, capabilities, settings),
             sessionDao = db.sessions(),
             estimator = HealthEstimator(),
             // The device's own model is irrelevant here: an explicit override makes the

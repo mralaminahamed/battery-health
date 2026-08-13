@@ -7,7 +7,22 @@
 -->
 <full-backup-content>
     <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    Used on API below 31 for classic full-app backup (data_extraction_rules.xml is the
+    API 31+ path; see there for cloud backup and device transfer specifically).
+
+    battery-health.db (Room; the -wal and -shm companions matter just as much as the
+    .db itself, since WAL mode keeps recent rows there rather than in the main file
+    until a checkpoint) and the settings DataStore both describe ONE physical battery:
+    recorded charge/discharge sessions, and a design-capacity override the user entered
+    for a specific model. Restoring either onto a different phone would let
+    measuredHealth() recompute a confident "Measured" capacity number from the OLD
+    battery's charge-counter deltas against the NEW phone's design capacity, exactly
+    the fabricated-number problem this app exists to prevent (see HealthEstimator),
+    arriving through a manifest attribute rather than a bug in the estimator. It would
+    also silently restore recorderEnabled=true onto a device that never consented to a
+    persistent foreground service. An empty rules file here looks deliberate; it was
+    the unedited project template scaffold, not a considered choice.
+    -->
+    <exclude domain="database" path="."/>
+    <exclude domain="file" path="datastore/"/>
 </full-backup-content>
