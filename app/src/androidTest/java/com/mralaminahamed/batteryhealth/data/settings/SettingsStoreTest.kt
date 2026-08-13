@@ -1,8 +1,6 @@
 package com.mralaminahamed.batteryhealth.data.settings
 
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.work.WorkManager
-import com.mralaminahamed.batteryhealth.sampling.SamplingScheduler
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -19,12 +17,11 @@ import org.junit.Test
  * makes hermeticity the test's own responsibility: without the clear-before and
  * clear-after below, running this suite would leave the opt-in recorder flag switched on
  * — turning on the very thing the opt-in default exists to prevent. `clearForTesting()`
- * also cancels the charge recorder's WorkManager job for the same reason.
+ * also stops the charge recorder service for the same reason.
  */
 class SettingsStoreTest {
 
-    private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private val store = SettingsStore(context, SamplingScheduler(WorkManager.getInstance(context)))
+    private val store = SettingsStore(InstrumentationRegistry.getInstrumentation().targetContext)
 
     @Before
     fun clearBefore() = runBlocking { store.clearForTesting() }

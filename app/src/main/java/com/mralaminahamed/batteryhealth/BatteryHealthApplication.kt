@@ -21,11 +21,10 @@ class BatteryHealthApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         samplingScheduler.scheduleBaseline()
-        // The charge recorder itself is armed/disarmed from SettingsStore.setRecorderEnabled,
-        // not from here: there is no broadcast receiver to register. ACTION_POWER_CONNECTED
-        // and ACTION_POWER_DISCONNECTED are not on Android's implicit-broadcast exception
-        // list -- that has been the rule since API 26 -- so PowerReceiver was removed in
-        // favour of a WorkManager job constrained on setRequiresCharging(true); see
-        // ChargeRecorderWorker and SamplingScheduler.
+        // The charge recorder itself is started/stopped from SettingsStore.setRecorderEnabled
+        // (a foreground call site) and restarted after reboot by BootReceiver -- there is
+        // nothing to wire up here. ACTION_POWER_CONNECTED/DISCONNECTED are not on Android's
+        // implicit-broadcast exception list, so no receiver for them is registered anywhere,
+        // dynamically or otherwise; see ChargeRecorderService's class doc for the full history.
     }
 }

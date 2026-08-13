@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.mralaminahamed.batteryhealth.sampling.SamplingScheduler
+import com.mralaminahamed.batteryhealth.sampling.ChargeRecorderService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -18,10 +18,7 @@ import javax.inject.Singleton
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 @Singleton
-class SettingsStore @Inject constructor(
-    private val context: Context,
-    private val samplingScheduler: SamplingScheduler,
-) {
+class SettingsStore @Inject constructor(private val context: Context) {
 
     // distinctUntilChanged because both flows derive from the same underlying
     // dataStore.data: writing either key would otherwise re-emit an unchanged value on the
@@ -43,26 +40,34 @@ class SettingsStore @Inject constructor(
     }
 
     /**
-     * The single place this flag is ever written, so enqueuing/cancelling the recorder's
-     * WorkManager job can never be forgotten by some other call site: persisting the
-     * setting and arming or disarming the job that acts on it happen together, here.
+     * The single place this flag is ever written. Enabling starts the recorder's
+     * foreground service from here -- the app's own foreground call site (a settings
+     * toggle), which is what lets `ChargeRecorderService.start` call
+     * `startForegroundService` without hitting the background-start restriction that
+     * broke the two previous designs. Disabling does *not* stop the service directly:
+     * a running service watches this same flag and stops itself once it reads false.
+     * An external `stopService()` call here was tried first and rejected -- it can race
+     * ahead of a just-started service's own `onCreate()` and crash with
+     * `ForegroundServiceDidNotStartInTimeException` on a rapid enable-then-disable, which
+     * happened for real (see `ChargeRecorderService`'s class doc for the on-device
+     * evidence).
      */
     suspend fun setRecorderEnabled(enabled: Boolean) {
         context.dataStore.edit { it[RECORDER_ENABLED] = enabled }
-        if (enabled) samplingScheduler.scheduleChargeRecorder() else samplingScheduler.cancelChargeRecorder()
+        if (enabled) ChargeRecorderService.start(context)
     }
 
     /**
      * Resets every key. Exists only so the instrumented test can be hermetic: DataStore is
      * reached through a fixed-name Context delegate, so a test has no separate file to
      * write and must clean up after itself or leave the user's real settings altered.
-     * Also cancels the charge recorder's WorkManager job, since a test that enabled it
-     * would otherwise leave that armed even after the settings key itself is cleared.
+     * Clearing resets `recorderEnabled` to its false default, which a running service's
+     * own watcher reacts to the same way `setRecorderEnabled(false)` does -- no separate
+     * stop call is needed here either.
      */
     @VisibleForTesting
     suspend fun clearForTesting() {
         context.dataStore.edit { it.clear() }
-        samplingScheduler.cancelChargeRecorder()
     }
 
     private companion object {

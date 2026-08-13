@@ -3,7 +3,6 @@ package com.mralaminahamed.batteryhealth.data.repo
 import android.os.BatteryManager
 import androidx.room.Room
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.work.WorkManager
 import com.mralaminahamed.batteryhealth.data.framework.BatteryBroadcastSource
 import com.mralaminahamed.batteryhealth.data.framework.BatteryManagerSource
 import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
@@ -13,7 +12,6 @@ import com.mralaminahamed.batteryhealth.data.local.SessionEntity
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import com.mralaminahamed.batteryhealth.domain.CapacityMethod
-import com.mralaminahamed.batteryhealth.sampling.SamplingScheduler
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.domain.isAvailable
 import com.mralaminahamed.batteryhealth.domain.valueOrNull
@@ -39,7 +37,7 @@ class BatteryRepositoryTest {
     fun setUp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         db = Room.inMemoryDatabaseBuilder(context, BatteryDatabase::class.java).build()
-        settings = SettingsStore(context, SamplingScheduler(WorkManager.getInstance(context)))
+        settings = SettingsStore(context)
         runBlocking { settings.clearForTesting() }
     }
 
