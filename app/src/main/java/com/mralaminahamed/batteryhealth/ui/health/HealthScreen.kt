@@ -1,27 +1,51 @@
 package com.mralaminahamed.batteryhealth.ui.health
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.mralaminahamed.batteryhealth.data.privileged.SHIZUKU_PACKAGE_NAME
+import com.mralaminahamed.batteryhealth.data.settings.DesignCapacitySource
+import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityValidation
+import com.mralaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
 import com.mralaminahamed.batteryhealth.domain.CapacityMethod
 import com.mralaminahamed.batteryhealth.domain.HealthBand
 import com.mralaminahamed.batteryhealth.domain.Reading
@@ -33,18 +57,31 @@ import com.mralaminahamed.batteryhealth.ui.components.OneUiCard
 import com.mralaminahamed.batteryhealth.ui.components.ProgressTrack
 import com.mralaminahamed.batteryhealth.ui.components.ReadingSlot
 import com.mralaminahamed.batteryhealth.ui.components.SectionHeader
+import com.mralaminahamed.batteryhealth.ui.components.UnlockCard
 import com.mralaminahamed.batteryhealth.ui.components.Value
 import com.mralaminahamed.batteryhealth.ui.format.Formatters
 import com.mralaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 import com.mralaminahamed.batteryhealth.data.repo.HealthEstimator
 
+private const val SHIZUKU_INFO_URL = "https://github.com/RikkaApps/Shizuku/releases/latest"
+
 object HealthScreenTags {
     const val ROOT = "health-root"
+}
+
+object DesignCapacityTags {
+    const val ROW = "design-capacity-row"
+    const val DIALOG = "design-capacity-dialog"
+    const val INPUT = "design-capacity-input"
+    const val SAVE = "design-capacity-save"
+    const val CLEAR = "design-capacity-clear"
+    const val ERROR = "design-capacity-error"
 }
 
 @Composable
 fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
 
     // A no-op on API < 33 (there is no such runtime permission to request) and a no-op
     // if the permission is already granted -- safe to launch unconditionally rather
@@ -53,9 +90,37 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         ActivityResultContracts.RequestPermission(),
     ) { granted -> viewModel.onNotificationPermissionResult(granted) }
 
+    // Installing Shizuku, or granting it from its own app, both happen outside this
+    // app entirely -- neither produces a broadcast or a callback this process would
+    // otherwise see. Re-checking on every resume is what notices the user coming back
+    // having done either, without needing this screen to be recreated.
+    val currentViewModel by rememberUpdatedState(viewModel)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                currentViewModel.refreshShizuku()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     HealthContent(
         state = state,
         modifier = modifier,
+        onRequestShizukuPermission = viewModel::requestShizukuPermission,
+        onOpenShizuku = {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE_NAME)
+            if (launchIntent != null) {
+                context.startActivity(launchIntent)
+            } else {
+                context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
+            }
+        },
+        onLearnMoreAboutShizuku = {
+            context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
+        },
         onRecorderEnabledChange = { enabled ->
             // The notification is the honest signal that measurement is running (Task
             // 12's persistent-service rationale rests on it being visible), so this is
@@ -78,6 +143,9 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
             }
             viewModel.setRecorderEnabled(enabled)
         },
+        onSaveDesignCapacity = viewModel::setDesignCapacityOverride,
+        onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
+        onRetryPrivilegedDump = viewModel::retryPrivilegedDump,
     )
 }
 
@@ -86,9 +154,16 @@ fun HealthContent(
     state: HealthUiState,
     modifier: Modifier = Modifier,
     onRecorderEnabledChange: (Boolean) -> Unit = {},
+    onSaveDesignCapacity: (Int) -> Unit = {},
+    onClearDesignCapacity: () -> Unit = {},
+    onRequestShizukuPermission: () -> Unit = {},
+    onOpenShizuku: () -> Unit = {},
+    onLearnMoreAboutShizuku: () -> Unit = {},
+    onRetryPrivilegedDump: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
+    var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -128,11 +203,25 @@ fun HealthContent(
             }
         }
 
+        UnlockCard(
+            availability = state.shizukuAvailability,
+            dumpFailed = state.privilegedDumpFailed,
+            onRequestPermission = onRequestShizukuPermission,
+            onOpenShizuku = onOpenShizuku,
+            onLearnMore = onLearnMoreAboutShizuku,
+            onRetry = onRetryPrivilegedDump,
+        )
+
         OneUiCard {
             SectionHeader("Battery information")
             KeyValueRow("Cycles") {
                 ReadingSlot(state.snapshot?.cycleCount ?: Reading.NotYetMeasured) { cycles, _ ->
                     Value(cycles.toString())
+                }
+            }
+            KeyValueRow("BSOH") {
+                ReadingSlot(state.snapshot?.bsohPct ?: Reading.NotYetMeasured) { pct, _ ->
+                    Value("$pct%")
                 }
             }
             KeyValueRow("First use") {
@@ -177,6 +266,37 @@ fun HealthContent(
         }
 
         OneUiCard {
+            SectionHeader("Battery Protect")
+            KeyValueRow("Status") {
+                ReadingSlot(
+                    state.snapshot?.protectBatteryModeEnabled ?: Reading.NotYetMeasured
+                ) { enabled, _ -> Value(if (enabled) "On" else "Off") }
+            }
+            KeyValueRow("Charge limit", showDivider = false) {
+                // `mProtectBatteryMode`'s on/off collapses more than the two states the
+                // fixture proves exist (see DumpsysBatteryParser's doc on why -- One UI's
+                // Basic/Adaptive/Maximum modes aren't distinguishable from this one field
+                // with the evidence this app was built against), but mode `0` is
+                // unambiguously off, and `mProtectionThreshold` is still a real number in
+                // that state -- Samsung keeps the configured cap even while nothing is
+                // enforcing it. Rendering that number as today's "Charge limit" would be
+                // a limit displayed while nothing is limiting, which is its own false
+                // claim, not merely a stale one. Suppressed here, in the presentation,
+                // rather than upstream in the Reading itself: the number is genuinely
+                // known (a real dump returned it), just not in force right now, and
+                // Reading's three absences have no case for "known but not applicable" --
+                // forcing it into Unsupported or NeedsShizuku would misstate *why* it is
+                // absent. When the mode reading itself is not Available (rarer: the two
+                // fields parse independently), there is no positive signal it is off, so
+                // this falls back to showing the raw value rather than guessing.
+                val modeIsOff = state.snapshot?.protectBatteryModeEnabled?.valueOrNull() == false
+                ReadingSlot(
+                    state.snapshot?.protectionThresholdPct ?: Reading.NotYetMeasured
+                ) { pct, _ -> Value(if (modeIsOff) "Not limiting" else "$pct%") }
+            }
+        }
+
+        OneUiCard {
             SectionHeader("Measurement")
             val warning = when {
                 state.recorderStartFailed -> "Couldn't start recording — reopen the app to try again"
@@ -184,7 +304,7 @@ fun HealthContent(
                     "Notifications are off, so you won't see when it's recording"
                 else -> null
             }
-            KeyValueRow("Record charge sessions", showDivider = warning != null) {
+            KeyValueRow("Record charge sessions", showDivider = true) {
                 Switch(checked = state.recorderEnabled, onCheckedChange = onRecorderEnabledChange)
             }
             if (warning != null) {
@@ -192,11 +312,130 @@ fun HealthContent(
                     text = warning,
                     style = MaterialTheme.typography.bodyMedium,
                     color = LocalOneUiColors.current.textSecondary,
-                    modifier = Modifier.padding(top = 3.dp),
+                    modifier = Modifier.padding(top = 3.dp, bottom = 6.dp),
                 )
+            }
+            KeyValueRow(
+                "Design capacity",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = { showDesignCapacityDialog = true })
+                    .testTag(DesignCapacityTags.ROW),
+                showDivider = false,
+            ) {
+                Value(designCapacityValueText(state.designCapacity))
             }
         }
     }
+
+    if (showDesignCapacityDialog) {
+        DesignCapacityDialog(
+            currentOverrideMah = when (state.designCapacity.source) {
+                DesignCapacitySource.Override -> state.designCapacity.mah
+                DesignCapacitySource.Table, DesignCapacitySource.None -> null
+            },
+            onSave = { mah ->
+                onSaveDesignCapacity(mah)
+                showDesignCapacityDialog = false
+            },
+            onClear = {
+                onClearDesignCapacity()
+                showDesignCapacityDialog = false
+            },
+            onDismiss = { showDesignCapacityDialog = false },
+        )
+    }
+}
+
+/**
+ * "None" is included in this `when` only so the compiler can enforce exhaustiveness if a
+ * fourth source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
+ * is already `None`, so the early return above is what actually handles that case.
+ */
+private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
+    val mah = info.mah ?: return "Not set — tap to add"
+    return when (info.source) {
+        DesignCapacitySource.Override -> "$mah mAh, your override"
+        DesignCapacitySource.Table -> "$mah mAh, model table"
+        DesignCapacitySource.None -> "Not set — tap to add"
+    }
+}
+
+@Composable
+private fun DesignCapacityDialog(
+    currentOverrideMah: Int?,
+    onSave: (Int) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // Pre-filled only with the user's own existing override, never with the table value
+    // or any other guess -- an empty field here means "nothing of the user's to edit",
+    // not "here's a plausible starting point".
+    var text by remember { mutableStateOf(currentOverrideMah?.toString() ?: "") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag(DesignCapacityTags.DIALOG),
+        title = { Text("Design capacity") },
+        text = {
+            Column {
+                Text(
+                    text = "The battery's rated capacity when new, in mAh " +
+                        "(${DesignCapacityValidation.MIN_MAH}–${DesignCapacityValidation.MAX_MAH}).",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        error = null
+                    },
+                    label = { Text("mAh") },
+                    singleLine = true,
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .testTag(DesignCapacityTags.INPUT),
+                )
+                val currentError = error
+                if (currentError != null) {
+                    Text(
+                        text = currentError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .testTag(DesignCapacityTags.ERROR),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when (val result = DesignCapacityValidation.validate(text)) {
+                        is DesignCapacityValidation.Result.Valid -> onSave(result.mah)
+                        is DesignCapacityValidation.Result.Invalid -> error = result.message
+                    }
+                },
+                modifier = Modifier.testTag(DesignCapacityTags.SAVE),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            Row {
+                if (currentOverrideMah != null) {
+                    TextButton(
+                        onClick = onClear,
+                        modifier = Modifier.testTag(DesignCapacityTags.CLEAR),
+                    ) { Text("Clear") }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
 }
 
 @Composable
