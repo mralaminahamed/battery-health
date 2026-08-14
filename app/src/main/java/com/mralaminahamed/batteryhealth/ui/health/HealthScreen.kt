@@ -219,6 +219,21 @@ fun HealthContent(
                     Value(cycles.toString())
                 }
             }
+            // Samsung's own accumulated figure counts every partial charge, not just a
+            // full 0-100% discharge -- some users expect the latter from "cycle count",
+            // so this line says so briefly rather than leaving the number to be
+            // misread as unusually high. Shown only when it is actually that figure
+            // (Source.Privileged): a plain framework EXTRA_CYCLE_COUNT reading, on the
+            // rare device that reports one, has no such documented partial-cycle
+            // behaviour to disclose.
+            if ((state.snapshot?.cycleCount as? Reading.Available)?.source == Source.Privileged) {
+                Text(
+                    text = "Counts every partial charge, not just full cycles",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
             KeyValueRow("BSOH") {
                 ReadingSlot(state.snapshot?.bsohPct ?: Reading.NotYetMeasured) { pct, _ ->
                     Value("$pct%")
