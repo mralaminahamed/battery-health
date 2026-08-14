@@ -1,6 +1,7 @@
 package com.mralaminahamed.batteryhealth.ui.health
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,18 +23,26 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.mralaminahamed.batteryhealth.data.privileged.SHIZUKU_PACKAGE_NAME
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacitySource
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityValidation
 import com.mralaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
@@ -48,10 +57,13 @@ import com.mralaminahamed.batteryhealth.ui.components.OneUiCard
 import com.mralaminahamed.batteryhealth.ui.components.ProgressTrack
 import com.mralaminahamed.batteryhealth.ui.components.ReadingSlot
 import com.mralaminahamed.batteryhealth.ui.components.SectionHeader
+import com.mralaminahamed.batteryhealth.ui.components.UnlockCard
 import com.mralaminahamed.batteryhealth.ui.components.Value
 import com.mralaminahamed.batteryhealth.ui.format.Formatters
 import com.mralaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 import com.mralaminahamed.batteryhealth.data.repo.HealthEstimator
+
+private const val SHIZUKU_INFO_URL = "https://github.com/RikkaApps/Shizuku/releases/latest"
 
 object HealthScreenTags {
     const val ROOT = "health-root"
@@ -69,6 +81,7 @@ object DesignCapacityTags {
 @Composable
 fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
 
     // A no-op on API < 33 (there is no such runtime permission to request) and a no-op
     // if the permission is already granted -- safe to launch unconditionally rather
@@ -77,9 +90,37 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         ActivityResultContracts.RequestPermission(),
     ) { granted -> viewModel.onNotificationPermissionResult(granted) }
 
+    // Installing Shizuku, or granting it from its own app, both happen outside this
+    // app entirely -- neither produces a broadcast or a callback this process would
+    // otherwise see. Re-checking on every resume is what notices the user coming back
+    // having done either, without needing this screen to be recreated.
+    val currentViewModel by rememberUpdatedState(viewModel)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                currentViewModel.refreshShizuku()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     HealthContent(
         state = state,
         modifier = modifier,
+        onRequestShizukuPermission = viewModel::requestShizukuPermission,
+        onOpenShizuku = {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE_NAME)
+            if (launchIntent != null) {
+                context.startActivity(launchIntent)
+            } else {
+                context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
+            }
+        },
+        onLearnMoreAboutShizuku = {
+            context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
+        },
         onRecorderEnabledChange = { enabled ->
             // The notification is the honest signal that measurement is running (Task
             // 12's persistent-service rationale rests on it being visible), so this is
@@ -114,6 +155,9 @@ fun HealthContent(
     onRecorderEnabledChange: (Boolean) -> Unit = {},
     onSaveDesignCapacity: (Int) -> Unit = {},
     onClearDesignCapacity: () -> Unit = {},
+    onRequestShizukuPermission: () -> Unit = {},
+    onOpenShizuku: () -> Unit = {},
+    onLearnMoreAboutShizuku: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
@@ -157,11 +201,23 @@ fun HealthContent(
             }
         }
 
+        UnlockCard(
+            availability = state.shizukuAvailability,
+            onRequestPermission = onRequestShizukuPermission,
+            onOpenShizuku = onOpenShizuku,
+            onLearnMore = onLearnMoreAboutShizuku,
+        )
+
         OneUiCard {
             SectionHeader("Battery information")
             KeyValueRow("Cycles") {
                 ReadingSlot(state.snapshot?.cycleCount ?: Reading.NotYetMeasured) { cycles, _ ->
                     Value(cycles.toString())
+                }
+            }
+            KeyValueRow("BSOH") {
+                ReadingSlot(state.snapshot?.bsohPct ?: Reading.NotYetMeasured) { pct, _ ->
+                    Value("$pct%")
                 }
             }
             KeyValueRow("First use") {
@@ -202,6 +258,20 @@ fun HealthContent(
                 ReadingSlot(state.snapshot?.voltageMv ?: Reading.NotYetMeasured) { mv, _ ->
                     Value("$mv mV")
                 }
+            }
+        }
+
+        OneUiCard {
+            SectionHeader("Battery Protect")
+            KeyValueRow("Status") {
+                ReadingSlot(
+                    state.snapshot?.protectBatteryModeEnabled ?: Reading.NotYetMeasured
+                ) { enabled, _ -> Value(if (enabled) "On" else "Off") }
+            }
+            KeyValueRow("Charge limit", showDivider = false) {
+                ReadingSlot(
+                    state.snapshot?.protectionThresholdPct ?: Reading.NotYetMeasured
+                ) { pct, _ -> Value("$pct%") }
             }
         }
 

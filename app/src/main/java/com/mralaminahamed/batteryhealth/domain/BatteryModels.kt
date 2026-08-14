@@ -49,6 +49,20 @@ data class BatterySnapshot(
     val firstUsageDateEpochDay: Reading<Long>,
     val manufacturingDateEpochDay: Reading<Long>,
     val chargeTimeRemainingMs: Reading<Long>,
+    /**
+     * Samsung's `mSavedBatteryBsoh` -- a second, independent privileged health figure,
+     * deliberately kept apart from [stateOfHealthPct] (Samsung's ASOC). The two can and
+     * do disagree on real hardware (86 vs 95 on the device this was verified against);
+     * folding one into the other would hide that Samsung itself tracks two numbers.
+     * Defaults to [Reading.NeedsShizuku] so every call site written before this field
+     * existed keeps compiling and keeps its honest meaning without being touched.
+     */
+    val bsohPct: Reading<Int> = Reading.NeedsShizuku,
+    /** Samsung Battery Protect's on/off state, from `mProtectBatteryMode`. */
+    val protectBatteryModeEnabled: Reading<Boolean> = Reading.NeedsShizuku,
+    /** The charge percentage Battery Protect caps charging at when enabled, from
+     * `mProtectionThreshold`. */
+    val protectionThresholdPct: Reading<Int> = Reading.NeedsShizuku,
 ) {
     /**
      * Instantaneous power in milliwatts, derived from voltage (mV) and current (µA).

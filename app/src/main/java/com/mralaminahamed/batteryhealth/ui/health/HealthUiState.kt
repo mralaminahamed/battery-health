@@ -1,5 +1,6 @@
 package com.mralaminahamed.batteryhealth.ui.health
 
+import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
 import com.mralaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
 import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
 import com.mralaminahamed.batteryhealth.domain.HealthReport
@@ -28,6 +29,13 @@ data class HealthUiState(
      * flow first emits -- production always replaces it immediately.
      */
     val designCapacity: EffectiveDesignCapacity = EffectiveDesignCapacity.None,
+    /**
+     * Drives [UnlockCard][com.mralaminahamed.batteryhealth.ui.components.UnlockCard].
+     * Defaults to [ShizukuAvailability.NotInstalled] only as the cold-start placeholder
+     * before `ShizukuGateway`'s real state first emits -- the same convention
+     * [designCapacity] already uses above.
+     */
+    val shizukuAvailability: ShizukuAvailability = ShizukuAvailability.NotInstalled,
 ) {
     /**
      * A value the platform reports directly beats one this app inferred, but beyond

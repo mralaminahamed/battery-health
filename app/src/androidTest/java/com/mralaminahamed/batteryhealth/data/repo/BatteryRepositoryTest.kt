@@ -9,12 +9,16 @@ import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
 import com.mralaminahamed.batteryhealth.data.framework.IntPropertyReader
 import com.mralaminahamed.batteryhealth.data.local.BatteryDatabase
 import com.mralaminahamed.batteryhealth.data.local.SessionEntity
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
+import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import com.mralaminahamed.batteryhealth.domain.CapacityMethod
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.domain.isAvailable
 import com.mralaminahamed.batteryhealth.domain.valueOrNull
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -47,6 +51,23 @@ class BatteryRepositoryTest {
         db.close()
     }
 
+    /**
+     * Always [ShizukuAvailability.NotInstalled] and never dumps anything, regardless of
+     * whether the physical device running this test actually has Shizuku installed and
+     * granted -- this suite's "the privileged fields are NeedsShizuku" assertions must
+     * hold on their own logic, not on incidentally not having set the real device up for
+     * Shizuku yet. `BatteryRepository` depends on the [PrivilegedBatterySource]
+     * interface for exactly this reason; see its own doc.
+     */
+    private class FakePrivilegedBatterySource : PrivilegedBatterySource {
+        override val state: StateFlow<ShizukuAvailability> =
+            MutableStateFlow(ShizukuAvailability.NotInstalled)
+
+        override suspend fun dumpBattery(): String? = null
+        override fun requestPermission() = Unit
+        override fun refresh() = Unit
+    }
+
     private fun repository(): BatteryRepository {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val batteryManager = context.getSystemService(BatteryManager::class.java)
@@ -61,6 +82,7 @@ class BatteryRepositoryTest {
             // The device's own model is irrelevant here: an explicit override makes the
             // design capacity deterministic regardless of which device runs this test.
             designCapacity = DesignCapacityProvider(settings, model = "unused-in-this-test"),
+            shizuku = FakePrivilegedBatterySource(),
         )
     }
 

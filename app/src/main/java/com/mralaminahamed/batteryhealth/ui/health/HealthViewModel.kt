@@ -3,6 +3,7 @@ package com.mralaminahamed.batteryhealth.ui.health
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.mralaminahamed.batteryhealth.data.repo.BatteryRepository
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
@@ -24,6 +25,7 @@ class HealthViewModel @Inject constructor(
     repository: BatteryRepository,
     private val settings: SettingsStore,
     designCapacity: DesignCapacityProvider,
+    private val shizuku: PrivilegedBatterySource,
     // @ApplicationContext, explicitly: lint's StaticFieldLeak check flags any bare
     // Context field on a long-lived class like a ViewModel, since it can't tell
     // whether an injected Context is Activity- or Application-scoped just from the
@@ -55,6 +57,8 @@ class HealthViewModel @Inject constructor(
             HealthUiState(snapshot, measured, enabled, startFailed, notifDenied)
         }.combine(designCapacity.effective) { partial, capacity ->
             partial.copy(designCapacity = capacity)
+        }.combine(shizuku.state) { partial, availability ->
+            partial.copy(shizukuAvailability = availability)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -101,5 +105,26 @@ class HealthViewModel @Inject constructor(
     /** Removes the override; `DesignCapacityProvider` falls back to the model table. */
     fun clearDesignCapacityOverride() {
         viewModelScope.launch { settings.setDesignCapacityOverride(null) }
+    }
+
+    /**
+     * Shows Shizuku's own permission prompt. `UnlockCard` only calls this while
+     * `state.shizukuAvailability` already reads `PermissionNotGranted` -- see
+     * `PrivilegedBatterySource.requestPermission`'s doc for why it is a safe no-op
+     * outside that state regardless.
+     */
+    fun requestShizukuPermission() {
+        shizuku.requestPermission()
+    }
+
+    /**
+     * Re-checks whether the separate Shizuku app has been installed since this
+     * ViewModel was created -- the one fact `shizuku.state` cannot learn on its own; see
+     * `PrivilegedBatterySource.refresh`'s doc. Called from the Health screen's own
+     * resume, not just once here, so installing Shizuku, granting it, and switching back
+     * to this app all update the same session without a restart.
+     */
+    fun refreshShizuku() {
+        shizuku.refresh()
     }
 }
