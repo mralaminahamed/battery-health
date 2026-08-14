@@ -5,8 +5,10 @@ import android.content.Context
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
+import android.util.Log
 import com.mralaminahamed.batteryhealth.BuildConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -55,6 +58,9 @@ class ShizukuGateway @Inject constructor(
 
     @Volatile private var boundService: IUserService? = null
     private var connection: ServiceConnection? = null
+
+    /** See [bindUserServiceIfReady]'s doc: one in-flight `bindUserService` at a time. */
+    private val bindInFlight = AtomicBoolean(false)
 
     override val state: StateFlow<ShizukuAvailability> = combine(
         packageInstalled,
@@ -128,8 +134,10 @@ class ShizukuGateway @Inject constructor(
             // A blank result and a thrown RemoteException are the same "no dump to
             // parse" from this call's point of view -- both become null, so
             // BatteryRepository cannot tell (and does not need to tell) a shell-side
-            // failure from a shell-side empty string.
-            runCatching { service.dumpBattery() }.getOrNull()?.ifBlank { null }
+            // failure from a shell-side empty string. Bounded by withGatewayDumpTimeout
+            // -- see its own doc for why this needs a timeout independent of
+            // PrivilegedBatteryService's shell-side one.
+            withGatewayDumpTimeout { runCatching { service.dumpBattery() }.getOrNull()?.ifBlank { null } }
         }
     }
 
@@ -147,8 +155,18 @@ class ShizukuGateway @Inject constructor(
         }
     }
 
+    /**
+     * [bindInFlight] guards against the case every `ON_RESUME` while [ShizukuAvailability]
+     * reads [ShizukuAvailability.Connecting] used to hit: each call here passed all three
+     * checks below (binder alive, permission granted, not yet bound) and issued a fresh
+     * `bindUserService` with a brand-new [ServiceConnection], silently dropping whatever
+     * connection object the previous call had just installed -- never unbound, just
+     * discarded. One in-flight bind at a time closes that gap without needing
+     * `unbindUserService` wired in for a connection nothing still references.
+     */
     private fun bindUserServiceIfReady() {
         if (!binderAlive.value || !permissionGranted.value || serviceBound.value) return
+        if (!bindInFlight.compareAndSet(false, true)) return
         val args = Shizuku.UserServiceArgs(ComponentName(context, PrivilegedBatteryService::class.java))
             .daemon(false)
             .processNameSuffix("privileged")
@@ -158,15 +176,29 @@ class ShizukuGateway @Inject constructor(
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 boundService = binder?.let(IUserService.Stub::asInterface)
                 serviceBound.value = boundService != null
+                bindInFlight.set(false)
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
                 boundService = null
                 serviceBound.value = false
+                bindInFlight.set(false)
             }
         }
         connection = conn
+        // Shizuku.bindUserService is void -- a rejected bind (e.g. the shell process
+        // Shizuku tries to fork+exec is refused) surfaces only as a thrown exception,
+        // never a return value, and used to be swallowed by this runCatching with no
+        // trace anywhere: `Connecting` forever, no button, and nothing in logcat either.
+        // Logged now so it is at least diagnosable, and bindInFlight is cleared so the
+        // next `refresh()` (every `ON_RESUME` calls it) retries rather than staying
+        // wedged behind a guard meant to prevent duplicates, not retries.
         runCatching { Shizuku.bindUserService(args, conn) }
+            .onFailure {
+                Log.w(TAG, "bindUserService failed; will retry on the next refresh", it)
+                bindInFlight.set(false)
+                connection = null
+            }
     }
 
     private fun pingBinderSafely(): Boolean = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
@@ -182,5 +214,34 @@ class ShizukuGateway @Inject constructor(
 
     private companion object {
         const val PERMISSION_REQUEST_CODE = 815
+        const val TAG = "ShizukuGateway"
     }
 }
+
+/**
+ * Comfortably above `PrivilegedBatteryService`'s own 3-second shell-side bound (see
+ * [DUMP_TIMEOUT_SECONDS]'s doc) rather than equal to it: that timeout firing normally
+ * already produces a prompt `""` return over the Binder call, so this one's job is to
+ * catch what the shell-side bound cannot -- the transaction itself wedging, or the
+ * `UserService` process dying before it ever reaches its own `runCatching`. Four seconds
+ * of headroom is enough for Binder/IPC overhead to not false-positive against a
+ * shell-side timeout that just fired for real.
+ */
+internal const val GATEWAY_DUMP_TIMEOUT_MS = 7_000L
+
+/**
+ * Bounds the synchronous Binder call [ShizukuGateway.dumpBattery] makes, not just the
+ * shell-side subprocess [runShellCommandWithTimeout] already times out on its own -- a
+ * wedged transaction or a `UserService` process that stops responding before it even
+ * reaches that shell-side timeout would otherwise block [ShizukuGateway.dumpBattery]
+ * indefinitely, and by extension the `combine` in `BatteryRepository.snapshots()`.
+ * `null` on timeout is indistinguishable from `null` on any other failure inside [block],
+ * which is correct -- `BatteryRepository` already treats every null the same way.
+ *
+ * A top-level function, not inlined into [ShizukuGateway.dumpBattery] directly, purely so
+ * a JVM test can exercise the timeout against a fake slow [block] under
+ * `kotlinx-coroutines-test`'s virtual clock -- [ShizukuGateway] itself needs Shizuku's
+ * real static singleton to construct meaningfully and is not the seam this needs.
+ */
+internal suspend fun <T> withGatewayDumpTimeout(block: suspend () -> T): T? =
+    withTimeoutOrNull(GATEWAY_DUMP_TIMEOUT_MS) { block() }

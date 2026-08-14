@@ -11,6 +11,14 @@
          it is what lets Shizuku's binder-received broadcast reach ShizukuProvider below. -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
+    <!-- Without this, ShizukuGateway's own getPackageInfo/getLaunchIntentForPackage
+         calls for moe.shizuku.privileged.api rely on an undeclared package-visibility
+         exemption (API 30+ query filtering) that happens to resolve on this specific
+         device rather than on a documented, portable guarantee. -->
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
+
     <application
         android:name=".BatteryHealthApplication"
         android:allowBackup="true"

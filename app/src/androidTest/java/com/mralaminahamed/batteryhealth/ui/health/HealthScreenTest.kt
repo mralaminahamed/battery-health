@@ -78,4 +78,42 @@ class HealthScreenTest {
         // text exists somewhere, the same way LiveScreenTest asserts multiplicity.
         compose.onAllNodesWithText("Not available on this device").assertCountEquals(3)
     }
+
+    private fun snapshotWithBatteryProtect(modeEnabled: Boolean, thresholdPct: Int) = snapshot().copy(
+        protectBatteryModeEnabled = Reading.Available(modeEnabled, Source.Privileged),
+        protectionThresholdPct = Reading.Available(thresholdPct, Source.Privileged),
+    )
+
+    /**
+     * Important 3: `mProtectionThreshold` is a real, known number even while Battery
+     * Protect's mode is off (Samsung keeps the configured cap around for when it is next
+     * turned on) -- rendering it as today's "80%" charge limit would claim something is
+     * capping charge when nothing is. Suppressed in the Health screen's own presentation,
+     * not upstream in the Reading, per `HealthScreen`'s own doc on why.
+     */
+    @Test
+    fun chargeLimitIsSuppressedWhenBatteryProtectIsOff() {
+        val state = HealthUiState(
+            snapshot = snapshotWithBatteryProtect(modeEnabled = false, thresholdPct = 80),
+            measured = Reading.Unsupported,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("Off").assertIsDisplayed()
+        compose.onNodeWithText("Not limiting").assertIsDisplayed()
+    }
+
+    /** The regression this guards against: suppressing the threshold unconditionally,
+     * which would hide a real, currently-enforced charge limit too. */
+    @Test
+    fun chargeLimitIsShownWhenBatteryProtectIsOn() {
+        val state = HealthUiState(
+            snapshot = snapshotWithBatteryProtect(modeEnabled = true, thresholdPct = 80),
+            measured = Reading.Unsupported,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("On").assertIsDisplayed()
+        compose.onNodeWithText("80%").assertIsDisplayed()
+    }
 }

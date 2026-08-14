@@ -13,7 +13,12 @@ import com.mralaminahamed.batteryhealth.domain.HealthReport
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.domain.Source
 import com.mralaminahamed.batteryhealth.domain.isActivelyCharging
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -34,6 +39,42 @@ class BatteryRepository @Inject constructor(
     private val designCapacity: DesignCapacityProvider,
     private val shizuku: PrivilegedBatterySource,
 ) {
+    /**
+     * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
+     * trigger [privilegedDump] already reacts to on its own -- see that function's own
+     * doc for why boundary-only is right for ASOC, BSOH and first-use but wrong on its
+     * own for the rest. [HealthViewModel][com.mralaminahamed.batteryhealth.ui.health.HealthViewModel]
+     * calls [retryPrivilegedDump] from every `ON_RESUME`, because Battery Protect's mode
+     * and threshold are a live Samsung Settings toggle the user can flip while this app
+     * is backgrounded, and nothing broadcasts that change back to this process (Critical
+     * 2). The same call, exposed as a user-visible retry action, is also what stops one
+     * failed attempt -- a `RemoteException`, a blank shell response -- from pinning
+     * every privileged row at `NeedsShizuku` until the bind state happens to toggle on
+     * its own, which it may never do while Shizuku stays genuinely bound (Important 1).
+     * Replay depth 1 so the very first collector still gets an initial tick without
+     * waiting on a resume or a retry tap that may never come.
+     */
+    private val redumpRequests = MutableSharedFlow<Unit>(
+        replay = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    ).apply { tryEmit(Unit) }
+
+    /**
+     * True only while [ShizukuAvailability.Bound] and the most recent dump attempt still
+     * came back empty -- never true merely because the tier is not bound at all, which
+     * is an entirely different, already-explained state `UnlockCard` covers on its own.
+     * Lets the Health screen show "the read failed, retry" instead of a `NeedsShizuku`
+     * row that would otherwise be indistinguishable from "Shizuku was never connected."
+     */
+    private val _privilegedDumpFailed = MutableStateFlow(false)
+    val privilegedDumpFailed: StateFlow<Boolean> = _privilegedDumpFailed.asStateFlow()
+
+    /** See [redumpRequests]'s doc: a resume-triggered refresh and a user-facing retry
+     * button both call this. */
+    fun retryPrivilegedDump() {
+        redumpRequests.tryEmit(Unit)
+    }
+
     fun snapshots(): Flow<BatterySnapshot> = combine(
         broadcasts.broadcasts(),
         privilegedDump(),
@@ -60,15 +101,17 @@ class BatteryRepository @Inject constructor(
             // this app was built against (see DumpsysBatteryParser's doc) -- the
             // framework tier categorically cannot supply it (BATTERY_STATS,
             // @SystemApi/@hide) and the privileged tier's own dumpsys output, read in
-            // full, simply does not carry it either. So this stays NeedsShizuku only
-            // until Shizuku is actually bound and dumped once, and Unsupported after --
-            // never a fabricated date, and never a false promise that granting
-            // permission would produce one once that promise is already known to be
-            // empty. See the task report for the "LLB CAL" line considered and rejected
-            // as a substitute: it reads as a bootloader/firmware calibration date, not
-            // this physical unit's manufacturing date, and nothing in the dump labels it
-            // as the latter.
-            manufacturingDateEpochDay = privilegedAbsence(dumpAvailable),
+            // full, simply does not carry it either. That is already known, unconditionally,
+            // before Shizuku is ever bound -- so this is `Unsupported` in every state, bound
+            // or not, never `NeedsShizuku`. Routing it through `privilegedAbsence(dumpAvailable)`
+            // the way every other privileged field above does would tell an unbound user
+            // that granting Shizuku might produce this date, when the eleven lines above
+            // already prove it never will: a known-false instruction, not merely an
+            // optimistic one. See the task report for the "LLB CAL" line considered and
+            // rejected as a substitute: it reads as a bootloader/firmware calibration
+            // date, not this physical unit's manufacturing date, and nothing in the dump
+            // labels it as the latter.
+            manufacturingDateEpochDay = Reading.Unsupported,
             chargeTimeRemainingMs = properties.chargeTimeRemainingMs(),
             bsohPct = dump?.bsohPct.privilegedReading(dumpAvailable),
             protectBatteryModeEnabled = dump?.protectBatteryModeEnabled.privilegedReading(dumpAvailable),
@@ -77,16 +120,32 @@ class BatteryRepository @Inject constructor(
     }
 
     /**
-     * Re-dumps only on the boundary into (or out of) [ShizukuAvailability.Bound], not on
+     * Re-dumps on the boundary into (or out of) [ShizukuAvailability.Bound] -- not on
      * every broadcast this combines against: `dumpsys battery` is a subprocess spawn
-     * across a Binder call into the shell UID, and every field it carries here changes
-     * on the order of firmware updates, not seconds -- running it on a five-second
-     * sampler cadence would buy nothing this data ever changes fast enough to need.
+     * across a Binder call into the shell UID, and ASOC/BSOH/first-use, the three fields
+     * this dump is the *only* source for, change on the order of firmware updates, not
+     * seconds, so a five-second sampler cadence would buy nothing they change fast
+     * enough to need -- and additionally on every [redumpRequests] tick, which is what
+     * keeps Battery Protect's mode/threshold and a merely-transient dump failure from
+     * being pinned to that same boundary-only cadence (see [redumpRequests]'s own doc).
+     * The extra re-dumps this costs the three stable fields on a resume that changed
+     * nothing are a real but small price -- one more subprocess spawn on a human-paced
+     * event, not a hot loop -- for not needing a second, parallel dump flow.
      */
-    private fun privilegedDump(): Flow<ParsedBatteryDump?> = shizuku.state
-        .map { it is ShizukuAvailability.Bound }
-        .distinctUntilChanged()
-        .map { bound -> if (bound) shizuku.dumpBattery()?.let(DumpsysBatteryParser::parse) else null }
+    private fun privilegedDump(): Flow<ParsedBatteryDump?> = combine(
+        shizuku.state.map { it is ShizukuAvailability.Bound }.distinctUntilChanged(),
+        redumpRequests,
+    ) { bound, _ -> bound }
+        .map { bound ->
+            if (!bound) {
+                _privilegedDumpFailed.value = false
+                null
+            } else {
+                val dump = shizuku.dumpBattery()?.let(DumpsysBatteryParser::parse)
+                _privilegedDumpFailed.value = dump == null
+                dump
+            }
+        }
 
     /**
      * `null` means two different things depending on [dumpAvailable], and only this

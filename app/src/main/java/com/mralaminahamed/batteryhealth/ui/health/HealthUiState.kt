@@ -36,21 +36,32 @@ data class HealthUiState(
      * [designCapacity] already uses above.
      */
     val shizukuAvailability: ShizukuAvailability = ShizukuAvailability.NotInstalled,
+    /**
+     * True only while [shizukuAvailability] is [ShizukuAvailability.Bound] and the most
+     * recent privileged dump attempt still came back empty -- see
+     * `BatteryRepository.privilegedDumpFailed`'s own doc. Drives `UnlockCard`'s
+     * otherwise-unreachable "Bound but the read failed, retry" case.
+     */
+    val privilegedDumpFailed: Boolean = false,
 ) {
     /**
      * A value the platform reports directly beats one this app inferred, but beyond
-     * that, absence is not all the same kind of absence: `BatteryRepository` sets
-     * `stateOfHealthPct` to `NeedsShizuku` unconditionally (this device's own
-     * BatteryManager can never report it directly, signature-permission-gated), so
-     * `framework is Reading.Available` is never true in practice and every other case
-     * used to fall straight through to `measured` alone. That silently discarded
-     * `NeedsShizuku` whenever `measured` was `Unsupported` — nearly every Samsung model,
-     * since the design-capacity table has ten entries and no override UI — and rendered
-     * "Not available on this device" one row above a "Needs Shizuku" line about the
-     * exact same underlying data. Explicit precedence fixes that: Available beats
-     * NotYetMeasured beats NeedsShizuku beats Unsupported, so a `NeedsShizuku` is never
-     * displaced by a plain `Unsupported`, and a real measurement still wins when one
-     * exists.
+     * that, absence is not all the same kind of absence. This used to be moot in
+     * practice: `BatteryRepository` set `stateOfHealthPct` to `NeedsShizuku`
+     * unconditionally (this device's own unprivileged `BatteryManager` can never report
+     * it, signature-permission-gated), so `framework is Reading.Available` was never
+     * true and every other case fell straight through to `measured` alone. That is no
+     * longer true now that the privileged tier exists: once Shizuku is bound, a real
+     * dump makes `framework` genuinely `Reading.Available` (Samsung's ASOC, sourced
+     * `Privileged`), and this precedence is what a real device now exercises rather than
+     * only a hypothetical one. Before that fix landed, the fallthrough also silently
+     * discarded `NeedsShizuku` whenever `measured` was `Unsupported` — nearly every
+     * Samsung model, since the design-capacity table has ten entries and no override UI
+     * — and rendered "Not available on this device" one row above a "Needs Shizuku" line
+     * about the exact same underlying data. Explicit precedence fixes both: Available
+     * beats NotYetMeasured beats NeedsShizuku beats Unsupported, so a real measurement
+     * still wins when one exists, and a `NeedsShizuku` is never displaced by a plain
+     * `Unsupported`.
      */
     val headlinePct: Reading<Int>
         get() {

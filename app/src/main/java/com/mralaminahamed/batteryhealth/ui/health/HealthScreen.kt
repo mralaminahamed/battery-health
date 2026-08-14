@@ -145,6 +145,7 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         },
         onSaveDesignCapacity = viewModel::setDesignCapacityOverride,
         onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
+        onRetryPrivilegedDump = viewModel::retryPrivilegedDump,
     )
 }
 
@@ -158,6 +159,7 @@ fun HealthContent(
     onRequestShizukuPermission: () -> Unit = {},
     onOpenShizuku: () -> Unit = {},
     onLearnMoreAboutShizuku: () -> Unit = {},
+    onRetryPrivilegedDump: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
@@ -203,9 +205,11 @@ fun HealthContent(
 
         UnlockCard(
             availability = state.shizukuAvailability,
+            dumpFailed = state.privilegedDumpFailed,
             onRequestPermission = onRequestShizukuPermission,
             onOpenShizuku = onOpenShizuku,
             onLearnMore = onLearnMoreAboutShizuku,
+            onRetry = onRetryPrivilegedDump,
         )
 
         OneUiCard {
@@ -269,9 +273,26 @@ fun HealthContent(
                 ) { enabled, _ -> Value(if (enabled) "On" else "Off") }
             }
             KeyValueRow("Charge limit", showDivider = false) {
+                // `mProtectBatteryMode`'s on/off collapses more than the two states the
+                // fixture proves exist (see DumpsysBatteryParser's doc on why -- One UI's
+                // Basic/Adaptive/Maximum modes aren't distinguishable from this one field
+                // with the evidence this app was built against), but mode `0` is
+                // unambiguously off, and `mProtectionThreshold` is still a real number in
+                // that state -- Samsung keeps the configured cap even while nothing is
+                // enforcing it. Rendering that number as today's "Charge limit" would be
+                // a limit displayed while nothing is limiting, which is its own false
+                // claim, not merely a stale one. Suppressed here, in the presentation,
+                // rather than upstream in the Reading itself: the number is genuinely
+                // known (a real dump returned it), just not in force right now, and
+                // Reading's three absences have no case for "known but not applicable" --
+                // forcing it into Unsupported or NeedsShizuku would misstate *why* it is
+                // absent. When the mode reading itself is not Available (rarer: the two
+                // fields parse independently), there is no positive signal it is off, so
+                // this falls back to showing the raw value rather than guessing.
+                val modeIsOff = state.snapshot?.protectBatteryModeEnabled?.valueOrNull() == false
                 ReadingSlot(
                     state.snapshot?.protectionThresholdPct ?: Reading.NotYetMeasured
-                ) { pct, _ -> Value("$pct%") }
+                ) { pct, _ -> Value(if (modeIsOff) "Not limiting" else "$pct%") }
             }
         }
 

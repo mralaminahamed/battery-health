@@ -25,30 +25,38 @@ object UnlockCardTags {
  * Deliberately not one "connect" button behind one boolean -- [ShizukuAvailability] has
  * four distinct not-yet-bound states, each with its own next action, and a single
  * flag would have to guess which one applies. Renders nothing once
- * [ShizukuAvailability.Bound] is reached: at that point the values it was explaining
- * the absence of have already started appearing through the ordinary [ReadingSlot] rows
- * elsewhere on the screen, and a card that keeps advertising a state that no longer
- * holds is worse than no card.
+ * [ShizukuAvailability.Bound] is reached *and* [dumpFailed] is false: at that point the
+ * values it was explaining the absence of have already started appearing through the
+ * ordinary [ReadingSlot] rows elsewhere on the screen, and a card that keeps advertising
+ * a state that no longer holds is worse than no card. [dumpFailed] is the one exception
+ * to "nothing once Bound": a bind that succeeded but whose most recent `dumpsys battery`
+ * attempt came back empty is not the same as a working privileged tier, and without this
+ * card the only visible symptom would be every privileged row silently reading
+ * `NeedsShizuku` again -- indistinguishable from Shizuku never having been connected at
+ * all, with no explanation and no way to retry short of toggling the bind off and back on.
  */
 @Composable
 fun UnlockCard(
     availability: ShizukuAvailability,
+    dumpFailed: Boolean,
     onRequestPermission: () -> Unit,
     onOpenShizuku: () -> Unit,
     onLearnMore: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (availability == ShizukuAvailability.Bound) return
+    if (availability == ShizukuAvailability.Bound && !dumpFailed) return
 
     val colors = LocalOneUiColors.current
+    val boundButFailed = availability == ShizukuAvailability.Bound && dumpFailed
     OneUiCard(modifier.testTag(UnlockCardTags.ROOT)) {
-        SectionHeader("Unlock more readings")
+        SectionHeader(if (boundButFailed) "Privileged read failed" else "Unlock more readings")
         Text(
-            text = explanation(availability),
+            text = explanation(availability, dumpFailed),
             style = MaterialTheme.typography.bodyMedium,
             color = colors.textSecondary,
         )
-        val action = actionFor(availability, onRequestPermission, onOpenShizuku, onLearnMore)
+        val action = actionFor(availability, dumpFailed, onRequestPermission, onOpenShizuku, onLearnMore, onRetry)
         if (action != null) {
             val (label, onClick) = action
             Button(
@@ -69,7 +77,7 @@ fun UnlockCard(
  * notifications. That real burden is stated plainly rather than papered over with a
  * single friendly button that quietly can't do what it implies.
  */
-private fun explanation(availability: ShizukuAvailability): String = when (availability) {
+private fun explanation(availability: ShizukuAvailability, dumpFailed: Boolean): String = when (availability) {
     ShizukuAvailability.NotInstalled ->
         "State of health, first-use date and Battery Protect status are hidden behind " +
             "a permission this app cannot request on its own. Shizuku is a separate, " +
@@ -82,7 +90,14 @@ private fun explanation(availability: ShizukuAvailability): String = when (avail
         "Shizuku is running. Grant this app permission to read the privileged battery " +
             "values."
     ShizukuAvailability.Connecting -> "Connecting to Shizuku…"
-    ShizukuAvailability.Bound -> "" // unreachable; UnlockCard returns before rendering
+    ShizukuAvailability.Bound ->
+        if (dumpFailed) {
+            "Shizuku is connected, but the last privileged read didn't come back -- " +
+                "most likely a dropped shell call. Retrying costs nothing and often " +
+                "just works."
+        } else {
+            "" // unreachable; UnlockCard returns before rendering this case
+        }
 }
 
 /**
@@ -92,12 +107,15 @@ private fun explanation(availability: ShizukuAvailability): String = when (avail
  */
 private fun actionFor(
     availability: ShizukuAvailability,
+    dumpFailed: Boolean,
     onRequestPermission: () -> Unit,
     onOpenShizuku: () -> Unit,
     onLearnMore: () -> Unit,
+    onRetry: () -> Unit,
 ): Pair<String, () -> Unit>? = when (availability) {
     ShizukuAvailability.NotInstalled -> "Get Shizuku" to onLearnMore
     ShizukuAvailability.NotRunning -> "Open Shizuku" to onOpenShizuku
     ShizukuAvailability.PermissionNotGranted -> "Grant permission" to onRequestPermission
-    ShizukuAvailability.Connecting, ShizukuAvailability.Bound -> null
+    ShizukuAvailability.Connecting -> null
+    ShizukuAvailability.Bound -> if (dumpFailed) "Retry" to onRetry else null
 }

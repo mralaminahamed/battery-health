@@ -22,7 +22,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class HealthViewModel @Inject constructor(
-    repository: BatteryRepository,
+    private val repository: BatteryRepository,
     private val settings: SettingsStore,
     designCapacity: DesignCapacityProvider,
     private val shizuku: PrivilegedBatterySource,
@@ -59,6 +59,8 @@ class HealthViewModel @Inject constructor(
             partial.copy(designCapacity = capacity)
         }.combine(shizuku.state) { partial, availability ->
             partial.copy(shizukuAvailability = availability)
+        }.combine(repository.privilegedDumpFailed) { partial, dumpFailed ->
+            partial.copy(privilegedDumpFailed = dumpFailed)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -123,8 +125,25 @@ class HealthViewModel @Inject constructor(
      * `PrivilegedBatterySource.refresh`'s doc. Called from the Health screen's own
      * resume, not just once here, so installing Shizuku, granting it, and switching back
      * to this app all update the same session without a restart.
+     *
+     * Also re-dumps the privileged fields (`repository.retryPrivilegedDump()`): Battery
+     * Protect's mode and threshold are a live Samsung Settings toggle the user could have
+     * just changed in the background, and `shizuku.refresh()` alone would not notice --
+     * see `BatteryRepository.redumpRequests`'s doc for why both that and a stuck failed
+     * dump share this one entry point.
      */
     fun refreshShizuku() {
         shizuku.refresh()
+        repository.retryPrivilegedDump()
+    }
+
+    /**
+     * The Health screen's manual "Retry" action on `UnlockCard` once it is `Bound` but
+     * the last privileged dump attempt failed -- see `BatteryRepository.retryPrivilegedDump`.
+     * A thin pass-through by design: this ViewModel is not where the retry/resume policy
+     * decision lives, the repository is.
+     */
+    fun retryPrivilegedDump() {
+        repository.retryPrivilegedDump()
     }
 }
