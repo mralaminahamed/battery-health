@@ -141,6 +141,19 @@ class ShizukuGateway @Inject constructor(
         }
     }
 
+    override suspend fun dumpBatteryStatsCheckin(): String? {
+        val service = boundService ?: return null
+        return withContext(Dispatchers.IO) {
+            // Same null-collapsing contract as dumpBattery above, bounded by
+            // withGatewayCheckinTimeout rather than withGatewayDumpTimeout -- see that
+            // function's own doc for why this call needs more headroom than the small
+            // dump's.
+            withGatewayCheckinTimeout {
+                runCatching { service.dumpBatteryStatsCheckin() }.getOrNull()?.ifBlank { null }
+            }
+        }
+    }
+
     override fun requestPermission() {
         if (!binderAlive.value || permissionGranted.value) return
         runCatching { Shizuku.requestPermission(PERMISSION_REQUEST_CODE) }
@@ -245,3 +258,27 @@ internal const val GATEWAY_DUMP_TIMEOUT_MS = 7_000L
  */
 internal suspend fun <T> withGatewayDumpTimeout(block: suspend () -> T): T? =
     withTimeoutOrNull(GATEWAY_DUMP_TIMEOUT_MS) { block() }
+
+/**
+ * Comfortably above [PrivilegedBatteryService]'s own [CHECKIN_TIMEOUT_SECONDS] (8s)
+ * shell-side bound for `dumpsys batterystats --checkin` -- the same headroom rationale as
+ * [GATEWAY_DUMP_TIMEOUT_MS] over [DUMP_TIMEOUT_SECONDS], plus extra margin this call
+ * specifically needs and [GATEWAY_DUMP_TIMEOUT_MS] does not: marshalling a `String` up to
+ * 525KB back across the Binder transaction is real, non-instant work the small ~11KB
+ * dump's own gateway timeout was never sized for, even after
+ * [runShellCommandWithTimeout]'s own fix (see its doc) removed the risk of that shell-side
+ * call deadlocking outright -- copying that much data still costs real time on top of it.
+ * A dedicated constant, not [GATEWAY_DUMP_TIMEOUT_MS] reused: the two shell-side timeouts
+ * below them already differ for reasons specific to each payload's size, and a shared
+ * client-side bound would either be too tight for this call or too loose for the other.
+ */
+internal const val GATEWAY_CHECKIN_TIMEOUT_MS = 15_000L
+
+/**
+ * [ShizukuGateway.dumpBatteryStatsCheckin]'s client-side bound, pulled out to a top-level
+ * function for the same reason [withGatewayDumpTimeout] is: a JVM test can exercise it
+ * with a fake slow [block] under `kotlinx-coroutines-test`'s virtual clock without
+ * needing Shizuku's real static singleton.
+ */
+internal suspend fun <T> withGatewayCheckinTimeout(block: suspend () -> T): T? =
+    withTimeoutOrNull(GATEWAY_CHECKIN_TIMEOUT_MS) { block() }
