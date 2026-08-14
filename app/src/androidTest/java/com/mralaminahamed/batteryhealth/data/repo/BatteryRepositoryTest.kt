@@ -9,17 +9,23 @@ import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
 import com.mralaminahamed.batteryhealth.data.framework.IntPropertyReader
 import com.mralaminahamed.batteryhealth.data.local.BatteryDatabase
 import com.mralaminahamed.batteryhealth.data.local.SessionEntity
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
+import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import com.mralaminahamed.batteryhealth.domain.CapacityMethod
 import com.mralaminahamed.batteryhealth.domain.Reading
+import com.mralaminahamed.batteryhealth.domain.Source
 import com.mralaminahamed.batteryhealth.domain.isAvailable
 import com.mralaminahamed.batteryhealth.domain.valueOrNull
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -47,7 +53,56 @@ class BatteryRepositoryTest {
         db.close()
     }
 
-    private fun repository(): BatteryRepository {
+    /**
+     * Configurable in every direction the new tests below need: [ShizukuAvailability]
+     * starts wherever the caller sets it (defaulting to [ShizukuAvailability.NotInstalled]
+     * so the original, unbound-state test below is unaffected), [dumpBattery] returns
+     * whatever [nextDump] currently holds rather than a fixed value, and [dumpCallCount]
+     * lets a test confirm a retry actually re-invoked the shell call rather than replaying
+     * a cached result. Never touches the real Shizuku singleton, so these assertions hold
+     * on their own logic regardless of whether the physical device running this test
+     * happens to have Shizuku installed and bound already. `BatteryRepository` depends on
+     * the [PrivilegedBatterySource] interface for exactly this reason; see its own doc.
+     */
+    private class FakePrivilegedBatterySource(
+        initial: ShizukuAvailability = ShizukuAvailability.NotInstalled,
+    ) : PrivilegedBatterySource {
+        private val stateFlow = MutableStateFlow(initial)
+        override val state: StateFlow<ShizukuAvailability> = stateFlow
+
+        var nextDump: String? = null
+        var dumpCallCount = 0
+
+        override suspend fun dumpBattery(): String? {
+            dumpCallCount++
+            return nextDump
+        }
+
+        override fun requestPermission() = Unit
+        override fun refresh() = Unit
+
+        fun setAvailability(availability: ShizukuAvailability) {
+            stateFlow.value = availability
+        }
+    }
+
+    /** Every field this parser recognises, independently overridable so a test only
+     * needs to spell out the one field it actually cares about changing. */
+    private fun sampleDumpText(
+        asoc: Int = 86,
+        bsoh: Int = 95,
+        firstUseDate: Int = 20_240_630,
+        protectMode: Int = 1,
+        protectionThresholdPct: Int = 80,
+    ) = """
+        mSavedBatteryAsoc: [$asoc]
+        mSavedBatteryBsoh: $bsoh
+        battery FirstUseDate: [$firstUseDate]
+        mProtectBatteryMode: $protectMode
+        mProtectionThreshold: $protectionThresholdPct
+    """.trimIndent()
+
+    private fun repository(shizuku: PrivilegedBatterySource = FakePrivilegedBatterySource()): BatteryRepository {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val batteryManager = context.getSystemService(BatteryManager::class.java)
         val capabilities = CapabilityProbe(
@@ -61,6 +116,7 @@ class BatteryRepositoryTest {
             // The device's own model is irrelevant here: an explicit override makes the
             // design capacity deterministic regardless of which device runs this test.
             designCapacity = DesignCapacityProvider(settings, model = "unused-in-this-test"),
+            shizuku = shizuku,
         )
     }
 
@@ -79,13 +135,99 @@ class BatteryRepositoryTest {
             snapshot.chargeCounterUah.isAvailable || snapshot.chargeCounterUah == Reading.Unsupported
         )
 
-        // StateOfHealth, FirstUsageDate and ManufacturingDate require signature-level
-        // BATTERY_STATS and are unreachable by any unprivileged app on any device. Reporting
-        // Unsupported here would claim the device itself cannot supply the number, which is
-        // false -- the privileged (Shizuku) tier can. NeedsShizuku is the honest answer.
+        // StateOfHealth and FirstUsageDate require signature-level BATTERY_STATS and are
+        // unreachable by any unprivileged app on any device. Reporting Unsupported here
+        // would claim the device itself cannot supply the number, which is false -- the
+        // privileged (Shizuku) tier can. NeedsShizuku is the honest answer.
         assertEquals(Reading.NeedsShizuku, snapshot.stateOfHealthPct)
         assertEquals(Reading.NeedsShizuku, snapshot.firstUsageDateEpochDay)
-        assertEquals(Reading.NeedsShizuku, snapshot.manufacturingDateEpochDay)
+
+        // Critical 1: manufacturing date is a categorically different case from the two
+        // above -- no dump this parser was built against has ever carried the field, so
+        // "granting Shizuku might produce it" is already known false, unconditionally,
+        // even in this unbound state. See manufacturingDateIsUnsupportedEvenWhenShizukuIsBoundAndDumped
+        // below for the same pin in the bound state, per the task's explicit request for
+        // both.
+        assertEquals(Reading.Unsupported, snapshot.manufacturingDateEpochDay)
+    }
+
+    /**
+     * Critical 1's other half: a real dump in hand, not just the unbound case above.
+     * Regresses against `manufacturingDateEpochDay` ever being routed back through the
+     * general `privilegedAbsence(dumpAvailable)` helper the other privileged fields use --
+     * if it were, this would read `Unsupported` here too, by coincidence, since
+     * `dumpAvailable` is true; the real regression this guards is the *unbound* case in
+     * the test above, but pinning both states is what the task asked for explicitly, and
+     * this is the state where "granting Shizuku produced no date" is the actual mechanism
+     * being exercised, not merely a fallback default.
+     */
+    @Test
+    fun manufacturingDateIsUnsupportedEvenWhenShizukuIsBoundAndDumped() = runBlocking {
+        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        fake.nextDump = sampleDumpText()
+
+        val snapshot = withTimeout(5_000) { repository(fake).snapshots().first() }
+
+        // Sanity: the dump was actually used (proves this test reached the bound path at
+        // all, not merely repeating the unbound assertion by accident).
+        assertEquals(Reading.Available(86, Source.Privileged), snapshot.stateOfHealthPct)
+        assertEquals(Reading.Unsupported, snapshot.manufacturingDateEpochDay)
+    }
+
+    /**
+     * Important 1: a dump that fails while genuinely Bound must not be terminal. The fake
+     * starts Bound with [FakePrivilegedBatterySource.nextDump] left `null` (a blank/failed
+     * shell call), so the first collection pins every privileged field at `NeedsShizuku`
+     * and [BatteryRepository.privilegedDumpFailed] to `true` -- exactly the bug: Shizuku
+     * is demonstrably `Bound`, yet the rows read as if it never connected. Calling
+     * [BatteryRepository.retryPrivilegedDump] and collecting again (same repository
+     * instance, same fake, `dumpBattery` now returning a real dump) is what
+     * `HealthViewModel.refreshShizuku` does on every `ON_RESUME` in production; recovering
+     * here without ever toggling the bind state itself is the fix.
+     */
+    @Test
+    fun retryPrivilegedDumpRecoversFromAFailedDumpWhileBound() = runBlocking {
+        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        fake.nextDump = null
+        val repo = repository(fake)
+
+        val failedSnapshot = withTimeout(5_000) { repo.snapshots().first() }
+        assertEquals(Reading.NeedsShizuku, failedSnapshot.stateOfHealthPct)
+        assertTrue(repo.privilegedDumpFailed.value)
+
+        fake.nextDump = sampleDumpText(asoc = 86)
+        repo.retryPrivilegedDump()
+
+        val recoveredSnapshot = withTimeout(5_000) { repo.snapshots().first() }
+        assertEquals(Reading.Available(86, Source.Privileged), recoveredSnapshot.stateOfHealthPct)
+        assertFalse(repo.privilegedDumpFailed.value)
+    }
+
+    /**
+     * Critical 2: Battery Protect's mode and threshold are a live Samsung Settings toggle,
+     * not a firmware-stable figure like ASOC/BSOH/first-use -- the bind-boundary-only
+     * cadence those three correctly use must not also gate these two. Simulates the
+     * task's own reachable flow (bound, then the user changes the setting elsewhere, then
+     * returns) by changing what the fake's next dump reports and calling
+     * [BatteryRepository.retryPrivilegedDump] -- the same call `HealthViewModel` makes
+     * from every `ON_RESUME` -- without the bind state itself ever toggling.
+     */
+    @Test
+    fun retryPrivilegedDumpRefreshesBatteryProtectFieldsOnDemand() = runBlocking {
+        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        fake.nextDump = sampleDumpText(protectMode = 1, protectionThresholdPct = 80)
+        val repo = repository(fake)
+
+        val before = withTimeout(5_000) { repo.snapshots().first() }
+        assertEquals(Reading.Available(true, Source.Privileged), before.protectBatteryModeEnabled)
+        assertEquals(Reading.Available(80, Source.Privileged), before.protectionThresholdPct)
+
+        // The user turned Battery Protect off in Settings while this app was backgrounded.
+        fake.nextDump = sampleDumpText(protectMode = 0, protectionThresholdPct = 80)
+        repo.retryPrivilegedDump()
+
+        val after = withTimeout(5_000) { repo.snapshots().first() }
+        assertEquals(Reading.Available(false, Source.Privileged), after.protectBatteryModeEnabled)
     }
 
     private fun chargeSessionWithoutCounter(id: Long, coulombUah: Long) = SessionEntity(

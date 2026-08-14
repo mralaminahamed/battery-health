@@ -3,7 +3,9 @@ package com.mralaminahamed.batteryhealth.ui.health
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.mralaminahamed.batteryhealth.data.repo.BatteryRepository
+import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.sampling.ChargeRecorderService
@@ -20,8 +22,10 @@ import javax.inject.Inject
 
 @HiltViewModel
 class HealthViewModel @Inject constructor(
-    repository: BatteryRepository,
+    private val repository: BatteryRepository,
     private val settings: SettingsStore,
+    designCapacity: DesignCapacityProvider,
+    private val shizuku: PrivilegedBatterySource,
     // @ApplicationContext, explicitly: lint's StaticFieldLeak check flags any bare
     // Context field on a long-lived class like a ViewModel, since it can't tell
     // whether an injected Context is Activity- or Application-scoped just from the
@@ -47,7 +51,16 @@ class HealthViewModel @Inject constructor(
             recorderStartFailed,
             notificationsDenied,
         ) { snapshot, measured, enabled, startFailed, notifDenied ->
+            // combine() has no six-flow overload, so the design-capacity flow is joined
+            // separately below rather than folded into this one -- not because it's less
+            // important, only because the five-arg form is what the library provides.
             HealthUiState(snapshot, measured, enabled, startFailed, notifDenied)
+        }.combine(designCapacity.effective) { partial, capacity ->
+            partial.copy(designCapacity = capacity)
+        }.combine(shizuku.state) { partial, availability ->
+            partial.copy(shizukuAvailability = availability)
+        }.combine(repository.privilegedDumpFailed) { partial, dumpFailed ->
+            partial.copy(privilegedDumpFailed = dumpFailed)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -81,5 +94,56 @@ class HealthViewModel @Inject constructor(
     /** Called with the result of requesting POST_NOTIFICATIONS (API 33+) from the screen. */
     fun onNotificationPermissionResult(granted: Boolean) {
         notificationsDenied.value = !granted
+    }
+
+    /**
+     * `mah` has already passed `DesignCapacityValidation` in the dialog -- this is a
+     * plain write, not a second place that could reject it differently.
+     */
+    fun setDesignCapacityOverride(mah: Int) {
+        viewModelScope.launch { settings.setDesignCapacityOverride(mah) }
+    }
+
+    /** Removes the override; `DesignCapacityProvider` falls back to the model table. */
+    fun clearDesignCapacityOverride() {
+        viewModelScope.launch { settings.setDesignCapacityOverride(null) }
+    }
+
+    /**
+     * Shows Shizuku's own permission prompt. `UnlockCard` only calls this while
+     * `state.shizukuAvailability` already reads `PermissionNotGranted` -- see
+     * `PrivilegedBatterySource.requestPermission`'s doc for why it is a safe no-op
+     * outside that state regardless.
+     */
+    fun requestShizukuPermission() {
+        shizuku.requestPermission()
+    }
+
+    /**
+     * Re-checks whether the separate Shizuku app has been installed since this
+     * ViewModel was created -- the one fact `shizuku.state` cannot learn on its own; see
+     * `PrivilegedBatterySource.refresh`'s doc. Called from the Health screen's own
+     * resume, not just once here, so installing Shizuku, granting it, and switching back
+     * to this app all update the same session without a restart.
+     *
+     * Also re-dumps the privileged fields (`repository.retryPrivilegedDump()`): Battery
+     * Protect's mode and threshold are a live Samsung Settings toggle the user could have
+     * just changed in the background, and `shizuku.refresh()` alone would not notice --
+     * see `BatteryRepository.redumpRequests`'s doc for why both that and a stuck failed
+     * dump share this one entry point.
+     */
+    fun refreshShizuku() {
+        shizuku.refresh()
+        repository.retryPrivilegedDump()
+    }
+
+    /**
+     * The Health screen's manual "Retry" action on `UnlockCard` once it is `Bound` but
+     * the last privileged dump attempt failed -- see `BatteryRepository.retryPrivilegedDump`.
+     * A thin pass-through by design: this ViewModel is not where the retry/resume policy
+     * decision lives, the repository is.
+     */
+    fun retryPrivilegedDump() {
+        repository.retryPrivilegedDump()
     }
 }
