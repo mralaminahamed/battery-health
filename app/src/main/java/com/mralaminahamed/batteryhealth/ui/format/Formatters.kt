@@ -31,4 +31,15 @@ object Formatters {
     }
 
     fun epochDay(day: Long): String = LocalDate.ofEpochDay(day).toString()
+
+    /** Milliamp-hours for the Apps screen's per-uid power rows. Two decimals for the same
+     * reason [watts] uses two: most of a real `batterystats --checkin` capture's ninety
+     * per-uid rows are well under 1 mAh, and a single-decimal format would round most of
+     * them to "0.0 mAh", losing the one number the row exists to show. */
+    fun milliampHours(mAh: Double): String = String.format(Locale.US, "%.2f mAh", mAh)
+
+    /** A uid's share of everything `batterystats` accounted for. One decimal: this is a
+     * proportion for orientation ("roughly a tenth of everything"), not a precise
+     * measurement that would justify more. */
+    fun percentShare(pct: Double): String = String.format(Locale.US, "%.1f%%", pct)
 }

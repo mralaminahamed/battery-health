@@ -71,4 +71,35 @@ class PrivilegedBatteryServiceTest {
 
         assertEquals("partial", result)
     }
+
+    /**
+     * The bug this task's own on-device verification actually found: reading the stream
+     * only *after* `waitFor()` succeeds (this function's shape before this fix) deadlocks
+     * once a command's output exceeds the OS pipe buffer between the child process and
+     * this one -- the child's own `write()` blocks once that buffer fills, and this
+     * thread is simultaneously blocked in `waitFor()` waiting for the child to *exit*
+     * before it will ever read anything drain it. Reproduced here with a command that
+     * writes 300,000 bytes, comfortably past every mainstream platform's default pipe
+     * buffer (64KB on Linux, and empirically confirmed on macOS -- the platform this test
+     * itself runs on -- via a standalone reproduction using `ProcessBuilder` directly
+     * before this fix was written).
+     *
+     * RED without the fix (reading concurrently with `waitFor()` on a dedicated thread):
+     * this times out at the 5-second bound below and returns `""`, exactly the failure
+     * this app hit for real running on-device against `dumpsys batterystats --checkin`
+     * (every attempt timed out regardless of the configured bound -- 9s, then 45s -- while
+     * the same command completed in under half a second over a plain `adb shell`). GREEN
+     * with the fix: the full 300,000 bytes come back well inside the 5-second bound.
+     */
+    @Test
+    fun aCommandWritingMoreThanThePipeBufferCompletesWithoutDeadlocking() {
+        val expectedByteCount = 300_000
+
+        val result = runShellCommandWithTimeout(
+            listOf("sh", "-c", "yes | head -c $expectedByteCount"),
+            timeoutSeconds = 5,
+        )
+
+        assertEquals(expectedByteCount, result.length)
+    }
 }

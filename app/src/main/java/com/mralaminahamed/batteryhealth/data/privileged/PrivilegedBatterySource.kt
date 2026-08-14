@@ -19,6 +19,13 @@ interface PrivilegedBatterySource {
      * call itself failed. Never throws. */
     suspend fun dumpBattery(): String?
 
+    /** `dumpsys batterystats --checkin` -- [BatteryStatsCheckinParser]'s own input, and
+     * the source of the Apps screen's per-uid power attribution. Same `null`-on-not-bound-
+     * or-failed contract as [dumpBattery]; a distinct method because the two commands are
+     * independent shell calls with independent timeouts and independent parsers, not one
+     * dump with a second, optional shape. Never throws. */
+    suspend fun dumpBatteryStatsCheckin(): String?
+
     /** Shows Shizuku's own permission prompt. A no-op unless [state] is already
      * [ShizukuAvailability.PermissionNotGranted] -- calling it from any other state
      * would either do nothing useful (already bound) or nothing possible (not

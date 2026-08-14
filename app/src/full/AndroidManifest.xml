@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- `full` only. Battery attribution needs to resolve labels/icons for uids that
+         `batterystats` names, which this app has never otherwise interacted with; that
+         is the exact case QUERY_ALL_PACKAGES exists for. Play does not approve this
+         permission for a battery tool's declared category, so the `play` flavour omits
+         it entirely (no corresponding entry in src/play/AndroidManifest.xml) and
+         AppLabelResolver's two implementations degrade accordingly; see
+         data/apps/AppLabelResolver.kt for how that split actually works.
+
+         tools:ignore suppresses lint's QueryAllPackagesPermission check, which exists to
+         catch an accidental or lazy reach for this permission, and this is neither: it is
+         the entire, deliberate reason this flavour exists, already justified above and in
+         the task report, not a warning being silenced to make a number look better. -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+</manifest>

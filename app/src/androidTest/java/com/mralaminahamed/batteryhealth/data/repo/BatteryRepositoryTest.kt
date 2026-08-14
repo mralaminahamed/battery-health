@@ -13,9 +13,11 @@ import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
+import com.mralaminahamed.batteryhealth.domain.AppPowerEntry
 import com.mralaminahamed.batteryhealth.domain.CapacityMethod
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.domain.Source
+import com.mralaminahamed.batteryhealth.domain.UidKind
 import com.mralaminahamed.batteryhealth.domain.isAvailable
 import com.mralaminahamed.batteryhealth.domain.valueOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,10 +74,17 @@ class BatteryRepositoryTest {
 
         var nextDump: String? = null
         var dumpCallCount = 0
+        var nextCheckin: String? = null
+        var checkinCallCount = 0
 
         override suspend fun dumpBattery(): String? {
             dumpCallCount++
             return nextDump
+        }
+
+        override suspend fun dumpBatteryStatsCheckin(): String? {
+            checkinCallCount++
+            return nextCheckin
         }
 
         override fun requestPermission() = Unit
@@ -352,5 +361,92 @@ class BatteryRepositoryTest {
         assertEquals(100, report.healthPct)
         assertEquals(CapacityMethod.Counter, report.method)
         assertEquals(3, report.sessionsUsed)
+    }
+
+    private fun sampleCheckinText() = """
+        9,0,i,vers,36,1179864,BP4A.251205.006,BP4A.251205.006
+        9,0,i,uid,1000,com.samsung.android.provider.filterprovider
+        9,0,i,uid,2000,com.android.shell
+        9,0,i,uid,10106,com.sec.android.app.camera
+        9,2000,l,pwi,uid,422,1,0,0
+        9,1000,l,pwi,uid,6.23,1,0,0
+        9,10106,l,pwi,uid,15.6,1,0,0
+        9,0,l,pwi,cpu,17.5,0,0,0
+    """.trimIndent()
+
+    @Test
+    fun appPowerReportsNeedsShizukuWhenNotBound() = runBlocking {
+        val repo = repository(FakePrivilegedBatterySource(initial = ShizukuAvailability.NotInstalled))
+
+        val reading = withTimeout(5_000) { repo.appPower().first() }
+
+        assertEquals(Reading.NeedsShizuku, reading)
+        assertFalse(repo.appPowerFailed.value)
+    }
+
+    /**
+     * The real end-to-end path: a bound checkin call, parsed and reduced into rows,
+     * sorted descending, each classified into the right [UidKind] -- the shell uid (2000)
+     * kept apart from the real app (10106) and the system uid (1000), exactly the
+     * distinction the Apps screen's whole design exists to preserve. The system-wide
+     * component breakdown row (uid "0", component "cpu") must not leak into the per-uid
+     * list as a phantom "uid 0" entry.
+     */
+    @Test
+    fun appPowerParsesARealBoundCheckinIntoClassifiedSortedEntries() = runBlocking {
+        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        fake.nextCheckin = sampleCheckinText()
+        val repo = repository(fake)
+
+        val reading = withTimeout(5_000) { repo.appPower().first() }
+
+        val entries = reading.valueOrNull() ?: error("expected Available, got $reading")
+        assertEquals(listOf(2000, 10106, 1000), entries.map { it.uid })
+        assertEquals(UidKind.Shell, entries.first { it.uid == 2000 }.kind)
+        assertEquals(UidKind.App, entries.first { it.uid == 10106 }.kind)
+        assertEquals(UidKind.System, entries.first { it.uid == 1000 }.kind)
+        assertFalse(repo.appPowerFailed.value)
+    }
+
+    /**
+     * Mirrors [retryPrivilegedDumpRecoversFromAFailedDumpWhileBound] for the checkin call:
+     * a bound tier whose checkin call fails must not be terminal, and must be
+     * distinguishable (via [BatteryRepository.appPowerFailed]) from having never bound at
+     * all.
+     */
+    @Test
+    fun retryPrivilegedDumpRecoversFromAFailedCheckinWhileBound() = runBlocking {
+        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        fake.nextCheckin = null
+        val repo = repository(fake)
+
+        val failedReading = withTimeout(5_000) { repo.appPower().first() }
+        assertEquals(Reading.NeedsShizuku, failedReading)
+        assertTrue(repo.appPowerFailed.value)
+
+        fake.nextCheckin = sampleCheckinText()
+        repo.retryPrivilegedDump()
+
+        val recoveredReading = withTimeout(5_000) { repo.appPower().first() }
+        assertTrue(recoveredReading.isAvailable)
+        assertFalse(repo.appPowerFailed.value)
+    }
+
+    /**
+     * A checkin call that succeeds (a real, non-null string came back) but happens to
+     * contain no "pwi,uid" rows is a real, honest "nothing recorded yet" -- Available with
+     * an empty list -- never NeedsShizuku, which would wrongly imply granting Shizuku
+     * again might change the answer.
+     */
+    @Test
+    fun appPowerIsAvailableWithAnEmptyListWhenTheCheckinHasNoPerUidRows() = runBlocking {
+        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        fake.nextCheckin = "9,0,i,vers,36,1179864,BP4A.251205.006,BP4A.251205.006\n"
+        val repo = repository(fake)
+
+        val reading = withTimeout(5_000) { repo.appPower().first() }
+
+        assertEquals(Reading.Available(emptyList<AppPowerEntry>(), Source.Privileged), reading)
+        assertFalse(repo.appPowerFailed.value)
     }
 }
