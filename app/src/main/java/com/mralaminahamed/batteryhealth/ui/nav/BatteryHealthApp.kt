@@ -13,6 +13,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.mralaminahamed.batteryhealth.ui.apps.AppsScreen
 import com.mralaminahamed.batteryhealth.ui.components.CollapsingTitleScaffold
 import com.mralaminahamed.batteryhealth.ui.health.HealthScreen
 import com.mralaminahamed.batteryhealth.ui.history.HistoryScreen
@@ -23,6 +24,7 @@ enum class Destination(val route: String, val label: String) {
     Health("health", "Health"),
     Live("live", "Live"),
     History("history", "History"),
+    Apps("apps", "Apps"),
 }
 
 @Composable
@@ -73,6 +75,7 @@ fun BatteryHealthApp() {
             composable(Destination.Health.route) { HealthScreen() }
             composable(Destination.Live.route) { LiveScreen() }
             composable(Destination.History.route) { HistoryScreen() }
+            composable(Destination.Apps.route) { AppsScreen() }
         }
     }
 }

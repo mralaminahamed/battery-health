@@ -13,7 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
 import com.mralaminahamed.batteryhealth.domain.ChargeState
 import com.mralaminahamed.batteryhealth.domain.PlugType
