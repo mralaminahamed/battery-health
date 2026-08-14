@@ -1,6 +1,7 @@
 package com.mralaminahamed.batteryhealth.data.privileged
 
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 /**
  * Every field independently optional, and `null` on any of them means exactly one thing:
@@ -32,6 +33,26 @@ data class ParsedBatteryDump(
     /** `mProtectionThreshold` -- the charge percentage Battery Protect caps charging at
      * when enabled. */
     val protectionThresholdPct: Int?,
+    /**
+     * Samsung's accumulated cycle count, derived from `mSavedBatteryUsage` (hundredths of
+     * a cycle -- `61919` on the fixture this was built against, i.e. `619.19`, rounded to
+     * `619`). Rounded rather than kept as a decimal: `BatterySnapshot.cycleCount` is a
+     * plain `Int`, the same type the framework's own `EXTRA_CYCLE_COUNT` broadcast already
+     * reports through, so carrying `.19` of a cycle would need a second, parallel numeric
+     * type this app has no other use for, to preserve precision nothing downstream acts
+     * on differently. Unlike a naive counter that only advances on a full 0->100
+     * discharge, this accumulates every partial charge -- the same definition Apple's own
+     * cycle count uses -- which is why it is not a small integer on a lightly-used phone
+     * the way a naive counter would be.
+     *
+     * `null` both when the line is missing (like every other field here) and when
+     * [isPlausibleCycleRate] rejects the ÷100 interpretation for this device -- see that
+     * function's own doc for why a failed cross-check is treated exactly like an absent
+     * line rather than a different, third kind of absence: the honest answer in both cases
+     * is "this app does not have a trustworthy number," not a number that might be off by
+     * roughly a factor of 100.
+     */
+    val cycleCount: Int?,
 )
 
 /**
@@ -48,13 +69,79 @@ data class ParsedBatteryDump(
  */
 object DumpsysBatteryParser {
 
-    fun parse(dump: String): ParsedBatteryDump = ParsedBatteryDump(
-        asocPct = intField(dump, ASOC_REGEX),
-        bsohPct = intField(dump, BSOH_REGEX),
-        firstUseDateEpochDay = intField(dump, FIRST_USE_DATE_REGEX)?.let(::packedDateToEpochDay),
-        protectBatteryModeEnabled = intField(dump, PROTECT_MODE_REGEX)?.let { it != 0 },
-        protectionThresholdPct = intField(dump, PROTECTION_THRESHOLD_REGEX),
-    )
+    /**
+     * [todayEpochDay] defaults to the real wall-clock date so every production call site
+     * (there is exactly one, in `BatteryRepository`) needs nothing extra, while every test
+     * below passes an explicit value so [isPlausibleCycleRate]'s day-rate cross-check is
+     * deterministic rather than depending on when the test happens to run. It is otherwise
+     * unused by every field but [ParsedBatteryDump.cycleCount] -- see that field's own doc.
+     */
+    fun parse(dump: String, todayEpochDay: Long = LocalDate.now().toEpochDay()): ParsedBatteryDump {
+        val firstUseDateEpochDay = intField(dump, FIRST_USE_DATE_REGEX)?.let(::packedDateToEpochDay)
+        return ParsedBatteryDump(
+            asocPct = intField(dump, ASOC_REGEX),
+            bsohPct = intField(dump, BSOH_REGEX),
+            firstUseDateEpochDay = firstUseDateEpochDay,
+            protectBatteryModeEnabled = intField(dump, PROTECT_MODE_REGEX)?.let { it != 0 },
+            protectionThresholdPct = intField(dump, PROTECTION_THRESHOLD_REGEX),
+            cycleCount = parseCycleCount(dump, firstUseDateEpochDay, todayEpochDay),
+        )
+    }
+
+    /**
+     * `mSavedBatteryUsage` is documented through Samsung's own `*#9900#` SysDump menu and
+     * corroborated by several independent write-ups, but it is community-documented, not
+     * officially specified -- so [isPlausibleCycleRate] cross-checks the ÷100
+     * interpretation against `battery FirstUseDate` from this same dump before this field
+     * ever reports a number, rather than trusting the division unconditionally the way
+     * every other field here trusts its own regex.
+     */
+    private fun parseCycleCount(dump: String, firstUseDateEpochDay: Long?, todayEpochDay: Long): Int? {
+        val hundredths = intField(dump, CYCLE_USAGE_REGEX) ?: return null
+        // A negative reading is not a smaller cycle count, the same way a negative age is
+        // not a younger person -- reject before the rate cross-check below even runs, and
+        // regardless of whether a first-use date exists to check it against.
+        if (hundredths < 0) return null
+        val cycles = (hundredths / 100.0).roundToInt()
+        return if (isPlausibleCycleRate(cycles, firstUseDateEpochDay, todayEpochDay)) cycles else null
+    }
+
+    /**
+     * Cross-checks the ÷100 interpretation of `mSavedBatteryUsage` against how long this
+     * battery has been in service, using `battery FirstUseDate` from the very same dump.
+     * A real device sits somewhere between a lightly-used tablet charged perhaps once
+     * every ten days (~0.1 cycles/day) and a heavily-cycled phone topped up several times
+     * a day (~3 cycles/day); [MIN_PLAUSIBLE_CYCLES_PER_DAY] and [MAX_PLAUSIBLE_CYCLES_PER_DAY]
+     * are chosen to comfortably cover that whole range with margin on both sides. A ratio
+     * outside it means the ÷100 interpretation is not holding *for this device* -- most
+     * plausibly the raw units mean something else on that model -- not that this
+     * particular battery is unusually old or new: `61919 / 100 = 619` cycles over the
+     * fixture's own 775-day-old battery is `0.80` cycles/day, comfortably inside the band,
+     * which is the sanity check this guard exists to formalise.
+     *
+     * This validates the *interpretation*, not the battery -- it must never reject a
+     * cycle count on a device where the rate is genuinely plausible, only the specific
+     * combination that cannot be telling the truth about hundredths-of-a-cycle.
+     *
+     * A missing [firstUseDateEpochDay] (the line did not parse -- see this file's own
+     * top-level doc: one field's trouble must never become another field's trouble) or one
+     * that has not arrived yet ([todayEpochDay] at or before it -- a corrupted or
+     * genuinely future-dated field) means the cross-check simply cannot run, so this
+     * returns `true` rather than `false`: no evidence the interpretation is wrong is not
+     * the same as evidence that it is, and rejecting cycle count over a problem with a
+     * different field would be exactly that mistake on a new pair of fields.
+     */
+    internal fun isPlausibleCycleRate(
+        cycles: Int,
+        firstUseDateEpochDay: Long?,
+        todayEpochDay: Long,
+    ): Boolean {
+        if (firstUseDateEpochDay == null) return true
+        val daysSinceFirstUse = todayEpochDay - firstUseDateEpochDay
+        if (daysSinceFirstUse <= 0) return true
+        val cyclesPerDay = cycles / daysSinceFirstUse.toDouble()
+        return cyclesPerDay in MIN_PLAUSIBLE_CYCLES_PER_DAY..MAX_PLAUSIBLE_CYCLES_PER_DAY
+    }
 
     /**
      * `raw` is a packed `yyyyMMdd` integer (`20240630` for 2024-06-30), **not** an epoch
@@ -87,4 +174,9 @@ object DumpsysBatteryParser {
     private val FIRST_USE_DATE_REGEX = Regex("""\bbattery FirstUseDate\b\s*:\s*\[\s*(\d+)\s*\]""")
     private val PROTECT_MODE_REGEX = Regex("""\bmProtectBatteryMode\b\s*:\s*(-?\d+)""")
     private val PROTECTION_THRESHOLD_REGEX = Regex("""\bmProtectionThreshold\b\s*:\s*(-?\d+)""")
+    private val CYCLE_USAGE_REGEX = Regex("""\bmSavedBatteryUsage\b\s*:\s*\[\s*(-?\d+)\s*\]""")
+
+    /** See [isPlausibleCycleRate]'s own doc for why these two specific numbers. */
+    private const val MIN_PLAUSIBLE_CYCLES_PER_DAY = 0.1
+    private const val MAX_PLAUSIBLE_CYCLES_PER_DAY = 3.0
 }

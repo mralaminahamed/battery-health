@@ -129,7 +129,11 @@ class BatteryRepository @Inject constructor(
             temperatureDeciC = broadcast.temperatureDeciC.asReading(),
             technology = broadcast.technology.asReading(),
             chargeCounterUah = properties.chargeCounterUah(),
-            cycleCount = broadcast.cycleCount.asReading(),
+            cycleCount = CycleCountResolver.resolve(
+                privilegedCycles = dump?.cycleCount,
+                dumpAvailable = dumpAvailable,
+                broadcastCycles = broadcast.cycleCount,
+            ),
             stateOfHealthPct = dump?.asocPct.privilegedReading(dumpAvailable),
             firstUsageDateEpochDay = dump?.firstUseDateEpochDay.privilegedReading(dumpAvailable),
             // No key resembling a manufacturing date appears anywhere in the real dump
@@ -173,7 +177,12 @@ class BatteryRepository @Inject constructor(
                 _privilegedDumpFailed.value = false
                 null
             } else {
-                val dump = shizuku.dumpBattery()?.let(DumpsysBatteryParser::parse)
+                // A lambda, not a bare method reference: `DumpsysBatteryParser.parse` now
+                // takes a second, defaulted `todayEpochDay` parameter, and Kotlin callable
+                // references do not pick up default arguments -- `DumpsysBatteryParser::parse`
+                // would bind to the two-parameter overload and fail to satisfy `let`'s
+                // `(String) -> R` here.
+                val dump = shizuku.dumpBattery()?.let { DumpsysBatteryParser.parse(it) }
                 _privilegedDumpFailed.value = dump == null
                 dump
             }
