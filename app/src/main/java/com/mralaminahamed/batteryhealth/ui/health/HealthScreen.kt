@@ -110,14 +110,8 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
     HealthContent(
         state = state,
         modifier = modifier,
-        onRequestShizukuPermission = viewModel::connectPrivilegedTier,
-        // There is no separate companion app to open any more -- adb and root are both
-        // set up outside this app entirely -- so this and onLearnMore both point at the
-        // same explanation until Task 11's dedicated copy pass replaces this card.
-        onOpenShizuku = {
-            context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
-        },
-        onLearnMoreAboutShizuku = {
+        onConnect = viewModel::connectPrivilegedTier,
+        onLearnMore = {
             context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
         onRecorderEnabledChange = { enabled ->
@@ -155,9 +149,8 @@ fun HealthContent(
     onRecorderEnabledChange: (Boolean) -> Unit = {},
     onSaveDesignCapacity: (Int) -> Unit = {},
     onClearDesignCapacity: () -> Unit = {},
-    onRequestShizukuPermission: () -> Unit = {},
-    onOpenShizuku: () -> Unit = {},
-    onLearnMoreAboutShizuku: () -> Unit = {},
+    onConnect: () -> Unit = {},
+    onLearnMore: () -> Unit = {},
     onRetryPrivilegedDump: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
@@ -205,9 +198,8 @@ fun HealthContent(
         UnlockCard(
             availability = state.privilegedAvailability,
             dumpFailed = state.privilegedDumpFailed,
-            onRequestPermission = onRequestShizukuPermission,
-            onOpenShizuku = onOpenShizuku,
-            onLearnMore = onLearnMoreAboutShizuku,
+            onConnect = onConnect,
+            onLearnMore = onLearnMore,
             onRetry = onRetryPrivilegedDump,
         )
 
