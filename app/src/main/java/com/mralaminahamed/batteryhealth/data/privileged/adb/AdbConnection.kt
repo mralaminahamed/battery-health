@@ -23,9 +23,9 @@ const val LOOPBACK_HOST = "127.0.0.1"
 
 /**
  * A hand-rolled ADB client speaking the same TCP handshake `adb connect` does, so this app
- * no longer needs Shizuku running as a mediator. One socket, one CNXN/AUTH exchange; stream
- * multiplexing (OPEN/OKAY/WRTE/CLSE) is layered on top by `AdbStream` in a later task, which
- * is why [send] and [read] are exposed rather than kept private.
+ * needs no separate privileged helper app running as a mediator. One socket, one CNXN/AUTH
+ * exchange; stream multiplexing (OPEN/OKAY/WRTE/CLSE) is layered on top by `AdbStream` in a
+ * later task, which is why [send] and [read] are exposed rather than kept private.
  */
 class AdbConnection(
     private val host: String = LOOPBACK_HOST,

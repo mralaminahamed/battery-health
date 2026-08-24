@@ -25,16 +25,16 @@ import kotlinx.coroutines.launch
  */
 private const val HANDSHAKE_TIMEOUT_MS = 10_000
 
-/** Same value and the same rationale as [PrivilegedBatteryService]'s `DUMP_TIMEOUT_SECONDS`:
- * `dumpsys battery`'s own output is small and fast, so a generous-but-bounded budget here
- * catches a wedged shell without making a normal call wait noticeably longer than it needs.
- * Enforced by narrowing the socket's own read timeout for the duration of the call --see
+/** `dumpsys battery`'s own output is small and fast, so a generous-but-bounded budget here
+ * catches a wedged shell without making a normal call wait noticeably longer than it needs
+ * -- same value and rationale as `RootShell`'s own `ROOT_DUMP_TIMEOUT_SECONDS`. Enforced by
+ * narrowing the socket's own read timeout for the duration of the call -- see
  * [AdbConnection.withSoTimeout]'s doc for why a coroutine-level timeout cannot do this. */
 private const val DUMP_TIMEOUT_MS = 3_000
 
-/** Same value and the same rationale as [PrivilegedBatteryService]'s
- * `CHECKIN_TIMEOUT_SECONDS`: `dumpsys batterystats --checkin` runs roughly 50x larger than
- * the plain battery dump, so it gets proportionally more room before this gives up on it. */
+/** `dumpsys batterystats --checkin` runs roughly 50x larger than the plain battery dump,
+ * so it gets proportionally more room before this gives up on it -- same value and
+ * rationale as `RootShell`'s own `ROOT_CHECKIN_TIMEOUT_SECONDS`. */
 private const val CHECKIN_TIMEOUT_MS = 8_000
 
 /**
@@ -56,8 +56,8 @@ class AdbShell(
 
     // No natural external owner to launch refresh()'s reconnect on: refresh() is a plain,
     // non-suspend interface method (called synchronously from ON_RESUME), so the suspend
-    // work it triggers needs somewhere to run. Mirrors ShizukuGateway's own self-owned
-    // scope for the same "nothing outside this class can cancel it for us" reason.
+    // work it triggers needs somewhere to run. Mirrors AdbGateway's own self-owned scope
+    // for the same "nothing outside this class can cancel it for us" reason.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _state = MutableStateFlow<TransportState>(TransportState.Unavailable)
@@ -73,7 +73,7 @@ class AdbShell(
     // is still mid-handshake.
     @Volatile private var closed = false
 
-    // Mirrors ShizukuGateway's bindInFlight: without this, every ON_RESUME's refresh()
+    // Mirrors RootShell's own connectInFlight: without this, every ON_RESUME's refresh()
     // could overlap a connect() already in progress and each issue its own socket, only
     // one of which ever gets stored in `connection` -- the other silently orphaned.
     private val connectInFlight = AtomicBoolean(false)
@@ -133,7 +133,7 @@ class AdbShell(
 
     /**
      * Deliberately not on [PrivilegedShell]: production's gateway holds this transport for
-     * the life of the process (same design as [ShizukuGateway]), so no production caller
+     * the life of the process (same design as [AdbGateway]), so no production caller
      * ever needs to close it, and putting this on the interface would invite closing a
      * transport that should outlive its callers. Tests need it anyway, to avoid leaking the
      * client-side socket when the fake daemon they talk to is torn down.

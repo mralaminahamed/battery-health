@@ -17,11 +17,11 @@ const val CMD_DUMP_BATTERY = "dumpsys battery"
 const val CMD_DUMP_CHECKIN = "dumpsys batterystats --checkin"
 
 /**
- * The seam [ShizukuGateway] is being replaced by. Two transports implement this --
- * `AdbShell` over a hand-rolled ADB client, `RootShell` over `su` -- and everything above
- * this interface (the repository, the ViewModel, the Health screen) depends on it rather
- * than on either concrete class, exactly as it previously depended on
- * [PrivilegedBatterySource] rather than [ShizukuGateway] directly.
+ * The seam `AdbGateway` fronts. Two transports implement this -- `AdbShell` over a
+ * hand-rolled ADB client, `RootShell` over `su` -- and everything above this interface
+ * (the repository, the ViewModel, the Health screen) depends on it rather than on either
+ * concrete class, exactly as it depends on [PrivilegedBatterySource] rather than
+ * `AdbGateway` directly.
  *
  * **This interface is the allowlist.** There is deliberately no method that takes a
  * command string -- [CMD_DUMP_BATTERY] and [CMD_DUMP_CHECKIN] are the only two strings
@@ -50,7 +50,7 @@ interface PrivilegedShell {
     suspend fun connect()
 
     /** Re-checks or re-establishes this transport, the way [PrivilegedBatterySource]'s own
-     * `refresh()` re-checks Shizuku's install state -- called on every Health-screen
-     * `ON_RESUME`. What "re-check" means is transport-specific; see each implementation. */
+     * `refresh()` re-checks both transports -- called on every Health-screen `ON_RESUME`.
+     * What "re-check" means is transport-specific; see each implementation. */
     fun refresh()
 }
