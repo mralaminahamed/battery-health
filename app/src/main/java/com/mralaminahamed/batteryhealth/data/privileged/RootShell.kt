@@ -1,0 +1,186 @@
+package com.mralaminahamed.batteryhealth.data.privileged
+
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+
+/**
+ * How long [connect]'s `su -c id` probe waits for Magisk's own grant dialog before giving
+ * up on this attempt. Generous rather than tight -- this is exactly the user-paced wait
+ * [TransportState.AwaitingAuthorization] documents, not a hung-process bound -- but still
+ * finite so a device where Magisk itself is wedged cannot block this coroutine forever.
+ */
+private const val PROBE_TIMEOUT_SECONDS = 10L
+
+// Named distinctly from PrivilegedBatteryService's own DUMP_TIMEOUT_SECONDS/
+// CHECKIN_TIMEOUT_SECONDS (same package, `internal` visibility) even though the values
+// match -- those bound a Binder-hosted UserService's shell call, these bound a `su`
+// subprocess this class starts directly; same rationale, different call site.
+
+/** Same value and rationale as [PrivilegedBatteryService]'s `DUMP_TIMEOUT_SECONDS`: a small,
+ * fast dump gets a short, generous-but-bounded budget. */
+private const val ROOT_DUMP_TIMEOUT_SECONDS = 3L
+
+/** Same value and rationale as [PrivilegedBatteryService]'s `CHECKIN_TIMEOUT_SECONDS`: this
+ * payload runs roughly 50x larger than the plain dump's, so it gets proportionally more room. */
+private const val ROOT_CHECKIN_TIMEOUT_SECONDS = 8L
+
+/** How long a reader thread gets to finish draining output that was already fully written
+ * before the child exited -- see [runRootCommand]'s own doc for why this is a thread, not a
+ * second command timeout. */
+private const val READER_DRAIN_TIMEOUT_MS = 2_000L
+
+/**
+ * The root transport: every command is `su -c "<command>"`, Magisk's own gate, with no
+ * daemon and no socket -- a fresh subprocess per call, unlike [AdbShell] which keeps one
+ * connection alive across calls.
+ *
+ * [connect] is what raises Magisk's "Grant root access?" dialog, by literally running `su`.
+ * That makes when this gets called a real product decision, not an implementation detail:
+ * **never call it from init.** Doing so would pop that dialog the instant this class is
+ * constructed, before the user has asked this app for anything privileged -- exactly the
+ * kind of unprompted, hostile-feeling permission grab this app's own design explicitly
+ * avoids elsewhere (Shizuku's permission is only ever requested on demand, never eagerly).
+ * A later gateway task owns deciding when [connect] should run.
+ */
+class RootShell : PrivilegedShell {
+
+    private val _state = MutableStateFlow<TransportState>(TransportState.Unavailable)
+    override val state: StateFlow<TransportState> = _state.asStateFlow()
+
+    // Mirrors ShizukuGateway's bindInFlight and AdbShell's connectInFlight: one `su -c id`
+    // probe in flight at a time, so two overlapping calls to connect() cannot each spawn
+    // their own subprocess and race Magisk's dialog against itself.
+    private val connectInFlight = AtomicBoolean(false)
+
+    override suspend fun connect() {
+        if (!connectInFlight.compareAndSet(false, true)) return
+        try {
+            // Set before the probe runs, not after it returns: this state describes right
+            // now, while Magisk's dialog is up (or about to be) -- the same instant
+            // AdbConnection's own handshake documents as "the device is currently deciding".
+            _state.value = TransportState.AwaitingAuthorization
+            _state.value = probe()
+        } finally {
+            connectInFlight.set(false)
+        }
+    }
+
+    private suspend fun probe(): TransportState =
+        when (val result = withContext(Dispatchers.IO) { runRootCommand("id", PROBE_TIMEOUT_SECONDS) }) {
+            is RootExecResult.Success -> TransportState.Ready
+            // Magisk answered and refused; the user can still change their mind later, so
+            // this is Denied, not Unavailable -- see TransportState.Denied's own doc.
+            RootExecResult.NonZeroExit -> TransportState.Denied
+            // No answer arrived before PROBE_TIMEOUT_SECONDS elapsed. Read the same way
+            // AdbConnection reads its own handshake timeout: the dialog is still up, this
+            // is not a refusal, so stay in AwaitingAuthorization rather than dropping to
+            // Denied or Unavailable.
+            RootExecResult.TimedOut -> TransportState.AwaitingAuthorization
+            // su itself could not be started -- there is no root to grant on this device.
+            RootExecResult.Unavailable -> TransportState.Unavailable
+        }
+
+    /**
+     * Deliberately a no-op. [PrivilegedBatterySource]-style `refresh()` calls re-check
+     * cheap, non-invasive facts (Shizuku's package-installed flag, its binder) with no
+     * user-facing side effect. There is no equivalently cheap way to re-check root: the
+     * only way to know is to run `su`, and running `su` is exactly the unprompted-dialog
+     * problem [connect]'s own doc says this class must never trigger on its own. Wiring
+     * this to call [connect] would reintroduce that problem on every single `ON_RESUME`.
+     * The gateway that decides when [connect] should run decides that directly, not
+     * through this method.
+     */
+    override fun refresh() = Unit
+
+    override suspend fun runDump(): String? = run(CMD_DUMP_BATTERY, ROOT_DUMP_TIMEOUT_SECONDS)
+
+    override suspend fun runCheckin(): String? = run(CMD_DUMP_CHECKIN, ROOT_CHECKIN_TIMEOUT_SECONDS)
+
+    private suspend fun run(command: String, timeoutSeconds: Long): String? {
+        // Gated on Ready for the same reason AdbShell gates on it: a transport that was
+        // never authorized (or was denied) has no business spawning `su` just because a
+        // caller asked for a dump -- that would be another unprompted-dialog surprise.
+        if (_state.value != TransportState.Ready) return null
+        return when (val result = withContext(Dispatchers.IO) { runRootCommand(command, timeoutSeconds) }) {
+            is RootExecResult.Success -> result.output
+            else -> {
+                // Live degradation: a Ready transport that just failed must reach `state`
+                // with no exception anywhere downstream, so every privileged reading
+                // degrades on the repository's next emission rather than on a crash.
+                _state.value = TransportState.Unavailable
+                null
+            }
+        }
+    }
+}
+
+private sealed interface RootExecResult {
+    data class Success(val output: String) : RootExecResult
+    data object NonZeroExit : RootExecResult
+    data object TimedOut : RootExecResult
+    data object Unavailable : RootExecResult
+}
+
+/**
+ * Runs `su -c "<command>"` with `ProcessBuilder`, not `Runtime.exec`: `exec` leaves stderr
+ * on its own pipe, and `dumpsys batterystats --checkin` writing enough to stderr to fill
+ * that pipe while only stdout is drained would block the child forever -- `redirectErrorStream`
+ * merges the two so one reader drains everything, matching the shell-protocol-v1 semantics
+ * this app's own parsers already assume (a single merged stdout/stderr stream).
+ *
+ * The reader runs on its own thread, concurrently with [Process.waitFor], for the same
+ * reason [PrivilegedBatteryService]'s own shell runner does this rather than reading after
+ * `waitFor` returns: `dumpsys batterystats --checkin`'s output (up to 525KB on the fixture
+ * that bug was diagnosed against) can exceed the OS pipe buffer between the child and this
+ * process (64KB on Linux by default) before the child exits. Waiting for exit before
+ * reading anything then deadlocks -- the child blocked on a full pipe it cannot write past,
+ * this thread blocked on an exit that will never come while nobody drains that pipe. Two
+ * threads, one per blocking call, is what lets both proceed independently; do not collapse
+ * this back into a single "waitFor, then read" thread. `waitFor(timeout, unit)`, not the
+ * blocking no-arg `waitFor()`, plus `destroyForcibly()` on timeout, is what makes the bound
+ * real and guarantees no process survives this call.
+ */
+private fun runRootCommand(command: String, timeoutSeconds: Long): RootExecResult = try {
+    val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+
+    val output = StringBuilder()
+    val reader = Thread({
+        // A failed read (stream closed by destroyForcibly() below, an interrupt) just ends
+        // this thread early with whatever was captured so far -- there is no separate error
+        // channel back to the caller for this thread's own failures.
+        runCatching {
+            process.inputStream.bufferedReader().use { streamReader ->
+                val buffer = CharArray(8192)
+                while (true) {
+                    val read = streamReader.read(buffer)
+                    if (read == -1) break
+                    synchronized(output) { output.append(buffer, 0, read) }
+                }
+            }
+        }
+    }, "RootShell-reader").apply { isDaemon = true; start() }
+
+    if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        reader.join(READER_DRAIN_TIMEOUT_MS)
+        return RootExecResult.TimedOut
+    }
+    // The process exiting does not guarantee the reader thread has drained every byte
+    // already sitting in the pipe yet -- join, not an immediate read of `output`, ensures
+    // the last chunk is actually in hand before this decides success or failure.
+    reader.join(READER_DRAIN_TIMEOUT_MS)
+    if (process.exitValue() != 0) {
+        RootExecResult.NonZeroExit
+    } else {
+        RootExecResult.Success(synchronized(output) { output.toString() })
+    }
+} catch (e: IOException) {
+    // No su binary to exec at all -- this device is not rooted.
+    RootExecResult.Unavailable
+}
