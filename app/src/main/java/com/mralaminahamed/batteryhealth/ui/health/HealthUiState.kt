@@ -47,7 +47,7 @@ data class HealthUiState(
     /**
      * A value the platform reports directly beats one this app inferred, but beyond
      * that, absence is not all the same kind of absence. This used to be moot in
-     * practice: `BatteryRepository` set `stateOfHealthPct` to `NeedsShizuku`
+     * practice: `BatteryRepository` set `stateOfHealthPct` to `NeedsPrivilegedAccess`
      * unconditionally (this device's own unprivileged `BatteryManager` can never report
      * it, signature-permission-gated), so `framework is Reading.Available` was never
      * true and every other case fell straight through to `measured` alone. That is no
@@ -55,13 +55,13 @@ data class HealthUiState(
      * dump makes `framework` genuinely `Reading.Available` (Samsung's ASOC, sourced
      * `Privileged`), and this precedence is what a real device now exercises rather than
      * only a hypothetical one. Before that fix landed, the fallthrough also silently
-     * discarded `NeedsShizuku` whenever `measured` was `Unsupported` — nearly every
+     * discarded `NeedsPrivilegedAccess` whenever `measured` was `Unsupported` — nearly every
      * Samsung model, since the design-capacity table has ten entries and no override UI
-     * — and rendered "Not available on this device" one row above a "Needs Shizuku" line
-     * about the exact same underlying data. Explicit precedence fixes both: Available
-     * beats NotYetMeasured beats NeedsShizuku beats Unsupported, so a real measurement
-     * still wins when one exists, and a `NeedsShizuku` is never displaced by a plain
-     * `Unsupported`.
+     * — and rendered "Not available on this device" one row above a "Needs privileged
+     * access" line about the exact same underlying data. Explicit precedence fixes both:
+     * Available beats NotYetMeasured beats NeedsPrivilegedAccess beats Unsupported, so a
+     * real measurement still wins when one exists, and a `NeedsPrivilegedAccess` is never
+     * displaced by a plain `Unsupported`.
      */
     val headlinePct: Reading<Int>
         get() {
@@ -73,7 +73,7 @@ data class HealthUiState(
     private fun Reading<*>.precedence(): Int = when (this) {
         is Reading.Available -> 3
         Reading.NotYetMeasured -> 2
-        Reading.NeedsShizuku -> 1
+        Reading.NeedsPrivilegedAccess -> 1
         Reading.Unsupported -> 0
     }
 }

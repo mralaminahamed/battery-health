@@ -20,7 +20,7 @@ object UnlockCardTags {
 /**
  * The Health screen's honest explanation of the privileged tier, and the only entry
  * point into it: state of health (ASOC/BSOH), first-use date and Battery Protect all
- * read `NeedsShizuku` until the user acts here.
+ * read `NeedsPrivilegedAccess` until the user acts here.
  *
  * Deliberately not one "connect" button behind one boolean -- [PrivilegedAvailability]
  * has several distinct not-yet-ready states, each with its own next action, and a single
@@ -32,7 +32,7 @@ object UnlockCardTags {
  * to "nothing once Ready": a connection that succeeded but whose most recent `dumpsys
  * battery` attempt came back empty is not the same as a working privileged tier, and
  * without this card the only visible symptom would be every privileged row silently
- * reading `NeedsShizuku` again -- indistinguishable from the tier never having been
+ * reading `NeedsPrivilegedAccess` again -- indistinguishable from the tier never having been
  * connected at all, with no explanation and no way to retry short of toggling the
  * connection off and back on.
  *

@@ -22,15 +22,15 @@ class AppsScreenTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
-    fun needsShizukuShowsUnlockCardAndTheSharedReasonText() {
+    fun needsPrivilegedAccessShowsUnlockCardAndTheSharedReasonText() {
         val state = AppsUiState(
             privilegedAvailability = PrivilegedAvailability.Unavailable,
-            rows = Reading.NeedsShizuku,
+            rows = Reading.NeedsPrivilegedAccess,
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
         compose.onNodeWithTag(UnlockCardTags.ROOT).assertIsDisplayed()
-        compose.onNodeWithText("Needs Shizuku").assertIsDisplayed()
+        compose.onNodeWithText("Needs privileged access").assertIsDisplayed()
     }
 
     /**
@@ -127,7 +127,7 @@ class AppsScreenTest {
     fun appPowerFailedShowsTheSharedRetryCard() {
         val state = AppsUiState(
             privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.NeedsShizuku,
+            rows = Reading.NeedsPrivilegedAccess,
             appPowerFailed = true,
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
@@ -144,10 +144,10 @@ class AppsScreenTest {
      * refresh) must not blank the screen back to a skeleton.
      */
     @Test
-    fun loadingWithNothingToShowYetRendersTheSkeletonNotNeedsShizuku() {
+    fun loadingWithNothingToShowYetRendersTheSkeletonNotNeedsPrivilegedAccess() {
         val state = AppsUiState(
             privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.NeedsShizuku,
+            rows = Reading.NeedsPrivilegedAccess,
             isLoading = true,
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }

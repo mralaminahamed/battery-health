@@ -17,8 +17,8 @@ sealed interface Reading<out T> {
     /** This device does not provide the metric at all. */
     data object Unsupported : Reading<Nothing>
 
-    /** The privileged tier would provide it, but Shizuku is not bound. */
-    data object NeedsShizuku : Reading<Nothing>
+    /** The privileged tier would provide it, but no transport is connected. */
+    data object NeedsPrivilegedAccess : Reading<Nothing>
 
     /** Derived from measurement that has not gathered enough sessions yet. */
     data object NotYetMeasured : Reading<Nothing>
@@ -32,6 +32,6 @@ fun <T> Reading<T>.valueOrNull(): T? = (this as? Reading.Available<T>)?.value
 inline fun <T, R> Reading<T>.map(transform: (T) -> R): Reading<R> = when (this) {
     is Reading.Available -> Reading.Available(transform(value), source)
     Reading.Unsupported -> Reading.Unsupported
-    Reading.NeedsShizuku -> Reading.NeedsShizuku
+    Reading.NeedsPrivilegedAccess -> Reading.NeedsPrivilegedAccess
     Reading.NotYetMeasured -> Reading.NotYetMeasured
 }
