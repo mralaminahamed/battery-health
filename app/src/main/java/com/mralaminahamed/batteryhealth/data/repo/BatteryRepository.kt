@@ -6,8 +6,8 @@ import com.mralaminahamed.batteryhealth.data.local.SessionDao
 import com.mralaminahamed.batteryhealth.data.privileged.BatteryStatsCheckinParser
 import com.mralaminahamed.batteryhealth.data.privileged.DumpsysBatteryParser
 import com.mralaminahamed.batteryhealth.data.privileged.ParsedBatteryDump
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
-import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.domain.AppPowerEntry
 import com.mralaminahamed.batteryhealth.domain.BatterySnapshot
@@ -39,7 +39,7 @@ class BatteryRepository @Inject constructor(
     private val sessionDao: SessionDao,
     private val estimator: HealthEstimator,
     private val designCapacity: DesignCapacityProvider,
-    private val shizuku: PrivilegedBatterySource,
+    private val privileged: PrivilegedBatterySource,
 ) {
     /**
      * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
@@ -50,9 +50,9 @@ class BatteryRepository @Inject constructor(
      * and threshold are a live Samsung Settings toggle the user can flip while this app
      * is backgrounded, and nothing broadcasts that change back to this process (Critical
      * 2). The same call, exposed as a user-visible retry action, is also what stops one
-     * failed attempt -- a `RemoteException`, a blank shell response -- from pinning
-     * every privileged row at `NeedsShizuku` until the bind state happens to toggle on
-     * its own, which it may never do while Shizuku stays genuinely bound (Important 1).
+     * failed attempt -- a transport error, a blank shell response -- from pinning
+     * every privileged row at `NeedsShizuku` until the connection state happens to toggle
+     * on its own, which it may never do while the tier stays genuinely connected (Important 1).
      * Replay depth 1 so the very first collector still gets an initial tick without
      * waiting on a resume or a retry tap that may never come.
      */
@@ -62,11 +62,12 @@ class BatteryRepository @Inject constructor(
     ).apply { tryEmit(Unit) }
 
     /**
-     * True only while [ShizukuAvailability.Bound] and the most recent dump attempt still
-     * came back empty -- never true merely because the tier is not bound at all, which
-     * is an entirely different, already-explained state `UnlockCard` covers on its own.
-     * Lets the Health screen show "the read failed, retry" instead of a `NeedsShizuku`
-     * row that would otherwise be indistinguishable from "Shizuku was never connected."
+     * True only while [PrivilegedAvailability.Ready] and the most recent dump attempt
+     * still came back empty -- never true merely because the tier is not connected at
+     * all, which is an entirely different, already-explained state `UnlockCard` covers
+     * on its own. Lets the Health screen show "the read failed, retry" instead of a
+     * `NeedsShizuku` row that would otherwise be indistinguishable from "the privileged
+     * tier was never connected."
      */
     private val _privilegedDumpFailed = MutableStateFlow(false)
     val privilegedDumpFailed: StateFlow<Boolean> = _privilegedDumpFailed.asStateFlow()
@@ -86,15 +87,14 @@ class BatteryRepository @Inject constructor(
     val appPowerFailed: StateFlow<Boolean> = _appPowerFailed.asStateFlow()
 
     /**
-     * True from the moment [appPower] observes the tier bound until that same shell call
+     * True from the moment [appPower] observes the tier ready until that same shell call
      * resolves (success or failure) -- unlike every other privileged read in this
      * repository, a `dumpsys batterystats --checkin` call is not fast enough for its
      * caller to treat "no result yet" and "no result at all" as the same, one-frame-long
      * gap: it took 200-350ms for a live ~94KB capture and up to several seconds under
-     * load on the device this was verified against (see `PrivilegedBatteryService`'s own
-     * `CHECKIN_TIMEOUT_SECONDS` doc for the real numbers), which is long enough for a
-     * naive UI to flash `NeedsShizuku` -- "grant Shizuku, it might help" -- while Shizuku
-     * is, in fact, already bound and simply still working on the answer. A separate
+     * load on the device this was verified against, which is long enough for a naive UI
+     * to flash `NeedsShizuku` -- "connect the privileged tier, it might help" -- while
+     * the tier is, in fact, already connected and simply still working on the answer. A separate
      * `StateFlow`, not folded into [appPower]'s own `Reading`, because [Reading] has no
      * "loading" case by design (see its own doc) and adding one there would blur every
      * other screen's absence vocabulary for a problem specific to this one call; the Apps
@@ -115,8 +115,9 @@ class BatteryRepository @Inject constructor(
         privilegedDump(),
     ) { broadcast, dump ->
         // A dump actually in hand (even one whose fields all came back null) is the
-        // difference between "ask the user to grant Shizuku, it might help" and "this
-        // was tried with full shell privilege and the device still does not have it" --
+        // difference between "ask the user to connect the privileged tier, it might
+        // help" and "this was tried with full shell privilege and the device still does
+        // not have it" --
         // see privilegedReading's own doc for why that distinction is load-bearing, not
         // cosmetic.
         val dumpAvailable = dump != null
@@ -141,11 +142,12 @@ class BatteryRepository @Inject constructor(
             // framework tier categorically cannot supply it (BATTERY_STATS,
             // @SystemApi/@hide) and the privileged tier's own dumpsys output, read in
             // full, simply does not carry it either. That is already known, unconditionally,
-            // before Shizuku is ever bound -- so this is `Unsupported` in every state, bound
-            // or not, never `NeedsShizuku`. Routing it through `privilegedAbsence(dumpAvailable)`
-            // the way every other privileged field above does would tell an unbound user
-            // that granting Shizuku might produce this date, when the eleven lines above
-            // already prove it never will: a known-false instruction, not merely an
+            // before the privileged tier is ever connected -- so this is `Unsupported` in
+            // every state, connected or not, never `NeedsShizuku`. Routing it through
+            // `privilegedAbsence(dumpAvailable)` the way every other privileged field above
+            // does would tell an unconnected user that connecting the tier might produce
+            // this date, when the eleven lines above already prove it never will: a
+            // known-false instruction, not merely an
             // optimistic one. See the task report for the "LLB CAL" line considered and
             // rejected as a substitute: it reads as a bootloader/firmware calibration
             // date, not this physical unit's manufacturing date, and nothing in the dump
@@ -159,9 +161,9 @@ class BatteryRepository @Inject constructor(
     }
 
     /**
-     * Re-dumps on the boundary into (or out of) [ShizukuAvailability.Bound] -- not on
-     * every broadcast this combines against: `dumpsys battery` is a subprocess spawn
-     * across a Binder call into the shell UID, and ASOC/BSOH/first-use, the three fields
+     * Re-dumps on the boundary into (or out of) [PrivilegedAvailability.Ready] -- not on
+     * every broadcast this combines against: `dumpsys battery` is a shell spawn across a
+     * privileged transport, and ASOC/BSOH/first-use, the three fields
      * this dump is the *only* source for, change on the order of firmware updates, not
      * seconds, so a five-second sampler cadence would buy nothing they change fast
      * enough to need -- and additionally on every [redumpRequests] tick, which is what
@@ -172,8 +174,8 @@ class BatteryRepository @Inject constructor(
      * event, not a hot loop -- for not needing a second, parallel dump flow.
      */
     private fun privilegedDump(): Flow<ParsedBatteryDump?> = privilegedTrigger()
-        .map { bound ->
-            if (!bound) {
+        .map { ready ->
+            if (!ready) {
                 _privilegedDumpFailed.value = false
                 null
             } else {
@@ -182,51 +184,51 @@ class BatteryRepository @Inject constructor(
                 // references do not pick up default arguments -- `DumpsysBatteryParser::parse`
                 // would bind to the two-parameter overload and fail to satisfy `let`'s
                 // `(String) -> R` here.
-                val dump = shizuku.dumpBattery()?.let { DumpsysBatteryParser.parse(it) }
+                val dump = privileged.dumpBattery()?.let { DumpsysBatteryParser.parse(it) }
                 _privilegedDumpFailed.value = dump == null
                 dump
             }
         }
 
     /**
-     * The bind-boundary-or-redump-request trigger [privilegedDump] and [appPower] both
+     * The ready-boundary-or-redump-request trigger [privilegedDump] and [appPower] both
      * fetch a fresh shell read on -- pulled out once both needed it, rather than each
      * combining its own copy of the same two flows. This is the trigger being shared, not
      * the field-level absence semantics each caller derives from what comes back: see
      * [privilegedDump]'s and [appPower]'s own bodies for why those stay independent.
      */
     private fun privilegedTrigger(): Flow<Boolean> = combine(
-        shizuku.state.map { it is ShizukuAvailability.Bound }.distinctUntilChanged(),
+        privileged.state.map { it is PrivilegedAvailability.Ready }.distinctUntilChanged(),
         redumpRequests,
-    ) { bound, _ -> bound }
+    ) { ready, _ -> ready }
 
     /**
      * The Apps screen's own privileged read: `dumpsys batterystats --checkin`, parsed and
-     * reduced to per-uid power. Mirrors [privilegedDump]'s not-bound-vs-bound-but-failed
+     * reduced to per-uid power. Mirrors [privilegedDump]'s not-ready-vs-ready-but-failed
      * handling deliberately (both are "no dump to parse" from a shell call that can fail
-     * independently of whether Shizuku is bound), but does **not** mirror its
+     * independently of whether the tier is ready), but does **not** mirror its
      * dumpAvailable-then-Unsupported field-level pattern, because there is no equivalent
      * of "this Samsung-only field is genuinely absent from an otherwise-successful dump"
      * at the whole-list level here -- every Android device has a `batterystats` system, so
      * a successful call that simply found no `pwi,uid` rows (e.g. right after the device's
      * own history was cleared, or a --checkin format this parser does not recognise) is a
      * real, honestly-reportable fact (`Available(emptyList())`), not an absence. Only a
-     * failed call (bound but `dumpBatteryStatsCheckin()` returned `null`) reports
+     * failed call (ready but `dumpBatteryStatsCheckin()` returned `null`) reports
      * [Reading.NeedsShizuku] -- the same "this might still work, retry" signal
      * [privilegedDump] gives a failed `dumpBattery()` call, for the same reason: a shell
-     * call failing while bound reads exactly like never having bound at all, and the
+     * call failing while ready reads exactly like never having been ready at all, and the
      * existing [retryPrivilegedDump] flow is what tells the two apart for the user (via
      * [appPowerFailed]).
      */
     fun appPower(): Flow<Reading<List<AppPowerEntry>>> = privilegedTrigger()
-        .map { bound ->
-            if (!bound) {
+        .map { ready ->
+            if (!ready) {
                 _appPowerLoading.value = false
                 _appPowerFailed.value = false
                 Reading.NeedsShizuku
             } else {
                 _appPowerLoading.value = true
-                val checkin = shizuku.dumpBatteryStatsCheckin()
+                val checkin = privileged.dumpBatteryStatsCheckin()
                 _appPowerFailed.value = checkin == null
                 // Cleared after dumpBatteryStatsCheckin() returns, not in a `finally`:
                 // every path below is a plain value, nothing here can throw past the
@@ -246,13 +248,14 @@ class BatteryRepository @Inject constructor(
      * `null` means two different things depending on [dumpAvailable], and only this
      * function is allowed to collapse that ambiguity into a `Reading`:
      *
-     * - No dump was ever obtained ([dumpAvailable] false: Shizuku is not bound, or the
-     *   shell-side call itself failed) -- [Reading.NeedsShizuku]. Granting/restoring the
-     *   privileged tier might still produce this value; nothing has ruled it out yet.
+     * - No dump was ever obtained ([dumpAvailable] false: the privileged tier is not
+     *   ready, or the shell-side call itself failed) -- [Reading.NeedsShizuku].
+     *   Connecting/restoring the privileged tier might still produce this value; nothing
+     *   has ruled it out yet.
      * - A real dump was parsed and this specific field's regex still found nothing in it
      *   ([dumpAvailable] true) -- [Reading.Unsupported]. Full shell privilege was
      *   already in hand and the number still was not there, so promising the user that
-     *   Shizuku would fix it would be false.
+     *   connecting the tier would fix it would be false.
      */
     private fun <T> T?.privilegedReading(dumpAvailable: Boolean): Reading<T> = when {
         this != null -> Reading.Available(this, Source.Privileged)

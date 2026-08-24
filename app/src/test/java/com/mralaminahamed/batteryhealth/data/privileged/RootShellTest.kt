@@ -6,11 +6,11 @@ import org.junit.Test
 
 /**
  * [runRootCommand] is pure `ProcessBuilder`/`Process` -- no Android type anywhere in it, and
- * no hardcoded `su` either -- so this drives it directly with `sh`, the same substitution
- * [PrivilegedBatteryServiceTest] makes for [runShellCommandWithTimeout]. These five cases
- * mirror that file's shape one-for-one: happy path, the timeout/`destroyForcibly` path, a
- * missing executable, a non-zero exit, and the exact pipe-deadlock this pattern exists to
- * prevent.
+ * no hardcoded `su` either -- so this drives it directly with `sh`, the same JVM-testable
+ * substitution this codebase uses anywhere a subprocess needs a stand-in for a hardcoded,
+ * device-only executable. These five cases cover: happy path, the timeout/`destroyForcibly`
+ * path, a missing executable, a non-zero exit, and the exact pipe-deadlock this pattern
+ * exists to prevent.
  *
  * [RootShell] itself is never constructed or exercised here: every one of its own methods
  * hardcodes `su`, and `su`'s Magisk-dialog behavior (the `AwaitingAuthorization`/`Denied`
@@ -63,8 +63,9 @@ class RootShellTest {
     /**
      * `redirectErrorStream(true)` folds stderr into the same drained stream, and a caller
      * (RootShell.probe's own Denied mapping) cares about the exit code, not just the text
-     * -- so unlike PrivilegedBatteryService's shell runner, this keeps the two facts
-     * separate rather than collapsing a failing command down to only its output. What this
+     * -- so unlike a shell runner with no exit code to report back to a caller, this keeps
+     * the two facts separate rather than collapsing a failing command down to only its
+     * output. What this
      * test proves is narrower and just as load-bearing: the reader thread actually
      * captured "partial" before the non-zero exit was detected, not merely that a non-zero
      * exit was noticed.

@@ -42,7 +42,6 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.mralaminahamed.batteryhealth.data.privileged.SHIZUKU_PACKAGE_NAME
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacitySource
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityValidation
 import com.mralaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
@@ -63,7 +62,9 @@ import com.mralaminahamed.batteryhealth.ui.format.Formatters
 import com.mralaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 import com.mralaminahamed.batteryhealth.data.repo.HealthEstimator
 
-private const val SHIZUKU_INFO_URL = "https://github.com/RikkaApps/Shizuku/releases/latest"
+// General adb-over-wifi documentation, not a link to a specific app -- there is no
+// separate companion app to point at any more, only a one-time host-side command.
+private const val PRIVILEGED_TIER_INFO_URL = "https://developer.android.com/tools/adb#wireless"
 
 object HealthScreenTags {
     const val ROOT = "health-root"
@@ -90,8 +91,8 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         ActivityResultContracts.RequestPermission(),
     ) { granted -> viewModel.onNotificationPermissionResult(granted) }
 
-    // Installing Shizuku, or granting it from its own app, both happen outside this
-    // app entirely -- neither produces a broadcast or a callback this process would
+    // Enabling wireless debugging, or granting root, both happen outside this app
+    // entirely -- neither produces a broadcast or a callback this process would
     // otherwise see. Re-checking on every resume is what notices the user coming back
     // having done either, without needing this screen to be recreated.
     val currentViewModel by rememberUpdatedState(viewModel)
@@ -99,7 +100,7 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                currentViewModel.refreshShizuku()
+                currentViewModel.refreshPrivilegedTier()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -109,17 +110,15 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
     HealthContent(
         state = state,
         modifier = modifier,
-        onRequestShizukuPermission = viewModel::requestShizukuPermission,
+        onRequestShizukuPermission = viewModel::connectPrivilegedTier,
+        // There is no separate companion app to open any more -- adb and root are both
+        // set up outside this app entirely -- so this and onLearnMore both point at the
+        // same explanation until Task 11's dedicated copy pass replaces this card.
         onOpenShizuku = {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE_NAME)
-            if (launchIntent != null) {
-                context.startActivity(launchIntent)
-            } else {
-                context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
-            }
+            context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
         onLearnMoreAboutShizuku = {
-            context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
+            context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
         onRecorderEnabledChange = { enabled ->
             // The notification is the honest signal that measurement is running (Task
@@ -204,7 +203,7 @@ fun HealthContent(
         }
 
         UnlockCard(
-            availability = state.shizukuAvailability,
+            availability = state.privilegedAvailability,
             dumpFailed = state.privilegedDumpFailed,
             onRequestPermission = onRequestShizukuPermission,
             onOpenShizuku = onOpenShizuku,
