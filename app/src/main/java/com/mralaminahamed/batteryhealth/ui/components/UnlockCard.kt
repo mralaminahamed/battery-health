@@ -87,8 +87,8 @@ private fun explanation(availability: PrivilegedAvailability, dumpFailed: Boolea
         "State of health, first-use date and Battery Protect status sit behind a " +
             "permission this app cannot request on its own. Run \"adb tcpip 5555\" " +
             "from a computer with your device connected, and this app takes it from " +
-            "there -- you'll need to repeat that command after every reboot. A " +
-            "rooted device skips this step entirely."
+            "there -- you'll need to repeat that command each time your phone " +
+            "restarts. A rooted device skips this step entirely."
     PrivilegedAvailability.AwaitingAuthorization ->
         "Check your screen -- your device is asking whether to allow this. Approve " +
             "it and the readings appear."
