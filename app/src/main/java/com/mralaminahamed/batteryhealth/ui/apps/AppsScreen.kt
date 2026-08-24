@@ -98,13 +98,8 @@ fun AppsScreen(modifier: Modifier = Modifier, viewModel: AppsViewModel = hiltVie
     AppsContent(
         state = state,
         modifier = modifier,
-        onRequestShizukuPermission = viewModel::connectPrivilegedTier,
-        // See HealthScreen's own copy of this pairing for why both callbacks point at
-        // the same explanation for now.
-        onOpenShizuku = {
-            context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
-        },
-        onLearnMoreAboutShizuku = {
+        onConnect = viewModel::connectPrivilegedTier,
+        onLearnMore = {
             context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
         onRetry = viewModel::retryPrivilegedDump,
@@ -115,9 +110,8 @@ fun AppsScreen(modifier: Modifier = Modifier, viewModel: AppsViewModel = hiltVie
 fun AppsContent(
     state: AppsUiState,
     modifier: Modifier = Modifier,
-    onRequestShizukuPermission: () -> Unit = {},
-    onOpenShizuku: () -> Unit = {},
-    onLearnMoreAboutShizuku: () -> Unit = {},
+    onConnect: () -> Unit = {},
+    onLearnMore: () -> Unit = {},
     onRetry: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
@@ -131,9 +125,8 @@ fun AppsContent(
         UnlockCard(
             availability = state.privilegedAvailability,
             dumpFailed = state.appPowerFailed,
-            onRequestPermission = onRequestShizukuPermission,
-            onOpenShizuku = onOpenShizuku,
-            onLearnMore = onLearnMoreAboutShizuku,
+            onConnect = onConnect,
+            onLearnMore = onLearnMore,
             onRetry = onRetry,
         )
 
