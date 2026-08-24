@@ -1,9 +1,9 @@
 package com.mralaminahamed.batteryhealth.data.privileged
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -51,27 +51,27 @@ class AdbGatewayTest {
         assertNull(gateway.dumpBatteryStatsCheckin())
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun degradesLiveWhenAReadyTransportDrops() = runTest {
         // The property the previous (now-deleted) privileged gateway had and must not
         // lose: a transport dying mid-session reaches state with no exception anywhere
         // downstream.
+        //
+        // UnconfinedTestDispatcher(), not the production Dispatchers.Default this
+        // gateway defaults to: it collapses the combine-and-collect coroutine onto this
+        // test's own thread, so the mutation below and state reflecting it happen
+        // synchronously, in order, with no dispatch gap between them. That makes the
+        // direct assertEquals below sound -- it would previously have raced production's
+        // real dispatcher, which is exactly why this test used to await propagation with
+        // `state.first { ... }` under a wall-clock timeout instead.
         val adb = FakeShell(TransportState.Ready, dump = "level: 84\n")
-        val gateway = AdbGateway(FakeShell(), adb)
+        val gateway = AdbGateway(FakeShell(), adb, dispatcher = UnconfinedTestDispatcher())
         assertEquals(PrivilegedAvailability.Ready(Transport.Adb), gateway.state.value)
 
         adb.flow.value = TransportState.Unavailable
 
-        // Not a synchronous assertion on gateway.state.value: the gateway's own combine
-        // collects on a real Dispatchers.Default thread (see AdbGateway.scope's own doc
-        // for why it has to be a real dispatcher, not Unconfined), so the mutation above
-        // and this state reflecting it are two genuinely separate events with no ordering
-        // guarantee against the very next line of test code. Awaiting the expected value
-        // asserts the same property -- the drop reaches state -- without depending on
-        // scheduling; a real wall-clock bound (not virtual time) is required here because
-        // the wait is for an external, real-dispatcher event, not a `delay`.
-        withTimeout(2_000) { gateway.state.first { it == PrivilegedAvailability.Unavailable } }
-
+        assertEquals(PrivilegedAvailability.Unavailable, gateway.state.value)
         assertNull(gateway.dumpBattery())
     }
 
