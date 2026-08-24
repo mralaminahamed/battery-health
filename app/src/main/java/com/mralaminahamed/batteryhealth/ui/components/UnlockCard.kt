@@ -23,29 +23,30 @@ object UnlockCardTags {
  * read `NeedsPrivilegedAccess` until the user acts here.
  *
  * Deliberately not one "connect" button behind one boolean -- [PrivilegedAvailability]
- * has several distinct not-yet-ready states, each with its own next action, and a single
- * flag would have to guess which one applies. Renders nothing once
- * [PrivilegedAvailability.Ready] is reached *and* [dumpFailed] is false: at that point the
- * values it was explaining the absence of have already started appearing through the
- * ordinary [ReadingSlot] rows elsewhere on the screen, and a card that keeps advertising
- * a state that no longer holds is worse than no card. [dumpFailed] is the one exception
- * to "nothing once Ready": a connection that succeeded but whose most recent `dumpsys
- * battery` attempt came back empty is not the same as a working privileged tier, and
- * without this card the only visible symptom would be every privileged row silently
- * reading `NeedsPrivilegedAccess` again -- indistinguishable from the tier never having been
- * connected at all, with no explanation and no way to retry short of toggling the
- * connection off and back on.
+ * has five states, and each needs its own explanation and, where one applies, its own
+ * action; a single flag would have to guess which one the user is actually in. Renders
+ * nothing once [PrivilegedAvailability.Ready] is reached *and* [dumpFailed] is false: at
+ * that point the values it was explaining the absence of have already started appearing
+ * through the ordinary [ReadingSlot] rows elsewhere on the screen, and a card that keeps
+ * advertising a state that no longer holds is worse than no card. [dumpFailed] is the
+ * one exception to "nothing once Ready": a connection that succeeded but whose most
+ * recent `dumpsys battery` attempt came back empty is not the same as a working
+ * privileged tier, and without this card the only visible symptom would be every
+ * privileged row silently reading `NeedsPrivilegedAccess` again -- indistinguishable
+ * from the tier never having been connected at all, with no explanation and no way to
+ * retry short of toggling the connection off and back on.
  *
- * Interim copy: this card's exact wording is a placeholder pending a dedicated pass over
- * the adb/root states (see the privileged-tier plan's later task). What is here now is
- * accurate for each [PrivilegedAvailability] case, just not yet polished.
+ * There is no companion app to open here and no permission this app can grant itself:
+ * [onConnect] only ever attempts the adb or root connection that the user's own setup
+ * (a computer running one `adb tcpip` command, or a rooted device) has already made
+ * possible. It is the one entry point this card offers, replacing the two separate
+ * callbacks an earlier, now-removed permission model needed.
  */
 @Composable
 fun UnlockCard(
     availability: PrivilegedAvailability,
     dumpFailed: Boolean,
-    onRequestPermission: () -> Unit,
-    onOpenShizuku: () -> Unit,
+    onConnect: () -> Unit,
     onLearnMore: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
@@ -61,7 +62,7 @@ fun UnlockCard(
             style = MaterialTheme.typography.bodyMedium,
             color = colors.textSecondary,
         )
-        val action = actionFor(availability, dumpFailed, onRequestPermission, onOpenShizuku, onLearnMore, onRetry)
+        val action = actionFor(availability, dumpFailed, onConnect, onLearnMore, onRetry)
         if (action != null) {
             val (label, onClick) = action
             Button(
@@ -75,29 +76,31 @@ fun UnlockCard(
 }
 
 /**
- * State of health, first-use date and Battery Protect all sit behind
- * `BATTERY_STATS`, a signature-level permission this app cannot hold itself -- reading it
- * needs either a one-time `adb tcpip` command from a computer (adb debugging) or a rooted
- * device, neither of which this app can set up on its own. That real burden is stated
- * plainly rather than papered over with a single friendly button that quietly can't do
- * what it implies.
+ * State of health, first-use date and Battery Protect all sit behind `BATTERY_STATS`, a
+ * signature-level permission this app cannot hold itself. Reading it needs either a
+ * per-boot `adb tcpip` command run from a computer, or a rooted device -- neither of
+ * which this app can set up on its own. That real burden is stated plainly rather than
+ * papered over with a single friendly button that quietly can't do what it implies.
  */
 private fun explanation(availability: PrivilegedAvailability, dumpFailed: Boolean): String = when (availability) {
     PrivilegedAvailability.Unavailable ->
-        "State of health, first-use date and Battery Protect status are hidden behind " +
-            "a permission this app cannot request on its own. Connect once from a " +
-            "computer with a one-time adb command, or use a rooted device -- either " +
-            "unlocks them."
+        "State of health, first-use date and Battery Protect status sit behind a " +
+            "permission this app cannot request on its own. Run \"adb tcpip 5555\" " +
+            "from a computer with your device connected, and this app takes it from " +
+            "there -- you'll need to repeat that command after every reboot. A " +
+            "rooted device skips this step entirely."
     PrivilegedAvailability.AwaitingAuthorization ->
-        "Check your device -- it's asking whether to allow this connection."
+        "Check your screen -- your device is asking whether to allow this. Approve " +
+            "it and the readings appear."
     PrivilegedAvailability.Denied ->
-        "Access was declined, so the privileged readings stay hidden. You can try " +
-            "again whenever you like."
+        "Access was declined, so the privileged readings stay hidden. Nothing else " +
+            "in the app is affected, and you can try again whenever you like."
     PrivilegedAvailability.Connecting -> "Connecting…"
     is PrivilegedAvailability.Ready ->
         if (dumpFailed) {
-            "Connected, but the last privileged read didn't come back -- most likely " +
-                "a dropped shell call. Retrying costs nothing and often just works."
+            "Connected, but the last privileged read didn't come back -- most " +
+                "likely a dropped shell call. Retrying costs nothing and often just " +
+                "works."
         } else {
             "" // unreachable; UnlockCard returns before rendering this case
         }
@@ -111,14 +114,13 @@ private fun explanation(availability: PrivilegedAvailability, dumpFailed: Boolea
 private fun actionFor(
     availability: PrivilegedAvailability,
     dumpFailed: Boolean,
-    onRequestPermission: () -> Unit,
-    onOpenShizuku: () -> Unit,
+    onConnect: () -> Unit,
     onLearnMore: () -> Unit,
     onRetry: () -> Unit,
 ): Pair<String, () -> Unit>? = when (availability) {
     PrivilegedAvailability.Unavailable -> "How to enable" to onLearnMore
     PrivilegedAvailability.AwaitingAuthorization -> null
-    PrivilegedAvailability.Denied -> "Try again" to onRequestPermission
+    PrivilegedAvailability.Denied -> "Try again" to onConnect
     PrivilegedAvailability.Connecting -> null
     is PrivilegedAvailability.Ready -> if (dumpFailed) "Retry" to onRetry else null
 }
