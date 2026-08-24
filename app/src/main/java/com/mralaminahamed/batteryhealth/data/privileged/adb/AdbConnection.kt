@@ -141,6 +141,30 @@ class AdbConnection(
         return header to payload
     }
 
+    /**
+     * Narrows this connection's per-read socket timeout to [timeoutMs] for the duration of
+     * [block], then restores whatever it was. [soTimeoutMs] (the constructor parameter) is
+     * this connection's *default* -- set once on the socket by [connect] and otherwise left
+     * in force for every later read -- which is right for the handshake (a long, user-paced
+     * wait for someone to tap "Allow") but wrong for a caller needing a shorter, call-
+     * specific bound on a read that happens well after the handshake is done. [send]/[read]
+     * are plain blocking calls with no suspension point, so a coroutine-level timeout like
+     * `withTimeoutOrNull` cannot preempt a thread parked inside one of them -- only the
+     * socket's own read timeout actually cuts a stalled read off at [timeoutMs]. Restoring
+     * the previous value afterward, rather than leaving [timeoutMs] in force, is what lets
+     * this be called repeatedly with a different bound per call on the same connection.
+     */
+    internal suspend fun <T> withSoTimeout(timeoutMs: Int, block: suspend () -> T): T {
+        val activeSocket = requireNotNull(socket) { "not connected" }
+        val previous = activeSocket.soTimeout
+        activeSocket.soTimeout = timeoutMs
+        try {
+            return block()
+        } finally {
+            runCatching { activeSocket.soTimeout = previous }
+        }
+    }
+
     fun close() {
         runCatching { socket?.close() }
     }
