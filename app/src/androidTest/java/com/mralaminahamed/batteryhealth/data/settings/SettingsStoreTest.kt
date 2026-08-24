@@ -66,4 +66,28 @@ class SettingsStoreTest {
         store.setRecorderEnabled(false)
         assertFalse(store.recorderEnabled.first())
     }
+
+    @Test
+    fun adbPortDefaultsTo5555() = runBlocking {
+        assertEquals(5555, store.adbPort.first())
+    }
+
+    @Test
+    fun adbPortRoundTrips() = runBlocking {
+        store.setAdbPort(5037)
+        assertEquals(5037, store.adbPort.first())
+    }
+
+    @Test
+    fun rootPreviouslyGrantedDefaultsToFalse() = runBlocking {
+        // Load-bearing default: true here would make the app probe su on first launch and
+        // raise Magisk's dialog before the user has asked for anything.
+        assertEquals(false, store.rootPreviouslyGranted.first())
+    }
+
+    @Test
+    fun rootPreviouslyGrantedRoundTrips() = runBlocking {
+        store.setRootPreviouslyGranted(true)
+        assertEquals(true, store.rootPreviouslyGranted.first())
+    }
 }
