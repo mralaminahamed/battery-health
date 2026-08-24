@@ -31,16 +31,19 @@ class AdbConnection(
         // Socket, and Socket itself declares a `port` property (the remote port, 0 until
         // connected) that would silently shadow the outer AdbConnection.port field of the
         // same name -- every connection would target port 0 instead of the real one.
+        val newSocket = Socket()
         val socket = try {
-            val newSocket = Socket()
             newSocket.connect(InetSocketAddress(host, port), soTimeoutMs)
             newSocket.soTimeout = soTimeoutMs
             newSocket
         } catch (e: ConnectException) {
+            runCatching { newSocket.close() }
             return@withContext AdbConnectResult.Unreachable
         } catch (e: SocketTimeoutException) {
+            runCatching { newSocket.close() }
             return@withContext AdbConnectResult.Unreachable
         } catch (e: IOException) {
+            runCatching { newSocket.close() }
             return@withContext AdbConnectResult.Failed
         }
         this@AdbConnection.socket = socket
@@ -96,7 +99,11 @@ class AdbConnection(
      */
     private fun awaitConnectionOrTimeout(): AdbConnectResult = try {
         val (header, _) = read()
-        if (header.command == A_CNXN) AdbConnectResult.Connected else AdbConnectResult.AwaitingAuthorization
+        // AwaitingAuthorization is reserved for the timeout case below -- it means "the
+        // device is still deciding." A reply that arrives but isn't CNXN is a protocol
+        // violation, not "still waiting", so it is treated as a plain failure rather than
+        // silently kept waiting for a CNXN that this daemon has already declined to send.
+        if (header.command == A_CNXN) AdbConnectResult.Connected else AdbConnectResult.Failed
     } catch (e: SocketTimeoutException) {
         AdbConnectResult.AwaitingAuthorization
     }

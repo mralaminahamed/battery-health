@@ -27,9 +27,15 @@ class FakeAdbDaemon(
     private val knownPublicKeyLine: String? = null,
     private val shellResponses: Map<String, ByteArray> = emptyMap(),
     private val writeChunkSize: Int = 8,
+    private val socketTimeoutMs: Int = 5_000,
+    private val withholdCnxnAfterPublicKey: Boolean = false,
+    private val dropConnectionAfterCnxn: Boolean = false,
 ) {
     private val server = ServerSocket(0)
     private val pool = Executors.newCachedThreadPool()
+
+    /** Every socket accept() has handed back, so stop() can force every one of them closed. */
+    private val connections: MutableList<Socket> = Collections.synchronizedList(mutableListOf())
 
     /** Set once the client answered a TOKEN with a signature this daemon accepted. */
     @Volatile var authorized: Boolean = false; private set
@@ -40,23 +46,47 @@ class FakeAdbDaemon(
     /** Every ack the client sent, so a test can assert flow control was honoured. */
     val acks: MutableList<Int> = Collections.synchronizedList(mutableListOf())
 
+    /**
+     * Whatever serve() threw, including a require() tripped by a protocol violation.
+     * pool.execute() swallows exceptions on its own, so without this a client that stalls
+     * an ack or otherwise breaks protocol is only visible indirectly, via a client-side
+     * timeout -- exactly the kind of thing a protocol-speaking fake exists to surface
+     * directly instead of a mock.
+     */
+    @Volatile var failure: Throwable? = null; private set
+
     val port: Int get() = server.localPort
 
     fun start() {
         thread(isDaemon = true) {
             while (!server.isClosed) {
                 val socket = runCatching { server.accept() }.getOrNull() ?: return@thread
-                pool.execute { runCatching { serve(socket) } }
+                connections += socket
+                pool.execute { runCatching { serve(socket) }.onFailure { failure = it } }
             }
         }
     }
 
     fun stop() {
         runCatching { server.close() }
+        synchronized(connections) { connections.forEach { runCatching { it.close() } } }
         pool.shutdownNow()
     }
 
     private fun serve(socket: Socket) {
+        // Every accepted socket gets the daemon's own read timeout, not just the listening
+        // socket -- otherwise a client that goes silent mid-protocol (e.g. never acking a
+        // WRTE) blocks this thread and leaks the socket forever instead of tripping the
+        // require() below, which is the whole point of this fixture.
+        socket.soTimeout = socketTimeoutMs
+        try {
+            serveConnected(socket)
+        } finally {
+            runCatching { socket.close() }
+        }
+    }
+
+    private fun serveConnected(socket: Socket) {
         val input = DataInputStream(socket.getInputStream())
         val output = socket.getOutputStream()
 
@@ -78,6 +108,10 @@ class FakeAdbDaemon(
         val token = ByteArray(20) { it.toByte() }
         val (first, _) = read()
         require(first.command == A_CNXN) { "expected CNXN first, got ${first.command}" }
+        // A way to simulate a device that hangs up mid-handshake -- adbd doing this looks
+        // like an EOF to the client, not a timeout, which drives AdbConnectResult.Failed
+        // and otherwise has no test coverage.
+        if (dropConnectionAfterCnxn) return
         send(A_AUTH, ADB_AUTH_TOKEN, 0, token)
 
         while (true) {
@@ -94,7 +128,12 @@ class FakeAdbDaemon(
                 header.command == A_AUTH && header.arg0 == ADB_AUTH_RSAPUBLICKEY -> {
                     receivedPublicKey = String(payload).trimEnd('\u0000')
                     authorized = true
-                    send(A_CNXN, 0x01000000, 256 * 1024, "device::features=cmd\u0000".toByteArray())
+                    // Withholding CNXN here is what a real device does while its "Allow USB
+                    // debugging?" dialog is still up: the client is left waiting on its own
+                    // soTimeoutMs rather than being told yes or no either way.
+                    if (!withholdCnxnAfterPublicKey) {
+                        send(A_CNXN, 0x01000000, 256 * 1024, "device::features=cmd\u0000".toByteArray())
+                    }
                 }
                 header.command == A_OPEN -> {
                     val destination = String(payload).trimEnd('\u0000')
