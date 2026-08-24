@@ -12,13 +12,23 @@ import kotlinx.coroutines.withContext
 enum class AdbConnectResult { Connected, AwaitingAuthorization, Unreachable, Failed }
 
 /**
+ * The only address this client will ever dial. Declared here, not in a shared constants
+ * file, because [AdbConnection] is the only class in this app that opens a [Socket] --
+ * keeping the constant next to the one call site that can use it is what lets a later
+ * enforcement test grep every `Socket(`-bearing file for it and actually mean something.
+ * Defaulted on [host] rather than left as a caller convention: a transport that forgot to
+ * pass it would otherwise silently be free to dial anything.
+ */
+const val LOOPBACK_HOST = "127.0.0.1"
+
+/**
  * A hand-rolled ADB client speaking the same TCP handshake `adb connect` does, so this app
  * no longer needs Shizuku running as a mediator. One socket, one CNXN/AUTH exchange; stream
  * multiplexing (OPEN/OKAY/WRTE/CLSE) is layered on top by `AdbStream` in a later task, which
  * is why [send] and [read] are exposed rather than kept private.
  */
 class AdbConnection(
-    private val host: String,
+    private val host: String = LOOPBACK_HOST,
     private val port: Int,
     private val signer: AdbSigner,
     private val soTimeoutMs: Int,
