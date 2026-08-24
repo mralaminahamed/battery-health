@@ -11,12 +11,12 @@ data class AppsUiState(
      * `AdbGateway`'s real state first emits, the same convention `HealthUiState`
      * already uses. */
     val privilegedAvailability: PrivilegedAvailability = PrivilegedAvailability.Unavailable,
-    /** [Reading.NeedsShizuku] until ready, then either the classified, sorted rows or --
-     * see `BatteryRepository.appPower`'s own doc -- [Reading.NeedsShizuku] again if the
+    /** [Reading.NeedsPrivilegedAccess] until ready, then either the classified, sorted rows or --
+     * see `BatteryRepository.appPower`'s own doc -- [Reading.NeedsPrivilegedAccess] again if the
      * checkin call itself failed while ready. Never [Reading.Unsupported] or
      * [Reading.NotYetMeasured]: every Android device has a `batterystats` system, and
      * this is a live privileged read, not a measurement gathered over time. */
-    val rows: Reading<List<AppRow>> = Reading.NeedsShizuku,
+    val rows: Reading<List<AppRow>> = Reading.NeedsPrivilegedAccess,
     /** True only while [privilegedAvailability] is [PrivilegedAvailability.Ready] and the
      * most recent checkin attempt still came back empty -- see
      * `BatteryRepository.appPowerFailed`'s own doc. Drives `UnlockCard`'s "read failed,

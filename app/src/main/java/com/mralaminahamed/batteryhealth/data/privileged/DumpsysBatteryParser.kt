@@ -8,7 +8,7 @@ import kotlin.math.roundToInt
  * this dump did not contain a line this parser recognised for that field. Never a
  * default, never a zero standing in for absence -- `BatteryRepository` is the only place
  * that decides what a `null` here should mean for a `Reading` (`Unsupported` once a real
- * dump was in hand, `NeedsShizuku` when there was no dump to try at all), and it needs the
+ * dump was in hand, `NeedsPrivilegedAccess` when there was no dump to try at all), and it needs the
  * true absence to make that call correctly.
  */
 data class ParsedBatteryDump(

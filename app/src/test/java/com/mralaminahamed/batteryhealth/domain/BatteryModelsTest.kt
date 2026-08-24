@@ -55,14 +55,14 @@ class BatteryModelsTest {
     }
 
     @Test
-    fun milliwattsPreservesNeedsShizukuWhenCurrentAbsent() {
+    fun milliwattsPreservesNeedsPrivilegedAccessWhenCurrentAbsent() {
         // Regression guard for Finding 1: absence reason is not flattened to Unsupported
         val snapshot = BatterySnapshot(
             levelPct = Reading.Available(50, Source.Framework),
             chargeState = Reading.Available(ChargeState.Charging, Source.Framework),
             plugType = Reading.Available(PlugType.Ac, Source.Framework),
             voltageMv = Reading.Available(4000, Source.Framework),
-            currentUa = Reading.NeedsShizuku,
+            currentUa = Reading.NeedsPrivilegedAccess,
             temperatureDeciC = Reading.Available(250, Source.Framework),
             technology = Reading.Available("Li-ion", Source.Framework),
             chargeCounterUah = Reading.Available(1_000_000, Source.Framework),
@@ -72,17 +72,17 @@ class BatteryModelsTest {
             manufacturingDateEpochDay = Reading.Available(17000, Source.Framework),
             chargeTimeRemainingMs = Reading.Available(3600000, Source.Framework),
         )
-        assertEquals(Reading.NeedsShizuku, snapshot.milliwatts)
+        assertEquals(Reading.NeedsPrivilegedAccess, snapshot.milliwatts)
     }
 
     @Test
-    fun milliwattsPreservesNeedsShizukuWhenVoltageAbsent() {
-        // Mirror case: voltage is NeedsShizuku, current is available
+    fun milliwattsPreservesNeedsPrivilegedAccessWhenVoltageAbsent() {
+        // Mirror case: voltage is NeedsPrivilegedAccess, current is available
         val snapshot = BatterySnapshot(
             levelPct = Reading.Available(50, Source.Framework),
             chargeState = Reading.Available(ChargeState.Charging, Source.Framework),
             plugType = Reading.Available(PlugType.Ac, Source.Framework),
-            voltageMv = Reading.NeedsShizuku,
+            voltageMv = Reading.NeedsPrivilegedAccess,
             currentUa = Reading.Available(1_000_000, Source.Framework),
             temperatureDeciC = Reading.Available(250, Source.Framework),
             technology = Reading.Available("Li-ion", Source.Framework),
@@ -93,7 +93,7 @@ class BatteryModelsTest {
             manufacturingDateEpochDay = Reading.Available(17000, Source.Framework),
             chargeTimeRemainingMs = Reading.Available(3600000, Source.Framework),
         )
-        assertEquals(Reading.NeedsShizuku, snapshot.milliwatts)
+        assertEquals(Reading.NeedsPrivilegedAccess, snapshot.milliwatts)
     }
 
     @Test

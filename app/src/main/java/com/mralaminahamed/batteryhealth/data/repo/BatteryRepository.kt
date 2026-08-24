@@ -51,7 +51,7 @@ class BatteryRepository @Inject constructor(
      * is backgrounded, and nothing broadcasts that change back to this process (Critical
      * 2). The same call, exposed as a user-visible retry action, is also what stops one
      * failed attempt -- a transport error, a blank shell response -- from pinning
-     * every privileged row at `NeedsShizuku` until the connection state happens to toggle
+     * every privileged row at `NeedsPrivilegedAccess` until the connection state happens to toggle
      * on its own, which it may never do while the tier stays genuinely connected (Important 1).
      * Replay depth 1 so the very first collector still gets an initial tick without
      * waiting on a resume or a retry tap that may never come.
@@ -66,7 +66,7 @@ class BatteryRepository @Inject constructor(
      * still came back empty -- never true merely because the tier is not connected at
      * all, which is an entirely different, already-explained state `UnlockCard` covers
      * on its own. Lets the Health screen show "the read failed, retry" instead of a
-     * `NeedsShizuku` row that would otherwise be indistinguishable from "the privileged
+     * `NeedsPrivilegedAccess` row that would otherwise be indistinguishable from "the privileged
      * tier was never connected."
      */
     private val _privilegedDumpFailed = MutableStateFlow(false)
@@ -93,13 +93,13 @@ class BatteryRepository @Inject constructor(
      * caller to treat "no result yet" and "no result at all" as the same, one-frame-long
      * gap: it took 200-350ms for a live ~94KB capture and up to several seconds under
      * load on the device this was verified against, which is long enough for a naive UI
-     * to flash `NeedsShizuku` -- "connect the privileged tier, it might help" -- while
+     * to flash `NeedsPrivilegedAccess` -- "connect the privileged tier, it might help" -- while
      * the tier is, in fact, already connected and simply still working on the answer. A separate
      * `StateFlow`, not folded into [appPower]'s own `Reading`, because [Reading] has no
      * "loading" case by design (see its own doc) and adding one there would blur every
      * other screen's absence vocabulary for a problem specific to this one call; the Apps
      * screen alone reads this to choose a skeleton over `ReadingSlot`'s ordinary
-     * `NeedsShizuku` rendering, precisely while there is not yet a real answer to render.
+     * `NeedsPrivilegedAccess` rendering, precisely while there is not yet a real answer to render.
      */
     private val _appPowerLoading = MutableStateFlow(false)
     val appPowerLoading: StateFlow<Boolean> = _appPowerLoading.asStateFlow()
@@ -143,7 +143,7 @@ class BatteryRepository @Inject constructor(
             // @SystemApi/@hide) and the privileged tier's own dumpsys output, read in
             // full, simply does not carry it either. That is already known, unconditionally,
             // before the privileged tier is ever connected -- so this is `Unsupported` in
-            // every state, connected or not, never `NeedsShizuku`. Routing it through
+            // every state, connected or not, never `NeedsPrivilegedAccess`. Routing it through
             // `privilegedAbsence(dumpAvailable)` the way every other privileged field above
             // does would tell an unconnected user that connecting the tier might produce
             // this date, when the eleven lines above already prove it never will: a
@@ -214,7 +214,7 @@ class BatteryRepository @Inject constructor(
      * own history was cleared, or a --checkin format this parser does not recognise) is a
      * real, honestly-reportable fact (`Available(emptyList())`), not an absence. Only a
      * failed call (ready but `dumpBatteryStatsCheckin()` returned `null`) reports
-     * [Reading.NeedsShizuku] -- the same "this might still work, retry" signal
+     * [Reading.NeedsPrivilegedAccess] -- the same "this might still work, retry" signal
      * [privilegedDump] gives a failed `dumpBattery()` call, for the same reason: a shell
      * call failing while ready reads exactly like never having been ready at all, and the
      * existing [retryPrivilegedDump] flow is what tells the two apart for the user (via
@@ -225,7 +225,7 @@ class BatteryRepository @Inject constructor(
             if (!ready) {
                 _appPowerLoading.value = false
                 _appPowerFailed.value = false
-                Reading.NeedsShizuku
+                Reading.NeedsPrivilegedAccess
             } else {
                 _appPowerLoading.value = true
                 val checkin = privileged.dumpBatteryStatsCheckin()
@@ -236,7 +236,7 @@ class BatteryRepository @Inject constructor(
                 // covering a real failure mode this simpler shape misses.
                 _appPowerLoading.value = false
                 if (checkin == null) {
-                    Reading.NeedsShizuku
+                    Reading.NeedsPrivilegedAccess
                 } else {
                     val entries = AppPowerAggregator.aggregate(BatteryStatsCheckinParser.parse(checkin))
                     Reading.Available(entries, Source.Privileged)
@@ -249,7 +249,7 @@ class BatteryRepository @Inject constructor(
      * function is allowed to collapse that ambiguity into a `Reading`:
      *
      * - No dump was ever obtained ([dumpAvailable] false: the privileged tier is not
-     *   ready, or the shell-side call itself failed) -- [Reading.NeedsShizuku].
+     *   ready, or the shell-side call itself failed) -- [Reading.NeedsPrivilegedAccess].
      *   Connecting/restoring the privileged tier might still produce this value; nothing
      *   has ruled it out yet.
      * - A real dump was parsed and this specific field's regex still found nothing in it
@@ -263,7 +263,7 @@ class BatteryRepository @Inject constructor(
     }
 
     private fun privilegedAbsence(dumpAvailable: Boolean): Reading<Nothing> =
-        if (dumpAvailable) Reading.Unsupported else Reading.NeedsShizuku
+        if (dumpAvailable) Reading.Unsupported else Reading.NeedsPrivilegedAccess
 
     fun measuredHealth(): Flow<Reading<HealthReport>> = combine(
         // Filtered to charge sessions in SQL, not after the LIMIT: the window must be
