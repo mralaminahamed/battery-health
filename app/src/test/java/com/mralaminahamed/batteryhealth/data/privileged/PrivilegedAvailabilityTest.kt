@@ -71,4 +71,39 @@ class PrivilegedAvailabilityTest {
             ),
         )
     }
+
+    @Test
+    fun rootAwaitingAuthorizationWinsOverAdbUnavailable() {
+        // Pins the root == AwaitingAuthorization side of the || that only adb was testing.
+        assertEquals(
+            PrivilegedAvailability.AwaitingAuthorization,
+            privilegedAvailability(
+                root = TransportState.AwaitingAuthorization,
+                adb = TransportState.Unavailable,
+            ),
+        )
+    }
+
+    @Test
+    fun rootConnectingWinsOverAdbUnavailable() {
+        // Pins the root == Connecting side of the || that only adb was testing.
+        assertEquals(
+            PrivilegedAvailability.Connecting,
+            privilegedAvailability(
+                root = TransportState.Connecting,
+                adb = TransportState.Unavailable,
+            ),
+        )
+    }
+
+    @Test
+    fun adbDeniedIsReportedToUnrootedPhone() {
+        // Unrooted phone, ADB pairing attempted and refused. Pins adb == Denied,
+        // which was not tested and must not be deleted -- user needs to know why
+        // instead of being told "nothing is available".
+        assertEquals(
+            PrivilegedAvailability.Denied,
+            privilegedAvailability(root = TransportState.Unavailable, adb = TransportState.Denied),
+        )
+    }
 }
