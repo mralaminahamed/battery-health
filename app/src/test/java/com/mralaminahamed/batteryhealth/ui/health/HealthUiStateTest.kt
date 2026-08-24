@@ -70,30 +70,30 @@ class HealthUiStateTest {
     }
 
     @Test
-    fun needsShizukuSurvivesWhenMeasurementIsUnsupported() {
+    fun needsPrivilegedAccessSurvivesWhenMeasurementIsUnsupported() {
         // What production actually emits: BatteryRepository sets stateOfHealthPct to
-        // NeedsShizuku unconditionally (never Unsupported), and measured is Unsupported
+        // NeedsPrivilegedAccess unconditionally (never Unsupported), and measured is Unsupported
         // for any model outside the ten-entry design-capacity table with no override --
-        // nearly every Samsung. The headline must not contradict the "Needs Shizuku" row
+        // nearly every Samsung. The headline must not contradict the "Needs privileged access" row
         // right below it by claiming "not available on this device" about the same
         // data source.
         val state = HealthUiState(
-            snapshot = snapshot(Reading.NeedsShizuku),
+            snapshot = snapshot(Reading.NeedsPrivilegedAccess),
             measured = Reading.Unsupported,
         )
-        assertEquals(Reading.NeedsShizuku, state.headlinePct)
+        assertEquals(Reading.NeedsPrivilegedAccess, state.headlinePct)
     }
 
     @Test
-    fun measurementWinsOverNeedsShizukuWhenAvailable() {
-        val state = HealthUiState(snapshot = snapshot(Reading.NeedsShizuku), measured = measured)
+    fun measurementWinsOverNeedsPrivilegedAccessWhenAvailable() {
+        val state = HealthUiState(snapshot = snapshot(Reading.NeedsPrivilegedAccess), measured = measured)
         assertEquals(Reading.Available(84, Source.Measured), state.headlinePct)
     }
 
     @Test
-    fun notYetMeasuredBeatsNeedsShizuku() {
+    fun notYetMeasuredBeatsNeedsPrivilegedAccess() {
         val state = HealthUiState(
-            snapshot = snapshot(Reading.NeedsShizuku),
+            snapshot = snapshot(Reading.NeedsPrivilegedAccess),
             measured = Reading.NotYetMeasured,
         )
         assertEquals(Reading.NotYetMeasured, state.headlinePct)

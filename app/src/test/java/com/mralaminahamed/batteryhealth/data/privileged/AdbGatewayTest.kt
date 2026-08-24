@@ -53,8 +53,9 @@ class AdbGatewayTest {
 
     @Test
     fun degradesLiveWhenAReadyTransportDrops() = runTest {
-        // The property the Shizuku gateway had and must not lose: a transport dying
-        // mid-session reaches state with no exception anywhere downstream.
+        // The property the previous (now-deleted) privileged gateway had and must not
+        // lose: a transport dying mid-session reaches state with no exception anywhere
+        // downstream.
         val adb = FakeShell(TransportState.Ready, dump = "level: 84\n")
         val gateway = AdbGateway(FakeShell(), adb)
         assertEquals(PrivilegedAvailability.Ready(Transport.Adb), gateway.state.value)

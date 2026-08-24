@@ -54,23 +54,24 @@ data class BatterySnapshot(
      * deliberately kept apart from [stateOfHealthPct] (Samsung's ASOC). The two can and
      * do disagree on real hardware (86 vs 95 on the device this was verified against);
      * folding one into the other would hide that Samsung itself tracks two numbers.
-     * Defaults to [Reading.NeedsShizuku] so every call site written before this field
+     * Defaults to [Reading.NeedsPrivilegedAccess] so every call site written before this field
      * existed keeps compiling and keeps its honest meaning without being touched.
      */
-    val bsohPct: Reading<Int> = Reading.NeedsShizuku,
+    val bsohPct: Reading<Int> = Reading.NeedsPrivilegedAccess,
     /** Samsung Battery Protect's on/off state, from `mProtectBatteryMode`. */
-    val protectBatteryModeEnabled: Reading<Boolean> = Reading.NeedsShizuku,
+    val protectBatteryModeEnabled: Reading<Boolean> = Reading.NeedsPrivilegedAccess,
     /** The charge percentage Battery Protect caps charging at when enabled, from
      * `mProtectionThreshold`. */
-    val protectionThresholdPct: Reading<Int> = Reading.NeedsShizuku,
+    val protectionThresholdPct: Reading<Int> = Reading.NeedsPrivilegedAccess,
 ) {
     /**
      * Instantaneous power in milliwatts, derived from voltage (mV) and current (µA).
      *
      * Absent inputs propagate their own reason rather than collapsing to Unsupported:
-     * a caller must be able to tell "this device cannot report power" from "granting
-     * Shizuku would report it". Provenance is the least direct of the two inputs, so a
-     * derived number never claims to be more directly measured than its weakest input.
+     * a caller must be able to tell "this device cannot report power" from "connecting
+     * the privileged tier would report it". Provenance is the least direct of the two
+     * inputs, so a derived number never claims to be more directly measured than its
+     * weakest input.
      */
     val milliwatts: Reading<Int>
         get() {

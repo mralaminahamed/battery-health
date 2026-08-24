@@ -32,14 +32,14 @@ class ReadingSlotTest {
     }
 
     @Test
-    fun needsShizukuRendersReasonAndNotTheContent() {
+    fun needsPrivilegedAccessRendersReasonAndNotTheContent() {
         compose.setContent {
             BatteryHealthTheme {
-                ReadingSlot(Reading.NeedsShizuku) { value: Int, _ -> Text("$value%") }
+                ReadingSlot(Reading.NeedsPrivilegedAccess) { value: Int, _ -> Text("$value%") }
             }
         }
         compose.onNodeWithTag(ReadingSlotTags.UNAVAILABLE).assertIsDisplayed()
-        compose.onNodeWithText("Needs Shizuku").assertIsDisplayed()
+        compose.onNodeWithText("Needs privileged access").assertIsDisplayed()
         compose.onAllNodesWithTag(ReadingSlotTags.AVAILABLE).assertCountEquals(0)
     }
 

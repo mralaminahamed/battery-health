@@ -131,7 +131,7 @@ class BatteryRepositoryTest {
     }
 
     @Test
-    fun snapshotCarriesLiveDataAndReportsThePrivilegedFieldsAsNeedingShizuku() = runBlocking {
+    fun snapshotCarriesLiveDataAndReportsThePrivilegedFieldsAsNeedingPrivilegedAccess() = runBlocking {
         val snapshot = withTimeout(5_000) { repository().snapshots().first() }
 
         // Level is always present on real hardware; a present framework value is never
@@ -148,61 +148,62 @@ class BatteryRepositoryTest {
         // StateOfHealth and FirstUsageDate require signature-level BATTERY_STATS and are
         // unreachable by any unprivileged app on any device. Reporting Unsupported here
         // would claim the device itself cannot supply the number, which is false -- the
-        // privileged (Shizuku) tier can. NeedsShizuku is the honest answer.
-        assertEquals(Reading.NeedsShizuku, snapshot.stateOfHealthPct)
-        assertEquals(Reading.NeedsShizuku, snapshot.firstUsageDateEpochDay)
+        // privileged tier can. NeedsPrivilegedAccess is the honest answer.
+        assertEquals(Reading.NeedsPrivilegedAccess, snapshot.stateOfHealthPct)
+        assertEquals(Reading.NeedsPrivilegedAccess, snapshot.firstUsageDateEpochDay)
 
         // Critical 1: manufacturing date is a categorically different case from the two
         // above -- no dump this parser was built against has ever carried the field, so
-        // "granting Shizuku might produce it" is already known false, unconditionally,
-        // even in this unbound state. See manufacturingDateIsUnsupportedEvenWhenShizukuIsBoundAndDumped
-        // below for the same pin in the bound state, per the task's explicit request for
-        // both.
+        // "connecting the privileged tier might produce it" is already known false,
+        // unconditionally, even in this not-yet-connected state. See
+        // manufacturingDateIsUnsupportedEvenWhenThePrivilegedTierIsReadyAndDumped below for
+        // the same pin in the connected state, per the task's explicit request for both.
         assertEquals(Reading.Unsupported, snapshot.manufacturingDateEpochDay)
     }
 
     /**
-     * Critical 1's other half: a real dump in hand, not just the unbound case above.
-     * Regresses against `manufacturingDateEpochDay` ever being routed back through the
-     * general `privilegedAbsence(dumpAvailable)` helper the other privileged fields use --
-     * if it were, this would read `Unsupported` here too, by coincidence, since
-     * `dumpAvailable` is true; the real regression this guards is the *unbound* case in
-     * the test above, but pinning both states is what the task asked for explicitly, and
-     * this is the state where "granting Shizuku produced no date" is the actual mechanism
-     * being exercised, not merely a fallback default.
+     * Critical 1's other half: a real dump in hand, not just the not-yet-connected case
+     * above. Regresses against `manufacturingDateEpochDay` ever being routed back through
+     * the general `privilegedAbsence(dumpAvailable)` helper the other privileged fields
+     * use -- if it were, this would read `Unsupported` here too, by coincidence, since
+     * `dumpAvailable` is true; the real regression this guards is the *not-yet-connected*
+     * case in the test above, but pinning both states is what the task asked for
+     * explicitly, and this is the state where "connecting the privileged tier produced no
+     * date" is the actual mechanism being exercised, not merely a fallback default.
      */
     @Test
-    fun manufacturingDateIsUnsupportedEvenWhenShizukuIsBoundAndDumped() = runBlocking {
+    fun manufacturingDateIsUnsupportedEvenWhenThePrivilegedTierIsReadyAndDumped() = runBlocking {
         val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextDump = sampleDumpText()
 
         val snapshot = withTimeout(5_000) { repository(fake).snapshots().first() }
 
-        // Sanity: the dump was actually used (proves this test reached the bound path at
-        // all, not merely repeating the unbound assertion by accident).
+        // Sanity: the dump was actually used (proves this test reached the connected path
+        // at all, not merely repeating the not-yet-connected assertion by accident).
         assertEquals(Reading.Available(86, Source.Privileged), snapshot.stateOfHealthPct)
         assertEquals(Reading.Unsupported, snapshot.manufacturingDateEpochDay)
     }
 
     /**
-     * Important 1: a dump that fails while genuinely Bound must not be terminal. The fake
-     * starts Bound with [FakePrivilegedBatterySource.nextDump] left `null` (a blank/failed
-     * shell call), so the first collection pins every privileged field at `NeedsShizuku`
-     * and [BatteryRepository.privilegedDumpFailed] to `true` -- exactly the bug: Shizuku
-     * is demonstrably `Bound`, yet the rows read as if it never connected. Calling
-     * [BatteryRepository.retryPrivilegedDump] and collecting again (same repository
-     * instance, same fake, `dumpBattery` now returning a real dump) is what
-     * `HealthViewModel.refreshPrivilegedTier` does on every `ON_RESUME` in production; recovering
-     * here without ever toggling the bind state itself is the fix.
+     * Important 1: a dump that fails while the privileged tier is genuinely Ready must not
+     * be terminal. The fake starts Ready with [FakePrivilegedBatterySource.nextDump] left
+     * `null` (a blank/failed shell call), so the first collection pins every privileged
+     * field at `NeedsPrivilegedAccess` and [BatteryRepository.privilegedDumpFailed] to
+     * `true` -- exactly the bug: the privileged tier is demonstrably `Ready`, yet the rows
+     * read as if it never connected. Calling [BatteryRepository.retryPrivilegedDump] and
+     * collecting again (same repository instance, same fake, `dumpBattery` now returning a
+     * real dump) is what `HealthViewModel.refreshPrivilegedTier` does on every `ON_RESUME`
+     * in production; recovering here without ever toggling the availability state itself is
+     * the fix.
      */
     @Test
-    fun retryPrivilegedDumpRecoversFromAFailedDumpWhileBound() = runBlocking {
+    fun retryPrivilegedDumpRecoversFromAFailedDumpWhileReady() = runBlocking {
         val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextDump = null
         val repo = repository(fake)
 
         val failedSnapshot = withTimeout(5_000) { repo.snapshots().first() }
-        assertEquals(Reading.NeedsShizuku, failedSnapshot.stateOfHealthPct)
+        assertEquals(Reading.NeedsPrivilegedAccess, failedSnapshot.stateOfHealthPct)
         assertTrue(repo.privilegedDumpFailed.value)
 
         fake.nextDump = sampleDumpText(asoc = 86)
@@ -376,17 +377,17 @@ class BatteryRepositoryTest {
     """.trimIndent()
 
     @Test
-    fun appPowerReportsNeedsShizukuWhenNotBound() = runBlocking {
+    fun appPowerReportsNeedsPrivilegedAccessWhenNotConnected() = runBlocking {
         val repo = repository(FakePrivilegedBatterySource(initial = PrivilegedAvailability.Unavailable))
 
         val reading = withTimeout(5_000) { repo.appPower().first() }
 
-        assertEquals(Reading.NeedsShizuku, reading)
+        assertEquals(Reading.NeedsPrivilegedAccess, reading)
         assertFalse(repo.appPowerFailed.value)
     }
 
     /**
-     * The real end-to-end path: a bound checkin call, parsed and reduced into rows,
+     * The real end-to-end path: a connected checkin call, parsed and reduced into rows,
      * sorted descending, each classified into the right [UidKind] -- the shell uid (2000)
      * kept apart from the real app (10106) and the system uid (1000), exactly the
      * distinction the Apps screen's whole design exists to preserve. The system-wide
@@ -394,7 +395,7 @@ class BatteryRepositoryTest {
      * list as a phantom "uid 0" entry.
      */
     @Test
-    fun appPowerParsesARealBoundCheckinIntoClassifiedSortedEntries() = runBlocking {
+    fun appPowerParsesARealCheckinIntoClassifiedSortedEntries() = runBlocking {
         val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextCheckin = sampleCheckinText()
         val repo = repository(fake)
@@ -410,19 +411,19 @@ class BatteryRepositoryTest {
     }
 
     /**
-     * Mirrors [retryPrivilegedDumpRecoversFromAFailedDumpWhileBound] for the checkin call:
-     * a bound tier whose checkin call fails must not be terminal, and must be
-     * distinguishable (via [BatteryRepository.appPowerFailed]) from having never bound at
-     * all.
+     * Mirrors [retryPrivilegedDumpRecoversFromAFailedDumpWhileReady] for the checkin call:
+     * a ready tier whose checkin call fails must not be terminal, and must be
+     * distinguishable (via [BatteryRepository.appPowerFailed]) from having never connected
+     * at all.
      */
     @Test
-    fun retryPrivilegedDumpRecoversFromAFailedCheckinWhileBound() = runBlocking {
+    fun retryPrivilegedDumpRecoversFromAFailedCheckinWhileReady() = runBlocking {
         val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextCheckin = null
         val repo = repository(fake)
 
         val failedReading = withTimeout(5_000) { repo.appPower().first() }
-        assertEquals(Reading.NeedsShizuku, failedReading)
+        assertEquals(Reading.NeedsPrivilegedAccess, failedReading)
         assertTrue(repo.appPowerFailed.value)
 
         fake.nextCheckin = sampleCheckinText()
@@ -436,8 +437,8 @@ class BatteryRepositoryTest {
     /**
      * A checkin call that succeeds (a real, non-null string came back) but happens to
      * contain no "pwi,uid" rows is a real, honest "nothing recorded yet" -- Available with
-     * an empty list -- never NeedsShizuku, which would wrongly imply granting Shizuku
-     * again might change the answer.
+     * an empty list -- never NeedsPrivilegedAccess, which would wrongly imply reconnecting
+     * the privileged tier again might change the answer.
      */
     @Test
     fun appPowerIsAvailableWithAnEmptyListWhenTheCheckinHasNoPerUidRows() = runBlocking {

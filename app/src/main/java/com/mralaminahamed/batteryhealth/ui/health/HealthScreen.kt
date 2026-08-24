@@ -299,7 +299,7 @@ fun HealthContent(
                 // rather than upstream in the Reading itself: the number is genuinely
                 // known (a real dump returned it), just not in force right now, and
                 // Reading's three absences have no case for "known but not applicable" --
-                // forcing it into Unsupported or NeedsShizuku would misstate *why* it is
+                // forcing it into Unsupported or NeedsPrivilegedAccess would misstate *why* it is
                 // absent. When the mode reading itself is not Available (rarer: the two
                 // fields parse independently), there is no positive signal it is off, so
                 // this falls back to showing the raw value rather than guessing.

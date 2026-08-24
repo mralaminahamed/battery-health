@@ -15,8 +15,8 @@ fun interface IntPropertyReader {
  * they are @SystemApi/@hide in AOSP (frameworks/base/core/java/android/os/BatteryManager.java),
  * gated behind the signature-level BATTERY_STATS permission, and throw SecurityException
  * for this app on real hardware regardless of API level. They belong to the privileged
- * (Shizuku) tier, not the framework layer — a later task wires them to
- * Reading.NeedsShizuku on BatterySnapshot. Every property remaining here is API 21, well
+ * tier, not the framework layer — a later task wires them to
+ * Reading.NeedsPrivilegedAccess on BatterySnapshot. Every property remaining here is API 21, well
  * below this app's minSdk 26, so there is no API-floor filtering left to do.
  */
 enum class BatteryProperty(val id: Int) {
