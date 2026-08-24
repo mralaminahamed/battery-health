@@ -1,7 +1,9 @@
 package com.mralaminahamed.batteryhealth.data.privileged
 
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -59,7 +61,16 @@ class AdbGatewayTest {
 
         adb.flow.value = TransportState.Unavailable
 
-        assertEquals(PrivilegedAvailability.Unavailable, gateway.state.value)
+        // Not a synchronous assertion on gateway.state.value: the gateway's own combine
+        // collects on a real Dispatchers.Default thread (see AdbGateway.scope's own doc
+        // for why it has to be a real dispatcher, not Unconfined), so the mutation above
+        // and this state reflecting it are two genuinely separate events with no ordering
+        // guarantee against the very next line of test code. Awaiting the expected value
+        // asserts the same property -- the drop reaches state -- without depending on
+        // scheduling; a real wall-clock bound (not virtual time) is required here because
+        // the wait is for an external, real-dispatcher event, not a `delay`.
+        withTimeout(2_000) { gateway.state.first { it == PrivilegedAvailability.Unavailable } }
+
         assertNull(gateway.dumpBattery())
     }
 

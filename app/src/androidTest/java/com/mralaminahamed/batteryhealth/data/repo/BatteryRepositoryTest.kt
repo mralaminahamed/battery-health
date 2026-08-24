@@ -9,8 +9,9 @@ import com.mralaminahamed.batteryhealth.data.framework.CapabilityProbe
 import com.mralaminahamed.batteryhealth.data.framework.IntPropertyReader
 import com.mralaminahamed.batteryhealth.data.local.BatteryDatabase
 import com.mralaminahamed.batteryhealth.data.local.SessionEntity
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
-import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
+import com.mralaminahamed.batteryhealth.data.privileged.Transport
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
 import com.mralaminahamed.batteryhealth.domain.AppPowerEntry
@@ -56,21 +57,21 @@ class BatteryRepositoryTest {
     }
 
     /**
-     * Configurable in every direction the new tests below need: [ShizukuAvailability]
-     * starts wherever the caller sets it (defaulting to [ShizukuAvailability.NotInstalled]
-     * so the original, unbound-state test below is unaffected), [dumpBattery] returns
+     * Configurable in every direction the new tests below need: [PrivilegedAvailability]
+     * starts wherever the caller sets it (defaulting to [PrivilegedAvailability.Unavailable]
+     * so the original, not-ready-state test below is unaffected), [dumpBattery] returns
      * whatever [nextDump] currently holds rather than a fixed value, and [dumpCallCount]
      * lets a test confirm a retry actually re-invoked the shell call rather than replaying
-     * a cached result. Never touches the real Shizuku singleton, so these assertions hold
-     * on their own logic regardless of whether the physical device running this test
-     * happens to have Shizuku installed and bound already. `BatteryRepository` depends on
+     * a cached result. Never touches a real transport, so these assertions hold on their
+     * own logic regardless of whether the physical device running this test happens to
+     * have adb debugging enabled or root granted already. `BatteryRepository` depends on
      * the [PrivilegedBatterySource] interface for exactly this reason; see its own doc.
      */
     private class FakePrivilegedBatterySource(
-        initial: ShizukuAvailability = ShizukuAvailability.NotInstalled,
+        initial: PrivilegedAvailability = PrivilegedAvailability.Unavailable,
     ) : PrivilegedBatterySource {
         private val stateFlow = MutableStateFlow(initial)
-        override val state: StateFlow<ShizukuAvailability> = stateFlow
+        override val state: StateFlow<PrivilegedAvailability> = stateFlow
 
         var nextDump: String? = null
         var dumpCallCount = 0
@@ -87,10 +88,10 @@ class BatteryRepositoryTest {
             return nextCheckin
         }
 
-        override fun requestPermission() = Unit
+        override suspend fun connect() = Unit
         override fun refresh() = Unit
 
-        fun setAvailability(availability: ShizukuAvailability) {
+        fun setAvailability(availability: PrivilegedAvailability) {
             stateFlow.value = availability
         }
     }
@@ -111,7 +112,7 @@ class BatteryRepositoryTest {
         mProtectionThreshold: $protectionThresholdPct
     """.trimIndent()
 
-    private fun repository(shizuku: PrivilegedBatterySource = FakePrivilegedBatterySource()): BatteryRepository {
+    private fun repository(privileged: PrivilegedBatterySource = FakePrivilegedBatterySource()): BatteryRepository {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val batteryManager = context.getSystemService(BatteryManager::class.java)
         val capabilities = CapabilityProbe(
@@ -125,7 +126,7 @@ class BatteryRepositoryTest {
             // The device's own model is irrelevant here: an explicit override makes the
             // design capacity deterministic regardless of which device runs this test.
             designCapacity = DesignCapacityProvider(settings, model = "unused-in-this-test"),
-            shizuku = shizuku,
+            privileged = privileged,
         )
     }
 
@@ -172,7 +173,7 @@ class BatteryRepositoryTest {
      */
     @Test
     fun manufacturingDateIsUnsupportedEvenWhenShizukuIsBoundAndDumped() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextDump = sampleDumpText()
 
         val snapshot = withTimeout(5_000) { repository(fake).snapshots().first() }
@@ -191,12 +192,12 @@ class BatteryRepositoryTest {
      * is demonstrably `Bound`, yet the rows read as if it never connected. Calling
      * [BatteryRepository.retryPrivilegedDump] and collecting again (same repository
      * instance, same fake, `dumpBattery` now returning a real dump) is what
-     * `HealthViewModel.refreshShizuku` does on every `ON_RESUME` in production; recovering
+     * `HealthViewModel.refreshPrivilegedTier` does on every `ON_RESUME` in production; recovering
      * here without ever toggling the bind state itself is the fix.
      */
     @Test
     fun retryPrivilegedDumpRecoversFromAFailedDumpWhileBound() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextDump = null
         val repo = repository(fake)
 
@@ -223,7 +224,7 @@ class BatteryRepositoryTest {
      */
     @Test
     fun retryPrivilegedDumpRefreshesBatteryProtectFieldsOnDemand() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextDump = sampleDumpText(protectMode = 1, protectionThresholdPct = 80)
         val repo = repository(fake)
 
@@ -376,7 +377,7 @@ class BatteryRepositoryTest {
 
     @Test
     fun appPowerReportsNeedsShizukuWhenNotBound() = runBlocking {
-        val repo = repository(FakePrivilegedBatterySource(initial = ShizukuAvailability.NotInstalled))
+        val repo = repository(FakePrivilegedBatterySource(initial = PrivilegedAvailability.Unavailable))
 
         val reading = withTimeout(5_000) { repo.appPower().first() }
 
@@ -394,7 +395,7 @@ class BatteryRepositoryTest {
      */
     @Test
     fun appPowerParsesARealBoundCheckinIntoClassifiedSortedEntries() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextCheckin = sampleCheckinText()
         val repo = repository(fake)
 
@@ -416,7 +417,7 @@ class BatteryRepositoryTest {
      */
     @Test
     fun retryPrivilegedDumpRecoversFromAFailedCheckinWhileBound() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextCheckin = null
         val repo = repository(fake)
 
@@ -440,7 +441,7 @@ class BatteryRepositoryTest {
      */
     @Test
     fun appPowerIsAvailableWithAnEmptyListWhenTheCheckinHasNoPerUidRows() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = ShizukuAvailability.Bound)
+        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
         fake.nextCheckin = "9,0,i,vers,36,1179864,BP4A.251205.006,BP4A.251205.006\n"
         val repo = repository(fake)
 
