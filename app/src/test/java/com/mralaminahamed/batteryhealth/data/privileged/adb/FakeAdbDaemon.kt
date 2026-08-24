@@ -79,6 +79,10 @@ class FakeAdbDaemon(
         // WRTE) blocks this thread and leaks the socket forever instead of tripping the
         // require() below, which is the whole point of this fixture.
         socket.soTimeout = socketTimeoutMs
+        // Mirrors AdbConnection's own tcpNoDelay: this is a lockstep protocol on both ends,
+        // and without it Nagle/delayed-ACK inflate every WRTE round trip by tens of
+        // milliseconds -- multiplied across a chunked test body, real test time.
+        socket.tcpNoDelay = true
         try {
             serveConnected(socket)
         } finally {
