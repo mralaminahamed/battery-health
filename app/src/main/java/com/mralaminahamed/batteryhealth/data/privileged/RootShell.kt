@@ -72,11 +72,16 @@ class RootShell : PrivilegedShell {
     }
 
     private suspend fun probe(): TransportState =
-        when (val result = withContext(Dispatchers.IO) { runRootCommand("id", PROBE_TIMEOUT_SECONDS) }) {
+        when (
+            val result = withContext(Dispatchers.IO) {
+                runRootCommand(listOf("su", "-c", "id"), PROBE_TIMEOUT_SECONDS)
+            }
+        ) {
             is RootExecResult.Success -> TransportState.Ready
             // Magisk answered and refused; the user can still change their mind later, so
-            // this is Denied, not Unavailable -- see TransportState.Denied's own doc.
-            RootExecResult.NonZeroExit -> TransportState.Denied
+            // this is Denied, not Unavailable -- see TransportState.Denied's own doc. The
+            // probe's own output (just `id`'s text, if any) is irrelevant here.
+            is RootExecResult.NonZeroExit -> TransportState.Denied
             // No answer arrived before PROBE_TIMEOUT_SECONDS elapsed. Read the same way
             // AdbConnection reads its own handshake timeout: the dialog is still up, this
             // is not a refusal, so stay in AwaitingAuthorization rather than dropping to
@@ -107,12 +112,20 @@ class RootShell : PrivilegedShell {
         // never authorized (or was denied) has no business spawning `su` just because a
         // caller asked for a dump -- that would be another unprompted-dialog surprise.
         if (_state.value != TransportState.Ready) return null
-        return when (val result = withContext(Dispatchers.IO) { runRootCommand(command, timeoutSeconds) }) {
+        return when (
+            val result = withContext(Dispatchers.IO) {
+                runRootCommand(listOf("su", "-c", command), timeoutSeconds)
+            }
+        ) {
             is RootExecResult.Success -> result.output
             else -> {
                 // Live degradation: a Ready transport that just failed must reach `state`
                 // with no exception anywhere downstream, so every privileged reading
-                // degrades on the repository's next emission rather than on a crash.
+                // degrades on the repository's next emission rather than on a crash. This
+                // treats a non-zero exit the same as a timeout or a missing `su` -- unlike
+                // PrivilegedBatteryService's own shell runner, which returns whatever text a
+                // failing command already wrote, this transport has a live TransportState to
+                // protect and errs toward distrusting a command that did not exit cleanly.
                 _state.value = TransportState.Unavailable
                 null
             }
@@ -120,17 +133,29 @@ class RootShell : PrivilegedShell {
     }
 }
 
-private sealed interface RootExecResult {
+/**
+ * `internal`, not `private`: [runRootCommand] takes an arbitrary argv rather than hardcoding
+ * `su`, purely so [RootShellTest] can drive it with `sh` -- exactly why
+ * `PrivilegedBatteryService.runShellCommandWithTimeout` takes a `List<String>` instead of a
+ * fixed command. `su`'s own Magisk-dialog behavior stays untestable off a rooted device
+ * either way; only the process-management mechanism below is what gets exercised by proxy.
+ */
+internal sealed interface RootExecResult {
     data class Success(val output: String) : RootExecResult
-    data object NonZeroExit : RootExecResult
+
+    /** Carries whatever the process wrote to its merged stdout/stderr before exiting
+     * non-zero -- [probe] discards it (a failed `su -c id` has nothing worth keeping), but
+     * a test can assert on it directly to prove the reader thread actually captured output
+     * that arrived before a non-zero exit, not just detected the exit code. */
+    data class NonZeroExit(val output: String) : RootExecResult
     data object TimedOut : RootExecResult
     data object Unavailable : RootExecResult
 }
 
 /**
- * Runs `su -c "<command>"` with `ProcessBuilder`, not `Runtime.exec`: `exec` leaves stderr
- * on its own pipe, and `dumpsys batterystats --checkin` writing enough to stderr to fill
- * that pipe while only stdout is drained would block the child forever -- `redirectErrorStream`
+ * Runs [argv] with `ProcessBuilder`, not `Runtime.exec`: `exec` leaves stderr on its own
+ * pipe, and `dumpsys batterystats --checkin` writing enough to stderr to fill that pipe
+ * while only stdout is drained would block the child forever -- `redirectErrorStream`
  * merges the two so one reader drains everything, matching the shell-protocol-v1 semantics
  * this app's own parsers already assume (a single merged stdout/stderr stream).
  *
@@ -146,8 +171,8 @@ private sealed interface RootExecResult {
  * blocking no-arg `waitFor()`, plus `destroyForcibly()` on timeout, is what makes the bound
  * real and guarantees no process survives this call.
  */
-private fun runRootCommand(command: String, timeoutSeconds: Long): RootExecResult = try {
-    val process = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+internal fun runRootCommand(argv: List<String>, timeoutSeconds: Long): RootExecResult = try {
+    val process = ProcessBuilder(argv).redirectErrorStream(true).start()
 
     val output = StringBuilder()
     val reader = Thread({
@@ -175,12 +200,14 @@ private fun runRootCommand(command: String, timeoutSeconds: Long): RootExecResul
     // already sitting in the pipe yet -- join, not an immediate read of `output`, ensures
     // the last chunk is actually in hand before this decides success or failure.
     reader.join(READER_DRAIN_TIMEOUT_MS)
+    val text = synchronized(output) { output.toString() }
     if (process.exitValue() != 0) {
-        RootExecResult.NonZeroExit
+        RootExecResult.NonZeroExit(text)
     } else {
-        RootExecResult.Success(synchronized(output) { output.toString() })
+        RootExecResult.Success(text)
     }
 } catch (e: IOException) {
-    // No su binary to exec at all -- this device is not rooted.
+    // The executable does not exist, or could not be started -- e.g. no `su` binary at
+    // all, meaning this device is not rooted.
     RootExecResult.Unavailable
 }

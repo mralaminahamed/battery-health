@@ -30,12 +30,23 @@ class FakeAdbDaemon(
     private val socketTimeoutMs: Int = 5_000,
     private val withholdCnxnAfterPublicKey: Boolean = false,
     private val dropConnectionAfterCnxn: Boolean = false,
+    /** Simulates a genuinely wedged shell, as opposed to a torn-down connection: OKAY is
+     * sent for the OPEN as normal, then nothing further ever arrives -- no WRTE, no CLSE,
+     * and the socket stays open. The only thing that can end a client read waiting on this
+     * is that client's own socket timeout, which is the point ([AdbShellTest]'s
+     * `runDumpGivesUpAtItsOwnBoundNotTheLongerHandshakeDefault` regression test). */
+    private val withholdShellCompletion: Boolean = false,
 ) {
     private val server = ServerSocket(0)
     private val pool = Executors.newCachedThreadPool()
 
     /** Every socket accept() has handed back, so stop() can force every one of them closed. */
     private val connections: MutableList<Socket> = Collections.synchronizedList(mutableListOf())
+
+    /** A snapshot of [connections] in acceptance order -- lets a test confirm a specific
+     * connection (e.g. "the first one issued") was actually closed by the client, rather
+     * than merely superseded by a second one the client opened without closing the first. */
+    val acceptedSockets: List<Socket> get() = synchronized(connections) { connections.toList() }
 
     /** Set once the client answered a TOKEN with a signature this daemon accepted. */
     @Volatile var authorized: Boolean = false; private set
@@ -144,6 +155,15 @@ class FakeAdbDaemon(
                     val remoteId = 1
                     val localId = header.arg0
                     send(A_OKAY, remoteId, localId)
+                    if (withholdShellCompletion) {
+                        // Deliberately never returns from serveConnected on this path: the
+                        // socket stays open and silent rather than closing (which would
+                        // hand the client a clean EOF/Failed instead of a genuine stall).
+                        // Interrupted by pool.shutdownNow() in stop(), so this does not
+                        // outlive the test that started it.
+                        Thread.sleep(60_000)
+                        return
+                    }
                     val body = shellResponses[destination] ?: ByteArray(0)
                     // Chunked on purpose: a client that does not ack each WRTE stalls here
                     // rather than silently passing on a single-chunk payload.
