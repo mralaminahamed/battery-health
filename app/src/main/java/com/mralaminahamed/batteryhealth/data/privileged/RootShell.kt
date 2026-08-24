@@ -17,17 +17,17 @@ import kotlinx.coroutines.withContext
  */
 private const val PROBE_TIMEOUT_SECONDS = 10L
 
-// Named distinctly from PrivilegedBatteryService's own DUMP_TIMEOUT_SECONDS/
-// CHECKIN_TIMEOUT_SECONDS (same package, `internal` visibility) even though the values
-// match -- those bound a Binder-hosted UserService's shell call, these bound a `su`
-// subprocess this class starts directly; same rationale, different call site.
+// Named distinctly from AdbShell's own DUMP_TIMEOUT_MS/CHECKIN_TIMEOUT_MS (same values,
+// different unit and a different package) even though the numbers match -- those bound a
+// socket read, these bound a `su` subprocess this class starts directly; same rationale,
+// different call site.
 
-/** Same value and rationale as [PrivilegedBatteryService]'s `DUMP_TIMEOUT_SECONDS`: a small,
- * fast dump gets a short, generous-but-bounded budget. */
+/** A small, fast dump gets a short, generous-but-bounded budget -- same value and rationale
+ * as `AdbShell`'s own `DUMP_TIMEOUT_MS`. */
 private const val ROOT_DUMP_TIMEOUT_SECONDS = 3L
 
-/** Same value and rationale as [PrivilegedBatteryService]'s `CHECKIN_TIMEOUT_SECONDS`: this
- * payload runs roughly 50x larger than the plain dump's, so it gets proportionally more room. */
+/** This payload runs roughly 50x larger than the plain dump's, so it gets proportionally
+ * more room -- same value and rationale as `AdbShell`'s own `CHECKIN_TIMEOUT_MS`. */
 private const val ROOT_CHECKIN_TIMEOUT_SECONDS = 8L
 
 /** How long a reader thread gets to finish draining output that was already fully written
@@ -45,17 +45,18 @@ private const val READER_DRAIN_TIMEOUT_MS = 2_000L
  * **never call it from init.** Doing so would pop that dialog the instant this class is
  * constructed, before the user has asked this app for anything privileged -- exactly the
  * kind of unprompted, hostile-feeling permission grab this app's own design explicitly
- * avoids elsewhere (Shizuku's permission is only ever requested on demand, never eagerly).
- * A later gateway task owns deciding when [connect] should run.
+ * avoids elsewhere -- [AdbShell.connect] is likewise never called from its own init, only
+ * from a caller that has decided this is the moment to establish the transport.
+ * The gateway that fronts both transports owns deciding when [connect] should run.
  */
 class RootShell : PrivilegedShell {
 
     private val _state = MutableStateFlow<TransportState>(TransportState.Unavailable)
     override val state: StateFlow<TransportState> = _state.asStateFlow()
 
-    // Mirrors ShizukuGateway's bindInFlight and AdbShell's connectInFlight: one `su -c id`
-    // probe in flight at a time, so two overlapping calls to connect() cannot each spawn
-    // their own subprocess and race Magisk's dialog against itself.
+    // Mirrors AdbShell's own connectInFlight: one `su -c id` probe in flight at a time, so
+    // two overlapping calls to connect() cannot each spawn their own subprocess and race
+    // Magisk's dialog against itself.
     private val connectInFlight = AtomicBoolean(false)
 
     override suspend fun connect() {
@@ -92,9 +93,10 @@ class RootShell : PrivilegedShell {
         }
 
     /**
-     * Deliberately a no-op. [PrivilegedBatterySource]-style `refresh()` calls re-check
-     * cheap, non-invasive facts (Shizuku's package-installed flag, its binder) with no
-     * user-facing side effect. There is no equivalently cheap way to re-check root: the
+     * Deliberately a no-op. [PrivilegedBatterySource]-style `refresh()` calls elsewhere in
+     * this package re-check facts with no user-facing side effect -- `AdbShell.refresh()`
+     * safely re-dials its socket without raising any prompt, because a rejected TCP
+     * connection is silent. There is no equivalently cheap way to re-check root: the
      * only way to know is to run `su`, and running `su` is exactly the unprompted-dialog
      * problem [connect]'s own doc says this class must never trigger on its own. Wiring
      * this to call [connect] would reintroduce that problem on every single `ON_RESUME`.
@@ -122,10 +124,10 @@ class RootShell : PrivilegedShell {
                 // Live degradation: a Ready transport that just failed must reach `state`
                 // with no exception anywhere downstream, so every privileged reading
                 // degrades on the repository's next emission rather than on a crash. This
-                // treats a non-zero exit the same as a timeout or a missing `su` -- unlike
-                // PrivilegedBatteryService's own shell runner, which returns whatever text a
-                // failing command already wrote, this transport has a live TransportState to
-                // protect and errs toward distrusting a command that did not exit cleanly.
+                // treats a non-zero exit the same as a timeout or a missing `su`: this
+                // transport has a live TransportState to protect, unlike a stateless shell
+                // runner that could safely hand back whatever text a failing command wrote,
+                // so it errs toward distrusting a command that did not exit cleanly.
                 _state.value = TransportState.Unavailable
                 null
             }
@@ -135,10 +137,11 @@ class RootShell : PrivilegedShell {
 
 /**
  * `internal`, not `private`: [runRootCommand] takes an arbitrary argv rather than hardcoding
- * `su`, purely so [RootShellTest] can drive it with `sh` -- exactly why
- * `PrivilegedBatteryService.runShellCommandWithTimeout` takes a `List<String>` instead of a
- * fixed command. `su`'s own Magisk-dialog behavior stays untestable off a rooted device
- * either way; only the process-management mechanism below is what gets exercised by proxy.
+ * `su`, purely so [RootShellTest] can drive it with `sh` -- the same argv-injection seam
+ * this codebase uses anywhere a subprocess needs a JVM-testable substitute for a
+ * hardcoded, device-only executable. `su`'s own Magisk-dialog behavior stays untestable off
+ * a rooted device either way; only the process-management mechanism below is what gets
+ * exercised by proxy.
  */
 internal sealed interface RootExecResult {
     data class Success(val output: String) : RootExecResult
@@ -159,14 +162,14 @@ internal sealed interface RootExecResult {
  * merges the two so one reader drains everything, matching the shell-protocol-v1 semantics
  * this app's own parsers already assume (a single merged stdout/stderr stream).
  *
- * The reader runs on its own thread, concurrently with [Process.waitFor], for the same
- * reason [PrivilegedBatteryService]'s own shell runner does this rather than reading after
- * `waitFor` returns: `dumpsys batterystats --checkin`'s output (up to 525KB on the fixture
- * that bug was diagnosed against) can exceed the OS pipe buffer between the child and this
- * process (64KB on Linux by default) before the child exits. Waiting for exit before
- * reading anything then deadlocks -- the child blocked on a full pipe it cannot write past,
- * this thread blocked on an exit that will never come while nobody drains that pipe. Two
- * threads, one per blocking call, is what lets both proceed independently; do not collapse
+ * The reader runs on its own thread, concurrently with [Process.waitFor], rather than
+ * reading only after `waitFor` returns: `dumpsys batterystats --checkin`'s output (up to
+ * 525KB on the fixture this app was verified against) can exceed the OS pipe buffer
+ * between the child and this process (64KB on Linux by default) before the child exits.
+ * Waiting for exit before reading anything then deadlocks -- the child blocked on a full
+ * pipe it cannot write past, this thread blocked on an exit that will never come while
+ * nobody drains that pipe. Two threads, one per blocking call, is what lets both proceed
+ * independently; do not collapse
  * this back into a single "waitFor, then read" thread. `waitFor(timeout, unit)`, not the
  * blocking no-arg `waitFor()`, plus `destroyForcibly()` on timeout, is what makes the bound
  * real and guarantees no process survives this call.

@@ -76,7 +76,7 @@ sealed interface PrivilegedAvailability {
  *
  * Kept pure and separate from `AdbGateway` -- which is the impure part, holding sockets
  * and processes -- so this precedence is JVM-testable without a device, an emulator or
- * Robolectric, exactly as `shizukuAvailability` was before it.
+ * Robolectric.
  *
  * Precedence is by what the user can act on, most actionable first: a working transport
  * beats a pending one; a prompt currently on screen beats a refusal already given; a
