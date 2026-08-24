@@ -53,22 +53,22 @@ class AdbGateway(
     // No natural owner to cancel this for: like the gateway this replaced, this is a
     // @Singleton meant to live exactly as long as the process does.
     //
-    // Dispatchers.Unconfined, not Dispatchers.Default: the only coroutine ever launched on
-    // this scope is state's own combine-and-collect below, and that transform
-    // (privilegedAvailability) is pure and cheap -- no I/O, no meaningful CPU work. Default
-    // would still be correct, but it dispatches every recomputation through a thread-pool
-    // queue, which makes a transport's own state update (root._state.value = X inside
-    // RootShell/AdbShell) and this gateway's state reflecting it two separate, unordered
-    // events from any caller's point of view -- confirmed the hard way: AdbGatewayTest's
-    // live-degradation case failed deterministically (5/5 runs) under Default, because
-    // nothing forces the test thread to wait for a background dispatch that has no reason
-    // to run before the very next assertion does. Unconfined resumes this collector
-    // synchronously on whichever thread just changed root.state/adb.state, so `state`
-    // reflects a transport dying in the same call that made it happen -- which is also a
-    // real production improvement, not just a testability fix: the UI sees a dropped
-    // transport with zero scheduler latency instead of an unspecified, possibly
-    // observable delay.
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+    // Dispatchers.Default, not Dispatchers.Unconfined: an earlier version of this class
+    // used Unconfined, reasoning that state's combine-and-collect transform is pure and
+    // cheap enough to run inline on whichever thread emits. That was the wrong fix for the
+    // problem it was solving. Unconfined resumes a coroutine on whatever thread triggered
+    // it -- here, whatever thread last wrote root._state.value or adb._state.value, which
+    // for AdbShell/RootShell can be a socket-read or process-exec thread. Running this
+    // gateway's own reducer on borrowed I/O threads, with the execution context varying
+    // by caller, is exactly the kind of implicit coupling that looks harmless in review
+    // and produces confusing behaviour later; Default keeps this collector's execution
+    // context fixed and predictable regardless of which transport changed. State
+    // propagating to a live-collecting caller is not instant under Default -- it is
+    // dispatched, not synchronous -- so a caller that needs to observe a specific
+    // transition (as AdbGatewayTest.degradesLiveWhenAReadyTransportDrops does) must await
+    // it via `state.first { ... }` rather than assert immediately after mutating a source
+    // flow; see that test for the pattern.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override val state: StateFlow<PrivilegedAvailability> = combine(
         root.state,

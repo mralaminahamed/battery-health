@@ -8,7 +8,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import com.mralaminahamed.batteryhealth.data.apps.AppLabel
 import com.mralaminahamed.batteryhealth.data.apps.AppRow
-import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
+import com.mralaminahamed.batteryhealth.data.privileged.Transport
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.domain.Source
 import com.mralaminahamed.batteryhealth.ui.components.UnlockCardTags
@@ -23,7 +24,7 @@ class AppsScreenTest {
     @Test
     fun needsShizukuShowsUnlockCardAndTheSharedReasonText() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.NotInstalled,
+            privilegedAvailability = PrivilegedAvailability.Unavailable,
             rows = Reading.NeedsShizuku,
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
@@ -40,7 +41,7 @@ class AppsScreenTest {
     @Test
     fun boundStateRendersEachRowKindWithItsOwnDistinctText() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.Bound,
+            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
             rows = Reading.Available(
                 listOf(
                     AppRow.Shell(uid = 2000, mAh = 422.0, sharePct = 94.7),
@@ -70,7 +71,7 @@ class AppsScreenTest {
     @Test
     fun anEmptyButAvailableListShowsAnHonestEmptyStateNotAnAbsenceReason() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.Bound,
+            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
             rows = Reading.Available(emptyList(), Source.Privileged),
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
@@ -86,7 +87,7 @@ class AppsScreenTest {
     @Test
     fun packageNameOnlyShowsTheRawIdentifierAndAnExplicitCaption() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.Bound,
+            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
             rows = Reading.Available(
                 listOf(
                     AppRow.App(
@@ -108,7 +109,7 @@ class AppsScreenTest {
     @Test
     fun unknownLabelShowsTheUidAndNoInventedName() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.Bound,
+            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
             rows = Reading.Available(
                 listOf(AppRow.App(uid = 10999, mAh = 0.8, sharePct = 0.2, label = AppLabel.Unknown)),
                 Source.Privileged,
@@ -125,7 +126,7 @@ class AppsScreenTest {
     @Test
     fun appPowerFailedShowsTheSharedRetryCard() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.Bound,
+            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
             rows = Reading.NeedsShizuku,
             appPowerFailed = true,
         )
@@ -145,7 +146,7 @@ class AppsScreenTest {
     @Test
     fun loadingWithNothingToShowYetRendersTheSkeletonNotNeedsShizuku() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.Bound,
+            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
             rows = Reading.NeedsShizuku,
             isLoading = true,
         )
@@ -158,7 +159,7 @@ class AppsScreenTest {
     @Test
     fun loadingWithARealListAlreadyInHandKeepsShowingItInsteadOfASkeleton() {
         val state = AppsUiState(
-            shizukuAvailability = ShizukuAvailability.Bound,
+            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
             rows = Reading.Available(
                 listOf(AppRow.Shell(uid = 2000, mAh = 422.0, sharePct = 94.7)),
                 Source.Privileged,
