@@ -32,29 +32,64 @@ class AdbKeyEncodingTest {
     }
 
     @Test
-    fun n0invIsTheNegatedModularInverseOfTheLowestWord() {
+    fun n0invSatisfiesTheDefiningProperty() {
+        // n0inv is the precomputed value (-1/n) mod 2^32 such that (n * n0inv + 1) mod 2^32 == 0.
+        // Rather than recompute the modInverse call, assert the property it must satisfy.
         val struct = decode(encodeAndroidPublicKey(modulus, exponent, "u@h"))
+        val n0inv = readWord(struct, 1).toBigInteger()
         val base = BigInteger.ONE.shiftLeft(32)
-        assertEquals(modulus.modInverse(base).negate().mod(base).toLong(), readWord(struct, 1))
+        val product = modulus.multiply(n0inv).add(BigInteger.ONE).mod(base)
+        assertEquals("n0inv property violated", BigInteger.ZERO, product)
     }
 
     @Test
-    fun modulusIsWrittenLeastSignificantWordFirst() {
+    fun modulusIsWrittenLeastSignificantWordFirstAndRoundTrips() {
         val struct = decode(encodeAndroidPublicKey(modulus, exponent, "u@h"))
+        // Verify the first word is the least-significant word of the modulus.
         assertEquals(modulus.and(WORD_MASK).toLong(), readWord(struct, 2))
+        // Reconstruct the full modulus from all 64 words and assert round-trip.
+        val reconstructed = reconstructBigInteger(struct, 2, 64)
+        assertEquals(modulus, reconstructed)
     }
 
     @Test
-    fun rrIsRSquaredModN() {
+    fun rrIsRSquaredModNWithIndependentDerivation() {
+        // Rather than recompute shiftLeft(4096).mod(n), verify the defining property:
+        // rr should equal (R mod n)^2 mod n, where R = 2^2048.
         val struct = decode(encodeAndroidPublicKey(modulus, exponent, "u@h"))
-        val rr = BigInteger.ONE.shiftLeft(4096).mod(modulus)
-        assertEquals(rr.and(WORD_MASK).toLong(), readWord(struct, 2 + 64))
+        val rr = reconstructBigInteger(struct, 2 + 64, 64)
+        val r = BigInteger.ONE.shiftLeft(2048).mod(modulus)
+        val rSquaredModN = r.multiply(r).mod(modulus)
+        assertEquals(rSquaredModN, rr)
     }
 
     @Test
     fun exponentIsTheFinalWord() {
         val struct = decode(encodeAndroidPublicKey(modulus, exponent, "u@h"))
         assertEquals(65537L, readWord(struct, 2 + 64 + 64))
+    }
+
+    @Test
+    fun goldenVectorMatchesAdbOwnEncoding() {
+        // adb keygen ground truth: adb's own implementation of android_pubkey encoding.
+        // Produced via: adb keygen /tmp/bh-golden-key
+        // Modulus extracted via: openssl rsa -in /tmp/bh-golden-key -noout -modulus
+        val goldenModulus = BigInteger(
+            "D381962AC809300A3361D185A08B7D2E76153DAEA6D61CB10561E8B8F07003A21" +
+            "F51CD415FA8A4C4BF223A28879E01ED6A849D30F6BC23808A52F1B4A59173AAC5F" +
+            "92689731953AF8C9426D237944C943B7421A3AF3AA3B54FCBF155162B04ECBC0D8" +
+            "B85799CDC914905AEEAD0D168B30449D642317A17ACB04E1C392926E9921EEB44E2" +
+            "D10F1DCDE2AFA76B9DAC7727B1AB622F083A37E165523144D787257A41402AE1EB" +
+            "3C84A0E7C961DE8AE33DBAD5CBC19098920131F6E149C2B8343EAB9E955AECC2D1C" +
+            "A32D825217CE14E75AF582F21F612B051858F437008E1EAC59BA13D69AF0B23AAC5" +
+            "AC34B59B609E8BBE3A6F64CF5E7F40AAFEB32777F162133D",
+            16
+        )
+        val goldenBase64 = "QAAAAOsjI/U9E2Lxdyez/qpAf17PZG86voueYJu1NKzFqiMLr2k9oZvF6uEIcEOPhVGwEvYhL1ivdU7hfCEl2DLK0cLsWpWeqz40uMJJ4fYxAZKYkMHL1bo944reYcnnoIQ86+EqQEF6JYfXRDFSZeE3OggvYquxJ3esnWunr+LNHQ/R4kTrHpLpJik5HE6wrBd6MULWSQSzaNHQ6q4FSZHcnHmFiw287AQrFlXxy0+1ozqvoyF0O5RMlDfSJpSMr1MZc4km+cWqc5GltPFSioAjvPYwnYRq7QGehyg6Ir/EpKhfQc1RH6IDcPC46GEFsRzWpq49FXYufYughdFhMwowCcgqloHT1wFQi5g0Di5isRPuy5K4Z50BItqRbgNVKTl4/rl3VRErqtwvznAtASUtpn2X/4ewCA97kISeVi/AGhr4MA8oZ7FH156AJxL+lVfpR6YCeKWFOSQs83f8huI1sjoHkbYlG7COMYAh0evA+toSzsfQEU0av+CoMXnlq3A5fZ49+1H66RgIZTXXpii6C8oiG6VyxIoovBWSvrzwclcC4Z45PIbpJ151k9OIG9xjbg7gElndMkyk0dJYMRS4zGSa2i9FwKmFHYe2YSREhDeXxdRKd6QImk/ahoYxifShNBCPCy3otL0bA1oYF1+EAmJzR+4CBOLPl6o4Vu9k8iI+JH/TfQEAAQA="
+
+        val encoded = encodeAndroidPublicKey(goldenModulus, exponent, "test@android")
+        val encodedBase64 = encoded.substringBefore(' ')
+        assertEquals("golden vector struct mismatch", goldenBase64, encodedBase64)
     }
 
     @Test
@@ -74,6 +109,16 @@ class AdbKeyEncodingTest {
             value = value or ((struct[index * 4 + offset].toLong() and 0xFF) shl (8 * offset))
         }
         return value
+    }
+
+    private fun reconstructBigInteger(struct: ByteArray, startWordIndex: Int, wordCount: Int): BigInteger {
+        // Reconstruct a BigInteger from little-endian words: LSW first.
+        var result = BigInteger.ZERO
+        for (i in 0 until wordCount) {
+            val word = readWord(struct, startWordIndex + i).toBigInteger()
+            result = result.add(word.shiftLeft(32 * i))
+        }
+        return result
     }
 
     private companion object {
