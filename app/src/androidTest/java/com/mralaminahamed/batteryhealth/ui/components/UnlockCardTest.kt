@@ -7,17 +7,18 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import com.mralaminahamed.batteryhealth.data.privileged.ShizukuAvailability
+import com.mralaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
+import com.mralaminahamed.batteryhealth.data.privileged.Transport
 import com.mralaminahamed.batteryhealth.ui.theme.BatteryHealthTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
 /**
- * Important 1's UI half: a failed dump while genuinely [ShizukuAvailability.Bound] must
- * be visible and retryable, not silently indistinguishable from Shizuku never having
+ * Important 1's UI half: a failed dump while genuinely [PrivilegedAvailability.Ready] must
+ * be visible and retryable, not silently indistinguishable from the tier never having
  * connected. See [UnlockCard]'s own doc for why `dumpFailed` is the one case that
- * overrides "render nothing once Bound".
+ * overrides "render nothing once Ready".
  */
 class UnlockCardTest {
 
@@ -28,7 +29,7 @@ class UnlockCardTest {
         compose.setContent {
             BatteryHealthTheme {
                 UnlockCard(
-                    availability = ShizukuAvailability.Bound,
+                    availability = PrivilegedAvailability.Ready(Transport.Adb),
                     dumpFailed = false,
                     onRequestPermission = {},
                     onOpenShizuku = {},
@@ -46,7 +47,7 @@ class UnlockCardTest {
         compose.setContent {
             BatteryHealthTheme {
                 UnlockCard(
-                    availability = ShizukuAvailability.Bound,
+                    availability = PrivilegedAvailability.Ready(Transport.Adb),
                     dumpFailed = true,
                     onRequestPermission = {},
                     onOpenShizuku = {},
@@ -71,7 +72,7 @@ class UnlockCardTest {
         compose.setContent {
             BatteryHealthTheme {
                 UnlockCard(
-                    availability = ShizukuAvailability.Bound,
+                    availability = PrivilegedAvailability.Ready(Transport.Adb),
                     dumpFailed = true,
                     onRequestPermission = {},
                     onOpenShizuku = {},
@@ -93,7 +94,7 @@ class UnlockCardTest {
         compose.setContent {
             BatteryHealthTheme {
                 UnlockCard(
-                    availability = ShizukuAvailability.Connecting,
+                    availability = PrivilegedAvailability.Connecting,
                     dumpFailed = true,
                     onRequestPermission = {},
                     onOpenShizuku = {},
@@ -103,7 +104,7 @@ class UnlockCardTest {
             }
         }
 
-        compose.onNodeWithText("Connecting to Shizuku…").assertIsDisplayed()
+        compose.onNodeWithText("Connecting…").assertIsDisplayed()
         compose.onAllNodesWithTag(UnlockCardTags.ACTION).assertCountEquals(0)
     }
 }
