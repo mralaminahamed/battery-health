@@ -35,6 +35,12 @@ class AdbConnection(
         val socket = try {
             newSocket.connect(InetSocketAddress(host, port), soTimeoutMs)
             newSocket.soTimeout = soTimeoutMs
+            // OPEN/OKAY/WRTE/CLSE is strictly lockstep -- every write already waits on the
+            // previous round trip, so there is nothing for Nagle's coalescing to buy us.
+            // Left at its default, Nagle plus the peer's delayed-ACK timer taxes every single
+            // small header-sized message by tens of milliseconds; across a long chunked dump
+            // that is seconds of pure protocol overhead for zero benefit.
+            newSocket.tcpNoDelay = true
             newSocket
         } catch (e: ConnectException) {
             runCatching { newSocket.close() }

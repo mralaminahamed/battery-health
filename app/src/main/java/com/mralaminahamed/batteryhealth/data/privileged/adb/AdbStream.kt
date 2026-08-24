@@ -52,7 +52,7 @@ suspend fun AdbConnection.shell(command: String, maxBytes: Int = MAX_DUMP_BYTES)
                     A_CLSE -> break
                 }
             }
-            buffer.toString().takeIf { it.isNotBlank() }
+            buffer.toString(Charsets.UTF_8.name()).takeIf { it.isNotBlank() }
         } catch (e: IOException) {
             null
         }

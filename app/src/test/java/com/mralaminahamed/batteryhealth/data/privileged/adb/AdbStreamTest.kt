@@ -57,6 +57,12 @@ class AdbStreamTest {
 
         try {
             assertNull(connection.shell("dumpsys battery", maxBytes = 1024))
+            // At 8 bytes/chunk, chunk 129 is the first to push the running total (1032)
+            // past the 1024 cap -- so exactly 129 acks must have gone out before the abort.
+            // This is the regression test for the ack-before-size-check ordering: swap that
+            // order and the abort fires without acking chunk 129, so this drops to 128.
+            assertEquals(129, daemon!!.acks.size)
+            assertTrue(daemon!!.acks.all { it == A_OKAY })
         } finally {
             connection.close()
         }
@@ -67,6 +73,25 @@ class AdbStreamTest {
         val connection = connected(mapOf("shell:dumpsys battery" to ByteArray(0)))
 
         try {
+            assertNull(connection.shell("dumpsys battery"))
+        } finally {
+            connection.close()
+        }
+    }
+
+    @Test
+    fun returnsNullWhenTheConnectionDiesDuringTheExchange() = runTest {
+        val body = "x".repeat(200)
+        val connection = connected(mapOf("shell:dumpsys battery" to body.toByteArray()), chunk = 8)
+
+        try {
+            // stop() over a race that kills the daemon mid-WRTE: it closes every accepted
+            // socket unconditionally and immediately, so shell()'s very first send() or
+            // read() is guaranteed to hit a torn-down connection -- no timing window where
+            // the exchange might sneak in and complete before the failure lands, which a
+            // "let it get partway through 25 chunks, then kill it" approach would have.
+            daemon!!.stop()
+
             assertNull(connection.shell("dumpsys battery"))
         } finally {
             connection.close()
