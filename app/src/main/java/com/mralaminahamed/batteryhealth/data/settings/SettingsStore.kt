@@ -75,7 +75,15 @@ class SettingsStore @Inject constructor(private val context: Context) {
     }
 
     suspend fun setAdbPort(port: Int) {
-        context.dataStore.edit { it[ADB_PORT] = port }
+        // Reject out-of-range ports silently. InetSocketAddress throws IllegalArgumentException
+        // on construction if port is <0 or >65535, an unchecked exception that would escape the
+        // privileged boundary and crash the caller. Silently ignoring an invalid write is better
+        // than throwing (keeping this setter total like all others here) and better than clamping
+        // (which would have the app quietly dial a port the user never chose). The caller can
+        // check the flow's value afterward if they need confirmation of acceptance.
+        if (port in 1..65535) {
+            context.dataStore.edit { it[ADB_PORT] = port }
+        }
     }
 
     suspend fun setRootPreviouslyGranted(granted: Boolean) {
