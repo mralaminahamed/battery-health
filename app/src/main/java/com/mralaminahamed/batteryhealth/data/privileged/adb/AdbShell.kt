@@ -13,27 +13,29 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Bounds the ADB auth handshake itself, not [runDump]/[runCheckin] -- [AdbConnection]'s own
- * `soTimeoutMs` is a single per-read bound shared by every read on the connection, so it has
- * to be sized for the handshake (host round trip plus, on the very first pairing, a
- * human tapping "Allow") rather than either dump's own budget. The two dump-specific
- * budgets below are enforced separately, per call, with [withTimeoutOrNull].
+ * This connection's *default* per-read socket timeout -- set once by [AdbConnection.connect]
+ * and otherwise in force for every read on it, including [runDump]/[runCheckin]'s, unless
+ * one of them narrows it first with [AdbConnection.withSoTimeout]. It has to be sized for
+ * the handshake: a real round trip to the device, plus, on first pairing, a human noticing
+ * and tapping "Allow USB debugging". Matches [RootShell]'s `PROBE_TIMEOUT_SECONDS` (10s) on
+ * purpose -- both constants bound the same kind of wait, a person answering an on-device
+ * authorization dialog, and there is no reason for ADB's to be shorter than root's.
  */
-private const val HANDSHAKE_TIMEOUT_MS = 5_000
+private const val HANDSHAKE_TIMEOUT_MS = 10_000
 
 /** Same value and the same rationale as [PrivilegedBatteryService]'s `DUMP_TIMEOUT_SECONDS`:
  * `dumpsys battery`'s own output is small and fast, so a generous-but-bounded budget here
- * catches a wedged shell without making a normal call wait noticeably longer than it needs. */
-private const val DUMP_TIMEOUT_MS = 3_000L
+ * catches a wedged shell without making a normal call wait noticeably longer than it needs.
+ * Enforced by narrowing the socket's own read timeout for the duration of the call --see
+ * [AdbConnection.withSoTimeout]'s doc for why a coroutine-level timeout cannot do this. */
+private const val DUMP_TIMEOUT_MS = 3_000
 
 /** Same value and the same rationale as [PrivilegedBatteryService]'s
  * `CHECKIN_TIMEOUT_SECONDS`: `dumpsys batterystats --checkin` runs roughly 50x larger than
  * the plain battery dump, so it gets proportionally more room before this gives up on it. */
-private const val CHECKIN_TIMEOUT_MS = 8_000L
+private const val CHECKIN_TIMEOUT_MS = 8_000
 
 /**
  * The ADB transport: one [AdbConnection] dialed against the loopback address and an
@@ -63,6 +65,14 @@ class AdbShell(
 
     @Volatile private var connection: AdbConnection? = null
 
+    // Latched, not reset: once close() has been asked for, no connect() started before or
+    // after that request is allowed to leave a live connection behind. See close()'s own
+    // doc and the recheck at the end of connect() below for how this actually closes the
+    // race that a bare `connectInFlight` guard cannot -- connect() being "not concurrently
+    // running twice" says nothing about a close() landing while the one call that IS running
+    // is still mid-handshake.
+    @Volatile private var closed = false
+
     // Mirrors ShizukuGateway's bindInFlight: without this, every ON_RESUME's refresh()
     // could overlap a connect() already in progress and each issue its own socket, only
     // one of which ever gets stored in `connection` -- the other silently orphaned.
@@ -71,6 +81,7 @@ class AdbShell(
     override suspend fun connect() {
         if (!connectInFlight.compareAndSet(false, true)) return
         try {
+            if (closed) return
             // Close the previous socket before opening the next one. refresh() reconnects
             // after every transport failure and the Health screen calls refresh() on every
             // ON_RESUME -- skip this line and every single resume leaks a socket for the
@@ -78,7 +89,16 @@ class AdbShell(
             connection?.close()
             val next = AdbConnection(port = port, signer = signer, soTimeoutMs = HANDSHAKE_TIMEOUT_MS)
             connection = next
-            _state.value = next.connect().toTransportState()
+            val result = next.connect()
+            if (closed) {
+                // close() landed while the handshake above was in flight. `next` may have
+                // just succeeded -- the socket is real and open -- but nothing else will
+                // ever close it once this method returns, so this is the one chance to.
+                next.close()
+                connection = null
+                return
+            }
+            _state.value = result.toTransportState()
         } finally {
             connectInFlight.set(false)
         }
@@ -92,21 +112,16 @@ class AdbShell(
 
     override suspend fun runCheckin(): String? = run(CMD_DUMP_CHECKIN, CHECKIN_TIMEOUT_MS)
 
-    private suspend fun run(command: String, timeoutMs: Long): String? {
+    private suspend fun run(command: String, timeoutMs: Int): String? {
         // Gated on Ready rather than merely "connection != null": a connection whose own
         // connect() ended in AwaitingAuthorization/Unavailable/Failed still exists as an
         // object (its socket may never have opened) and calling shell() on it would either
         // throw or hang rather than fail cleanly the way this method's null contract promises.
         val current = connection?.takeIf { _state.value == TransportState.Ready } ?: return null
-        // withTimeoutOrNull's cancellation clock comes from whatever dispatcher is current
-        // *at the point it is called* -- called from the test dispatcher directly, its
-        // delay would run on kotlinx-coroutines-test's virtual clock, which free-runs the
-        // instant nothing else is scheduled on it, firing this "timeout" instantly even
-        // though the real socket exchange (on Dispatchers.IO, a real dispatcher outside the
-        // test scheduler's view) hasn't finished. Entering Dispatchers.IO first anchors the
-        // timeout to that dispatcher's real-time clock instead, matching the real budget
-        // this method promises in production.
-        val result = withContext(Dispatchers.IO) { withTimeoutOrNull(timeoutMs) { current.shell(command) } }
+        // The real bound is the socket's own read timeout, narrowed for just this call --
+        // see AdbConnection.withSoTimeout's doc for why a coroutine-level timeout cannot
+        // preempt the blocking reads inside shell().
+        val result = current.withSoTimeout(timeoutMs) { current.shell(command) }
         if (result == null) {
             // Live degradation: a transport that was Ready and just failed must reach
             // `state` with no exception anywhere downstream, so every privileged reading
@@ -122,8 +137,15 @@ class AdbShell(
      * ever needs to close it, and putting this on the interface would invite closing a
      * transport that should outlive its callers. Tests need it anyway, to avoid leaking the
      * client-side socket when the fake daemon they talk to is torn down.
+     *
+     * Latches [closed] before touching [connection]: a `refresh()` launched moments earlier
+     * may still be mid-handshake on [scope] when this runs, and closing only whatever
+     * [connection] happens to hold *right now* would miss a connection that finishes and
+     * gets assigned a moment later. The recheck at the end of [connect] is what actually
+     * catches that case; this method's own close is what handles every other one.
      */
     fun close() {
+        closed = true
         scope.cancel()
         connection?.close()
     }
