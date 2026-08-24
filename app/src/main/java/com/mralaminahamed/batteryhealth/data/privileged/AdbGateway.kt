@@ -3,6 +3,7 @@ package com.mralaminahamed.batteryhealth.data.privileged
 import com.mralaminahamed.batteryhealth.data.privileged.adb.AdbKeyPair
 import com.mralaminahamed.batteryhealth.data.privileged.adb.AdbShell
 import com.mralaminahamed.batteryhealth.data.settings.SettingsStore
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,6 +39,9 @@ class AdbGateway(
     // without one (as every test above does) must never probe root on its own, matching
     // connect()'s own never-probe-unprompted contract.
     private val shouldConnectRoot: suspend () -> Boolean = { false },
+    // See scope's own doc below for why this defaults to Dispatchers.Default and why it
+    // is a constructor parameter at all rather than that default hardcoded inline.
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : PrivilegedBatterySource {
 
     @Inject constructor(
@@ -53,22 +57,22 @@ class AdbGateway(
     // No natural owner to cancel this for: like the gateway this replaced, this is a
     // @Singleton meant to live exactly as long as the process does.
     //
-    // Dispatchers.Default, not Dispatchers.Unconfined: an earlier version of this class
-    // used Unconfined, reasoning that state's combine-and-collect transform is pure and
-    // cheap enough to run inline on whichever thread emits. That was the wrong fix for the
-    // problem it was solving. Unconfined resumes a coroutine on whatever thread triggered
-    // it -- here, whatever thread last wrote root._state.value or adb._state.value, which
-    // for AdbShell/RootShell can be a socket-read or process-exec thread. Running this
-    // gateway's own reducer on borrowed I/O threads, with the execution context varying
-    // by caller, is exactly the kind of implicit coupling that looks harmless in review
-    // and produces confusing behaviour later; Default keeps this collector's execution
-    // context fixed and predictable regardless of which transport changed. State
-    // propagating to a live-collecting caller is not instant under Default -- it is
-    // dispatched, not synchronous -- so a caller that needs to observe a specific
-    // transition (as AdbGatewayTest.degradesLiveWhenAReadyTransportDrops does) must await
-    // it via `state.first { ... }` rather than assert immediately after mutating a source
-    // flow; see that test for the pattern.
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // dispatcher is a constructor parameter, not Dispatchers.Default hardcoded inline,
+    // purely so AdbGatewayTest can substitute UnconfinedTestDispatcher() and assert
+    // gateway.state.value directly, with no wait for propagation. The Inject constructor
+    // above never passes one, so production always gets the default -- and that default
+    // has to be Dispatchers.Default, not Dispatchers.Unconfined: an earlier version of
+    // this class used Unconfined, reasoning that state's combine-and-collect transform is
+    // pure and cheap enough to run inline on whichever thread emits. That was the wrong
+    // fix for the problem it was solving. Unconfined resumes a coroutine on whatever
+    // thread triggered it -- here, whatever thread last wrote root._state.value or
+    // adb._state.value, which for AdbShell/RootShell can be a socket-read or process-exec
+    // thread. Running this gateway's own reducer on borrowed I/O threads, with the
+    // execution context varying by caller, is exactly the kind of implicit coupling that
+    // looks harmless in review and produces confusing behaviour later; Default keeps this
+    // collector's execution context fixed and predictable regardless of which transport
+    // changed -- in production, where nothing overrides the default.
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     override val state: StateFlow<PrivilegedAvailability> = combine(
         root.state,
