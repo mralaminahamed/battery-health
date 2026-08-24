@@ -22,6 +22,16 @@ import org.junit.Test
  * overrides "render nothing once Ready". Also covers the other four states' label/handler
  * pairing -- each asserted by its own test so a state's button text and the action behind
  * it can never drift apart without a failure pointing at exactly which state broke.
+ *
+ * Several tests below also pin a substring of that state's [UnlockCard] explanation prose,
+ * via `onNodeWithText(..., substring = true)` rather than [assertTextEquals]: header text and
+ * action labels are short and meant to stay literal, but the explanation is the
+ * honesty-critical part of this card -- it is what tells the user the app cannot grant itself
+ * this access, that the adb workaround has a real per-reboot cost, and that a denial is
+ * recoverable and bounded. None of that was guarded before; a copy edit could soften or
+ * delete any of those claims and every existing test (header/action only) would stay green.
+ * The pinned substrings are deliberately short claims, not full sentences, so ordinary
+ * copy-editing around them does not also break the test.
  */
 class UnlockCardTest {
 
@@ -60,6 +70,15 @@ class UnlockCardTest {
 
         compose.onNodeWithTag(UnlockCardTags.ROOT).assertIsDisplayed()
         compose.onNodeWithTag(UnlockCardTags.ACTION).assertTextEquals("How to enable")
+
+        // Honesty-critical claim #1: this app cannot grant itself the permission -- the
+        // whole reason a "How to enable" button exists instead of a "Grant" button.
+        compose.onNodeWithText("this app cannot request on its own", substring = true)
+            .assertIsDisplayed()
+        // Honesty-critical claim #2: the adb workaround is not a one-time setup step --
+        // it has a real, recurring cost the user is told about up front.
+        compose.onNodeWithText("repeat that command each time your phone restarts", substring = true)
+            .assertIsDisplayed()
     }
 
     @Test
@@ -100,6 +119,10 @@ class UnlockCardTest {
         // this card. A button here would compete with the prompt the user is supposed
         // to be answering.
         compose.onAllNodesWithTag(UnlockCardTags.ACTION).assertCountEquals(0)
+
+        // Honesty-critical claim: the user is pointed at their own device's screen, not
+        // told to wait on this app -- there is nothing this card itself can do here.
+        compose.onNodeWithText("Check your screen", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -118,6 +141,16 @@ class UnlockCardTest {
         }
 
         compose.onNodeWithTag(UnlockCardTags.ACTION).assertTextEquals("Try again")
+
+        // Honesty-critical claim #1: a denial does not degrade the rest of the app --
+        // only the privileged readings are affected.
+        compose.onNodeWithText("Nothing else in the app is affected", substring = true)
+            .assertIsDisplayed()
+        // Honesty-critical claim #2: the denial is not permanent -- the user can retry
+        // on their own terms, whenever they like.
+        compose.onNodeWithText("you can try again whenever you like", substring = true)
+            .assertIsDisplayed()
+
         compose.onNodeWithTag(UnlockCardTags.ACTION).performClick()
 
         assertTrue("expected onConnect to have been invoked", connectTapped)
