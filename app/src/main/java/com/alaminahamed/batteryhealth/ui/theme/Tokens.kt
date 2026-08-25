@@ -13,6 +13,13 @@ data class OneUiColors(
     val textPrimary: Color,
     val textSecondary: Color,
     val divider: Color,
+    /**
+     * The tonal block behind a headline figure. Expressive uses a filled container here;
+     * One UI has no such surface and maps it onto its ordinary card, so a Samsung device
+     * does not acquire a Material-looking hero.
+     */
+    val heroContainer: Color,
+    val onHeroContainer: Color,
     val good: Color,
     val fair: Color,
     val poor: Color,
@@ -31,6 +38,8 @@ val LightOneUiColors = OneUiColors(
     textPrimary = Color(0xFF1B1D20),
     textSecondary = Color(0xFF6A7078),
     divider = Color(0xFFEEF0F3),
+    heroContainer = Color(0xFFFFFFFF),
+    onHeroContainer = Color(0xFF0F62FE),
     good = Color(0xFF0F9D58),
     fair = Color(0xFFF5A623),
     poor = Color(0xFFE5484D),
@@ -43,6 +52,8 @@ val DarkOneUiColors = OneUiColors(
     textPrimary = Color(0xFFF5F6F7),
     textSecondary = Color(0xFF9AA0A8),
     divider = Color(0xFF2A2D31),
+    heroContainer = Color(0xFF1B1D1F),
+    onHeroContainer = Color(0xFF5A9BFF),
     good = Color(0xFF3DD68C),
     fair = Color(0xFFFFB84D),
     poor = Color(0xFFFF6369),
