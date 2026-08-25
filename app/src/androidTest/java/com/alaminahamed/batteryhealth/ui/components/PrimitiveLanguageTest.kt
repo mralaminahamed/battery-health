@@ -33,14 +33,16 @@ class PrimitiveLanguageTest {
     val compose = createComposeRule()
 
     /**
-     * Absolute-value assertion used by every test below except the pre-existing
-     * [expressiveRowsAreTallerThanOneUiRows]. Per the review's finding, a cross-language
-     * *difference* assertion needs a margin wide enough to clear measurement noise but
-     * narrow enough to stay under the real gap -- and several of these tokens (`sectionHeaderBottom`
-     * 6dp/5dp, `unitOffsetBottom` 6dp/7dp, `cardOuterVertical` 5dp/4dp) only differ by 1dp, too
-     * tight for a safe margin. Asserting each language's *absolute* value against its own known
-     * constant sidesteps that: the tolerance only has to absorb dp<->px rounding noise, which is
-     * independent of how close the two languages' real values happen to be.
+     * Absolute-value assertion used for fields whose inter-language gap is wide enough (2-3dp:
+     * `rowVertical`, `progressHeight`, `cardOuterHorizontal`) that a fixed tolerance can clear
+     * measurement noise while staying comfortably under the real gap. Per the review's finding,
+     * a cross-language *difference* assertion needs that same margin, so asserting each
+     * language's *absolute* value against its own known constant sidesteps computing a
+     * difference: the tolerance only has to absorb dp<->px rounding noise. Fields whose gap is
+     * only 1dp (`cardOuterVertical`, `sectionHeaderBottom`, `unitOffsetStart`,
+     * `unitOffsetBottom`) use [assertNearestExpected] instead -- a fixed tolerance can't
+     * discriminate a 1dp gap without either missing real noise or failing to detect the
+     * failure it exists to catch (task-4-re-review.md).
      */
     private fun assertApproximately(message: String, expectedDp: Float, actualDp: Float, toleranceDp: Float) {
         assertTrue(
@@ -57,6 +59,39 @@ class PrimitiveLanguageTest {
         assertTrue(
             "$message: expected ~$expected, sampled $actual (tolerance $tolerancePerChannel per channel)",
             close,
+        )
+    }
+
+    /**
+     * For tokens whose two languages differ by only 1dp (`cardOuterVertical` 5dp/4dp,
+     * `sectionHeaderBottom` 6dp/5dp, `unitOffsetStart` 4dp/5dp, `unitOffsetBottom` 6dp/7dp),
+     * [assertApproximately]'s fixed tolerance cannot discriminate: a tolerance under 0.5dp is
+     * needed to tell the two languages' values apart at all, but the re-review measured
+     * ~0.1-0.2dp of real device noise, leaving those four assertions little to no margin --
+     * and `cardOuterVertical`'s 1.0dp tolerance was empirically *equal* to its 1.0dp gap, so it
+     * passed even when the two languages' values were made identical (task-4-re-review.md).
+     *
+     * This replaces the fixed tolerance with a nearest-expected assertion: the measured value
+     * must land closer to *this* language's expected token than to the other language's. That
+     * discriminates for any noise under half the gap (0.5dp here, comfortably above the ~0.2dp
+     * observed), needs no tolerance constant, and states the property the test actually cares
+     * about -- that the primitive read the right language's token -- rather than merely "a
+     * plausible number close to what I expected."
+     *
+     * The pass/fail decision itself is [isNearestExpected], a small `internal` function in
+     * `main` rather than inlined here, so a JVM test (`NearestExpectedTest`) can pin its
+     * behaviour without a device and without duplicating the comparison -- see that function's
+     * doc. The distances below are recomputed only for the assertion message; they do not
+     * affect the pass/fail outcome, which comes solely from [isNearestExpected].
+     */
+    private fun assertNearestExpected(message: String, measuredDp: Float, thisExpectedDp: Float, otherExpectedDp: Float) {
+        val distanceToThis = abs(measuredDp - thisExpectedDp)
+        val distanceToOther = abs(measuredDp - otherExpectedDp)
+        assertTrue(
+            "$message: measured ${measuredDp}dp should be closer to this language's " +
+                "${thisExpectedDp}dp (distance ${distanceToThis}dp) than to the other " +
+                "language's ${otherExpectedDp}dp (distance ${distanceToOther}dp)",
+            isNearestExpected(measuredDp, thisExpectedDp, otherExpectedDp),
         )
     }
 
@@ -169,8 +204,10 @@ class PrimitiveLanguageTest {
      * "child's bounds against the root" the brief calls out): the marker's inset from the card's
      * top-left is `cardOuterHorizontal + cardInner` horizontally and `cardOuterVertical + cardInner`
      * vertically. `cardInner` is 16dp in both languages, so it cancels out of the *cross-language*
-     * comparison, but per the note on [assertApproximately] this asserts the absolute inset per
-     * language (30dp/28dp horizontal, 21dp/20dp vertical) rather than relying on that cancellation.
+     * comparison, but this asserts the absolute inset per language (30dp/28dp horizontal,
+     * 21dp/20dp vertical) rather than relying on that cancellation: horizontal uses
+     * [assertApproximately] (2dp gap, wide enough for a fixed tolerance), vertical uses
+     * [assertNearestExpected] (1dp gap -- see that helper's doc).
      * The marker is a fixed-size `Box`, not text, so there is no typography to isolate here.
      */
     @Test
@@ -203,10 +240,17 @@ class PrimitiveLanguageTest {
         val (expressiveHorizontal, expressiveVertical) = outerInsets("card-expressive", "card-expressive-marker")
 
         // horizontal = cardOuterHorizontal + cardInner, vertical = cardOuterVertical + cardInner.
+        // cardOuterHorizontal has a 2dp inter-language gap (14 vs 12), wide enough for a fixed
+        // tolerance to discriminate with real margin -- left as assertApproximately.
+        // cardOuterVertical has only a 1dp gap (5 vs 4), so per assertNearestExpected's doc,
+        // it's asserted as nearest-expected instead. cardInner (16dp) is identical in both
+        // languages, so it cancels out of the nearest-expected comparison -- shifting both
+        // insets by the same constant does not change which expected value the measured
+        // value is closer to.
         assertApproximately("One UI card horizontal inset", 14f + 16f, oneUiHorizontal, 1f)
-        assertApproximately("One UI card vertical inset", 5f + 16f, oneUiVertical, 1f)
         assertApproximately("Expressive card horizontal inset", 12f + 16f, expressiveHorizontal, 1f)
-        assertApproximately("Expressive card vertical inset", 4f + 16f, expressiveVertical, 1f)
+        assertNearestExpected("One UI card vertical inset", oneUiVertical, 5f + 16f, 4f + 16f)
+        assertNearestExpected("Expressive card vertical inset", expressiveVertical, 4f + 16f, 5f + 16f)
     }
 
     /**
@@ -272,10 +316,12 @@ class PrimitiveLanguageTest {
         val (oneUiStart, oneUiBottom) = unitOffsets("metric-oneui")
         val (expressiveStart, expressiveBottom) = unitOffsets("metric-expressive")
 
-        assertApproximately("One UI unit start offset", 4f, oneUiStart, 0.75f)
-        assertApproximately("One UI unit bottom offset", 6f, oneUiBottom, 0.75f)
-        assertApproximately("Expressive unit start offset", 5f, expressiveStart, 0.75f)
-        assertApproximately("Expressive unit bottom offset", 7f, expressiveBottom, 0.75f)
+        // unitOffsetStart (4dp/5dp) and unitOffsetBottom (6dp/7dp) both have only a 1dp
+        // inter-language gap -- per assertNearestExpected's doc, both are nearest-expected.
+        assertNearestExpected("One UI unit start offset", oneUiStart, 4f, 5f)
+        assertNearestExpected("One UI unit bottom offset", oneUiBottom, 6f, 7f)
+        assertNearestExpected("Expressive unit start offset", expressiveStart, 5f, 4f)
+        assertNearestExpected("Expressive unit bottom offset", expressiveBottom, 7f, 6f)
     }
 
     /**
@@ -326,17 +372,19 @@ class PrimitiveLanguageTest {
             return header - reference
         }
 
-        assertApproximately(
+        // sectionHeaderBottom has only a 1dp inter-language gap (6dp/5dp) -- per
+        // assertNearestExpected's doc, this is nearest-expected rather than a fixed tolerance.
+        assertNearestExpected(
             "One UI section header bottom spacing",
-            6f,
             bottomSpacing("header-oneui", "header-oneui-ref"),
-            0.75f,
-        )
-        assertApproximately(
-            "Expressive section header bottom spacing",
+            6f,
             5f,
+        )
+        assertNearestExpected(
+            "Expressive section header bottom spacing",
             bottomSpacing("header-expressive", "header-expressive-ref"),
-            0.75f,
+            5f,
+            6f,
         )
     }
 
