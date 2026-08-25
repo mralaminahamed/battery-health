@@ -19,6 +19,14 @@ enum class AdbConnectResult { Connected, AwaitingAuthorization, Unreachable, Fai
 const val LOOPBACK_HOST = "127.0.0.1"
 
 /**
+ * The `maxdata` this client advertises to adbd in its own [A_CNXN] (see [connect]). adbd is
+ * expected to honor it and never frame a single message's payload larger than this, so
+ * [read] uses it as the bound for validating `header.length` before allocating anything --
+ * see that function's own doc for why the check has to happen there.
+ */
+const val MAX_PAYLOAD_BYTES = 256 * 1024
+
+/**
  * A hand-rolled ADB client speaking the same TCP handshake `adb connect` does, so this app
  * needs no separate privileged helper app running as a mediator. One socket, one CNXN/AUTH
  * exchange; stream multiplexing (OPEN/OKAY/WRTE/CLSE) is layered on top by `AdbStream` in a
@@ -67,7 +75,7 @@ class AdbConnection(
         // timeout anywhere else in the handshake (e.g. adbd never sending the first TOKEN)
         // is a plain failure, not "go check the phone".
         try {
-            send(A_CNXN, 0x01000000, 256 * 1024, "host::features=cmd\u0000".toByteArray())
+            send(A_CNXN, 0x01000000, MAX_PAYLOAD_BYTES, "host::features=cmd\u0000".toByteArray())
             handshake()
         } catch (e: IOException) {
             AdbConnectResult.Failed
@@ -132,6 +140,18 @@ class AdbConnection(
         val headerBytes = ByteArray(ADB_HEADER_BYTES)
         stream.readFully(headerBytes)
         val header = AdbMessage.parseHeader(headerBytes)
+        // header.length came straight off the wire. A negative value throws
+        // NegativeArraySizeException and an oversized one risks OutOfMemoryError -- neither
+        // is an IOException, so neither would be caught by connect()'s or shell()'s
+        // catch (e: IOException) and both would crash the caller instead of degrading to
+        // Unavailable/null. Bounding by MAX_PAYLOAD_BYTES -- the maxdata this connection
+        // itself advertised in its own A_CNXN -- and raising IOException, the type every
+        // caller already handles, keeps this within PrivilegedShell's never-throws contract.
+        if (header.length < 0 || header.length > MAX_PAYLOAD_BYTES) {
+            throw IOException(
+                "payload length ${header.length} outside [0, $MAX_PAYLOAD_BYTES]",
+            )
+        }
         val payload = ByteArray(header.length)
         if (header.length > 0) stream.readFully(payload)
         return header to payload

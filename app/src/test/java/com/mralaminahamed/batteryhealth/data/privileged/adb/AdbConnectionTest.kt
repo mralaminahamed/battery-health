@@ -1,5 +1,10 @@
 package com.mralaminahamed.batteryhealth.data.privileged.adb
 
+import java.io.DataInputStream
+import java.net.ServerSocket
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.concurrent.thread
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -96,5 +101,64 @@ class AdbConnectionTest {
         }
 
         assertEquals(AdbConnectResult.AwaitingAuthorization, result)
+    }
+
+    /**
+     * Regression test for C2: [AdbConnection.read] used to do `ByteArray(header.length)`
+     * with no bound check on a value that came straight off the wire. A negative length
+     * throws `NegativeArraySizeException` -- not an `IOException` -- so it used to escape
+     * both of `connect()`'s `catch (e: IOException)` blocks entirely and crash the caller
+     * instead of degrading to [AdbConnectResult.Failed]. A plain [FakeAdbDaemon] cannot
+     * produce this -- it only ever speaks well-formed protocol -- so this test runs a raw,
+     * deliberately corrupt/hostile peer by hand.
+     */
+    @Test
+    fun connectFailsCleanlyWhenTheDaemonLiesAboutPayloadLength() = runTest {
+        val server = ServerSocket(0)
+        val serverThread = thread {
+            val socket = runCatching { server.accept() }.getOrNull() ?: return@thread
+            socket.soTimeout = 2_000
+            runCatching {
+                val input = DataInputStream(socket.getInputStream())
+                val output = socket.getOutputStream()
+
+                // Read (and discard) the client's initial A_CNXN so the exchange stays in
+                // sync, then respond with a header that lies about its own payload length.
+                val headerBytes = ByteArray(ADB_HEADER_BYTES)
+                input.readFully(headerBytes)
+                val clientHeader = AdbMessage.parseHeader(headerBytes)
+                if (clientHeader.length > 0) input.readFully(ByteArray(clientHeader.length))
+
+                val malformed = ByteBuffer.allocate(ADB_HEADER_BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+                    .putInt(A_AUTH)
+                    .putInt(ADB_AUTH_TOKEN)
+                    .putInt(0)
+                    .putInt(-1) // the lie: a negative payload length
+                    .putInt(0)
+                    .putInt(A_AUTH xor -1)
+                    .array()
+                output.write(malformed)
+                output.flush()
+                Thread.sleep(1_000)
+            }
+            runCatching { socket.close() }
+        }
+
+        val connection = AdbConnection(
+            port = server.localPort,
+            signer = FakeAdbDaemon.signer().first,
+            soTimeoutMs = 2_000,
+        )
+
+        val result = try {
+            connection.connect()
+        } finally {
+            connection.close()
+            runCatching { server.close() }
+            serverThread.join(2_000)
+        }
+
+        assertEquals(AdbConnectResult.Failed, result)
     }
 }
