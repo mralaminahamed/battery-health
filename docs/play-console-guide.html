@@ -252,7 +252,7 @@
       decisions that cannot be reversed once the first upload lands.
     </p>
     <div class="facts">
-      <span><b>Package</b> com.mralaminahamed.batteryhealth</span>
+      <span><b>Package</b> com.alaminahamed.batteryhealth</span>
       <span><b>Name</b> Battery Health</span>
       <span><b>Version</b> 0.1.0 (1)</span>
       <span><b>Flavour</b> play</span>
@@ -275,11 +275,11 @@
       installed the old one.
     </p>
     <p>
-      The build currently declares <code>com.mralaminahamed.batteryhealth</code>, but you chose
-      to move the app to <code>com.alaminahamed.batteryhealth</code>. That rename has not been
-      done — it is 115 files plus the <code>applicationId</code>. <strong>Do it before the first
-      upload, or accept the current name permanently.</strong> There is no third option after
-      publishing.
+      <strong>Settled.</strong> The package is now
+      <code>com.alaminahamed.batteryhealth</code> — renamed across 130 files in commit
+      <code>7a9b2db</code>, verified in the built bundle, and done before any upload. Nothing
+      further is needed here; it is recorded because it is the one choice on this page that can
+      never be revisited.
     </p>
   </div>
 
@@ -308,16 +308,15 @@
   <div class="step">
     <span class="num">01</span>
     <div>
-      <h3>Settle the application ID</h3>
+      <h3>Application ID: com.alaminahamed.batteryhealth</h3>
       <p>
-        Everything downstream inherits this. If you are renaming to
-        <code>com.alaminahamed.batteryhealth</code>, do it first — the package directories, every
-        import, the <code>namespace</code>, and the <code>applicationId</code> in
-        <code>app/build.gradle.kts</code>.
+        <strong>Decided and applied</strong> — commit <code>7a9b2db</code> moved all five source
+        sets and rewrote every reference. <code>namespace</code> and <code>applicationId</code>
+        match, and the built bundle carries the new ID.
       </p>
       <p>
-        Keep <code>namespace</code> and <code>applicationId</code> identical. They are allowed to
-        differ, and divergence here is a lasting source of confusion for no benefit.
+        This had to happen before the first upload and it did. Play binds a listing to its
+        package name on that upload and never lets it change.
       </p>
     </div>
   </div>
