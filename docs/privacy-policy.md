@@ -113,4 +113,4 @@ planned — that change would be described here before it shipped.
 
 Questions about this policy: **alamin.ahamed.dev@gmail.com**
 
-Source code: https://github.com/mralaminahamed/samsung-battery-health
+Source code: https://github.com/mralaminahamed/battery-health
