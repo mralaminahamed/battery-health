@@ -107,6 +107,15 @@ class RootShellTest {
      * has nothing to return and no EOF to see. It is therefore still alive, unable to say
      * whether "partial" is the whole story, when the 2-second drain budget expires.
      *
+     * The sleep must outlast the drain budget by a wide margin, and 60s is not arbitrary
+     * caution. This test's outcome hinges on the background process still holding the pipe
+     * at the moment `reader.join` gives up, so the real requirement is
+     * `sleep > timeToReachJoin + READER_DRAIN_TIMEOUT_MS`. At `sleep 5` that left only a
+     * three-second allowance for everything before the join, which a loaded machine can
+     * exhaust through JIT, GC or CPU contention -- and did, once, in a full-suite run: the
+     * sleep exited first, the reader saw EOF, and this failed with
+     * `expected:<DrainTimedOut> but was:<Success(output=partial)>`. Do not shrink it back.
+     *
      * RED without the fix: `reader.join` returning (for either reason) is read as "drained",
      * so this returns `Success("partial")` -- a partial dump reported as complete. GREEN
      * with it: `reader.isAlive` after the join catches the still-blocked thread and this
@@ -114,7 +123,7 @@ class RootShellTest {
      */
     @Test
     fun aReaderThreadStillDrainingWhenTheProcessExitsIsNotReportedAsSuccess() {
-        val result = runRootCommand(listOf("sh", "-c", "sleep 5 & printf partial"), timeoutSeconds = 5)
+        val result = runRootCommand(listOf("sh", "-c", "sleep 60 & printf partial"), timeoutSeconds = 5)
 
         assertEquals(RootExecResult.DrainTimedOut, result)
     }
