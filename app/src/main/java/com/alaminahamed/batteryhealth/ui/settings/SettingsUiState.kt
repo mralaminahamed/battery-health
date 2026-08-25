@@ -1,6 +1,7 @@
 package com.alaminahamed.batteryhealth.ui.settings
 
 import com.alaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
+import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 
 data class SettingsUiState(
     /**
@@ -16,4 +17,10 @@ data class SettingsUiState(
      * only as the cold-start placeholder before the real flow first emits.
      */
     val adbPort: Int = 5555,
+    /**
+     * Mirrors `SettingsStore.designLanguageChoice`. Defaults to
+     * [DesignLanguageChoice.Auto] only as the cold-start placeholder before the real flow
+     * first emits, the same convention the other fields here use.
+     */
+    val designLanguage: DesignLanguageChoice = DesignLanguageChoice.Auto,
 )

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.alaminahamed.batteryhealth.data.framework.CurrentScale
 import com.alaminahamed.batteryhealth.sampling.ChargeRecorderService
+import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -70,6 +71,24 @@ class SettingsStore @Inject constructor(private val context: Context) {
     val rootPreviouslyGranted: Flow<Boolean> =
         context.dataStore.data.map { it[ROOT_PREVIOUSLY_GRANTED] ?: false }.distinctUntilChanged()
 
+    /**
+     * Which design language the user asked for. Defaults to
+     * [DesignLanguageChoice.Auto], which resolves from the device — see
+     * `resolveDesignLanguageId`.
+     *
+     * `runCatching` for the same reason `currentScale` uses it: an unrecognised stored
+     * string (a downgrade from a future version, or a corrupted preference) must not throw
+     * out of a Flow the entire UI collects. Falling back to Auto is safe because Auto is
+     * also the default.
+     */
+    val designLanguageChoice: Flow<DesignLanguageChoice> = context.dataStore.data
+        .map { prefs ->
+            prefs[DESIGN_LANGUAGE]
+                ?.let { stored -> runCatching { DesignLanguageChoice.valueOf(stored) }.getOrNull() }
+                ?: DesignLanguageChoice.Auto
+        }
+        .distinctUntilChanged()
+
     suspend fun setCurrentScale(scale: CurrentScale) {
         context.dataStore.edit { it[CURRENT_SCALE] = scale.name }
     }
@@ -88,6 +107,10 @@ class SettingsStore @Inject constructor(private val context: Context) {
 
     suspend fun setRootPreviouslyGranted(granted: Boolean) {
         context.dataStore.edit { it[ROOT_PREVIOUSLY_GRANTED] = granted }
+    }
+
+    suspend fun setDesignLanguageChoice(choice: DesignLanguageChoice) {
+        context.dataStore.edit { it[DESIGN_LANGUAGE] = choice.name }
     }
 
     suspend fun setDesignCapacityOverride(mah: Int?) {
@@ -134,11 +157,21 @@ class SettingsStore @Inject constructor(private val context: Context) {
         context.dataStore.edit { it.clear() }
     }
 
+    /**
+     * Writes an arbitrary string to the design-language key so a test can exercise the
+     * unrecognised-value path. Nothing in production writes anything but an enum name.
+     */
+    @VisibleForTesting
+    suspend fun writeRawDesignLanguageForTesting(raw: String) {
+        context.dataStore.edit { it[DESIGN_LANGUAGE] = raw }
+    }
+
     private companion object {
         val DESIGN_CAPACITY_OVERRIDE = intPreferencesKey("design_capacity_override_mah")
         val RECORDER_ENABLED = booleanPreferencesKey("recorder_enabled")
         val CURRENT_SCALE = stringPreferencesKey("current_scale")
         val ADB_PORT = intPreferencesKey("adb_port")
         val ROOT_PREVIOUSLY_GRANTED = booleanPreferencesKey("root_previously_granted")
+        val DESIGN_LANGUAGE = stringPreferencesKey("design_language_choice")
     }
 }

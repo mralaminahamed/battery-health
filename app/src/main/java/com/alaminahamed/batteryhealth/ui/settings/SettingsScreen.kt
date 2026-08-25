@@ -34,6 +34,7 @@ import com.alaminahamed.batteryhealth.ui.components.KeyValueRow
 import com.alaminahamed.batteryhealth.ui.components.OneUiCard
 import com.alaminahamed.batteryhealth.ui.components.SectionHeader
 import com.alaminahamed.batteryhealth.ui.components.Value
+import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 
 object SettingsScreenTags {
@@ -68,7 +69,11 @@ object SettingsAdbPortTags {
  * this app's second-best experience, not the one this screen exists for.
  */
 @Composable
-fun SettingsScreen(modifier: Modifier = Modifier, viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = hiltViewModel(),
+    onDesignLanguageChange: (DesignLanguageChoice) -> Unit,
+) {
     val state by viewModel.state.collectAsState()
     SettingsContent(
         state = state,
@@ -76,6 +81,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, viewModel: SettingsViewModel =
         onSaveDesignCapacity = viewModel::setDesignCapacityOverride,
         onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
         onSaveAdbPort = viewModel::setAdbPort,
+        onDesignLanguageChange = onDesignLanguageChange,
     )
 }
 
@@ -86,6 +92,7 @@ fun SettingsContent(
     onSaveDesignCapacity: (Int) -> Unit = {},
     onClearDesignCapacity: () -> Unit = {},
     onSaveAdbPort: (Int) -> Unit = {},
+    onDesignLanguageChange: (DesignLanguageChoice) -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
@@ -97,6 +104,26 @@ fun SettingsContent(
             .testTag(SettingsScreenTags.ROOT)
             .verticalScroll(rememberScrollState()),
     ) {
+        OneUiCard {
+            SectionHeader("Appearance")
+            DesignLanguageChoice.entries.forEachIndexed { index, choice ->
+                val selected = state.designLanguage == choice
+                KeyValueRow(
+                    label = when (choice) {
+                        DesignLanguageChoice.Auto -> "Match this device"
+                        DesignLanguageChoice.Samsung -> "One UI"
+                        DesignLanguageChoice.Material -> "Material"
+                    },
+                    showDivider = index != DesignLanguageChoice.entries.lastIndex,
+                    modifier = Modifier
+                        .clickable { onDesignLanguageChange(choice) }
+                        .testTag("design-language-${choice.name}"),
+                ) {
+                    if (selected) Value("Selected")
+                }
+            }
+        }
+
         OneUiCard {
             SectionHeader("Design capacity")
             Text(
