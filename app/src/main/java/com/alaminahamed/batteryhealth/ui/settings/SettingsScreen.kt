@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -23,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -106,20 +109,30 @@ fun SettingsContent(
     ) {
         OneUiCard {
             SectionHeader("Appearance")
-            DesignLanguageChoice.entries.forEachIndexed { index, choice ->
-                val selected = state.designLanguage == choice
-                KeyValueRow(
-                    label = when (choice) {
-                        DesignLanguageChoice.Auto -> "Match this device"
-                        DesignLanguageChoice.Samsung -> "One UI"
-                        DesignLanguageChoice.Material -> "Material"
-                    },
-                    showDivider = index != DesignLanguageChoice.entries.lastIndex,
-                    modifier = Modifier
-                        .clickable { onDesignLanguageChange(choice) }
-                        .testTag("design-language-${choice.name}"),
-                ) {
-                    if (selected) Value("Selected")
+            // selectableGroup + selectable(role = RadioButton) rather than plain clickable
+            // rows: these three are a single-choice group, not three unrelated buttons, and
+            // without this a screen reader announces them as undifferentiated clickable rows
+            // with no indication they are mutually exclusive or which one is selected.
+            Column(modifier = Modifier.selectableGroup()) {
+                DesignLanguageChoice.entries.forEachIndexed { index, choice ->
+                    val selected = state.designLanguage == choice
+                    KeyValueRow(
+                        label = when (choice) {
+                            DesignLanguageChoice.Auto -> "Match this device"
+                            DesignLanguageChoice.Samsung -> "One UI"
+                            DesignLanguageChoice.Material -> "Material"
+                        },
+                        showDivider = index != DesignLanguageChoice.entries.lastIndex,
+                        modifier = Modifier
+                            .selectable(
+                                selected = selected,
+                                onClick = { onDesignLanguageChange(choice) },
+                                role = Role.RadioButton,
+                            )
+                            .testTag("design-language-${choice.name}"),
+                    ) {
+                        if (selected) Value("Selected")
+                    }
                 }
             }
         }

@@ -28,6 +28,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            // Defaults to Auto only as the cold-start placeholder for the one frame before
+            // DataStore first emits, the same convention SettingsUiState documents on its own
+            // designLanguage field. Auto is the right placeholder specifically: on a Samsung
+            // device it resolves to OneUi below, so this frame doesn't flash the wrong
+            // language on the hardware this app was built for.
             val choice by settings.designLanguageChoice.collectAsStateWithLifecycle(
                 initialValue = DesignLanguageChoice.Auto,
             )

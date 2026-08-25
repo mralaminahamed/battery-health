@@ -1,6 +1,8 @@
 package com.alaminahamed.batteryhealth.ui.theme
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.shape.CornerBasedShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -28,9 +30,13 @@ class ThemeWiringTest {
      * asserted `primary`/`background` under `darkTheme = false`, so nothing here noticed when
      * `onPrimary`'s `if (darkTheme)` branch was flipped in `Theme.kt` — a real escape found by
      * review (task-3-review.md finding 2), confirmed by mutation testing 3/3 still green. Also
-     * asserts `surfaceContainerHighest`, the role `Switch`'s unchecked track falls back to and
-     * that review finding 1 found unset — a role set in `Theme.kt` but left unasserted here is
-     * the same class of gap one layer along.
+     * asserts `surfaceContainerHighest` and `surfaceContainerHigh`, the roles `Switch`'s
+     * unchecked track and `AlertDialog`'s container fall back to and that review finding 1
+     * found unset — a role set in `Theme.kt` but left unasserted here is the same class of gap
+     * one layer along. `surfaceContainerHigh` was the sibling still missing after that fix
+     * (final-review.md Important 4): deleting `surfaceContainerHigh = colors.divider` from
+     * `Theme.kt` silently restored the off-palette `AlertDialog` defect Task 3 exists to fix,
+     * with every test green, because only its sibling was pinned here.
      */
     @Test
     fun materialSchemeIsDerivedFromTheSelectedLanguage() {
@@ -41,6 +47,7 @@ class ThemeWiringTest {
         val schemePrimary = mutableMapOf<Case, Color>()
         val schemeBackground = mutableMapOf<Case, Color>()
         val schemeOnPrimary = mutableMapOf<Case, Color>()
+        val schemeSurfaceContainerHigh = mutableMapOf<Case, Color>()
         val schemeSurfaceContainerHighest = mutableMapOf<Case, Color>()
         val bundleAccent = mutableMapOf<Case, Color>()
         val bundleCanvas = mutableMapOf<Case, Color>()
@@ -54,6 +61,7 @@ class ThemeWiringTest {
                         schemePrimary[case] = MaterialTheme.colorScheme.primary
                         schemeBackground[case] = MaterialTheme.colorScheme.background
                         schemeOnPrimary[case] = MaterialTheme.colorScheme.onPrimary
+                        schemeSurfaceContainerHigh[case] = MaterialTheme.colorScheme.surfaceContainerHigh
                         schemeSurfaceContainerHighest[case] = MaterialTheme.colorScheme.surfaceContainerHighest
                         bundleAccent[case] = LocalDesignLanguage.current.colors.accent
                         bundleCanvas[case] = LocalDesignLanguage.current.colors.canvas
@@ -74,10 +82,55 @@ class ThemeWiringTest {
                 schemeOnPrimary[case],
             )
             assertEquals(
+                "$case surfaceContainerHigh",
+                bundleDivider[case],
+                schemeSurfaceContainerHigh[case],
+            )
+            assertEquals(
                 "$case surfaceContainerHighest",
                 bundleDivider[case],
                 schemeSurfaceContainerHighest[case],
             )
+        }
+    }
+
+    /**
+     * `MaterialTheme.shapes` had no assertion of any kind in either source set
+     * (final-review.md Important 3): `DesignLanguageTest` pins the *bundle's*
+     * `shapes.card`/`shapes.pill`, but deleting `shapes = shapes` from the `MaterialTheme`
+     * call in `Theme.kt`, or changing `OneUiShapes.small` from 8dp to 13dp, passed all 308
+     * JVM tests and every other instrumented test. This is the composition-level proof that
+     * `materialShapesFor` (see `Theme.kt` and the JVM-only `MaterialShapesTest`) is what
+     * `MaterialTheme` actually receives, not merely a correctly-computed value nobody wires
+     * up -- the one thing a JVM test cannot show.
+     */
+    @Test
+    fun materialShapesAreDerivedFromTheSelectedLanguage() {
+        val cases = DesignLanguageId.entries.flatMap { id -> listOf(false, true).map { Case(id, it) } }
+
+        val schemeSmall = mutableMapOf<Case, CornerBasedShape>()
+        val schemeExtraLarge = mutableMapOf<Case, CornerBasedShape>()
+        val bundleSmall = mutableMapOf<Case, RoundedCornerShape>()
+        val bundleExtraLarge = mutableMapOf<Case, RoundedCornerShape>()
+
+        compose.setContent {
+            Column {
+                for (case in cases) {
+                    BatteryHealthTheme(languageId = case.id, darkTheme = case.dark) {
+                        schemeSmall[case] = MaterialTheme.shapes.small
+                        schemeExtraLarge[case] = MaterialTheme.shapes.extraLarge
+                        val languageShapes = LocalDesignLanguage.current.shapes
+                        bundleSmall[case] = RoundedCornerShape(languageShapes.small)
+                        bundleExtraLarge[case] = RoundedCornerShape(languageShapes.card)
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        for (case in cases) {
+            assertEquals("$case shapes.small", bundleSmall[case], schemeSmall[case])
+            assertEquals("$case shapes.extraLarge", bundleExtraLarge[case], schemeExtraLarge[case])
         }
     }
 

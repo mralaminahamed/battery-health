@@ -58,16 +58,26 @@ fun BatteryHealthTheme(
             onSurface = colors.textPrimary,
             surfaceVariant = colors.divider,
             onSurfaceVariant = colors.textSecondary,
-            outline = colors.divider,
+            // Material has two distinct roles here and this bundle has two distinct
+            // tokens for them: `outline` is for a boundary that must be *seen* (an
+            // OutlinedTextField's resting border, a Switch's unchecked thumb) so it
+            // reads from `textSecondary`, not `divider`. `outlineVariant` is for a
+            // subtle separator, which is what `divider` actually is. Collapsing both
+            // onto `divider` (the previous mapping) made every OutlinedTextField's
+            // unfocused border exactly the colour of the AlertDialog surface behind
+            // it -- 1.00:1 contrast -- since surfaceContainerHigh below is also
+            // `divider`. See DesignLanguageTest / ThemeWiringTest for the pinned
+            // values and final-fix-report.md for the measured contrast ratios.
+            outline = colors.textSecondary,
+            outlineVariant = colors.divider,
             error = colors.poor,
             // Unset, these fall back to Material's baseline surface-container tokens
             // rather than anything from the bundle: Switch's uncheckedTrackColor
             // (SwitchTokens.UnselectedTrackColor) resolves to surfaceContainerHighest,
             // and AlertDialog's container (DialogTokens.ContainerColor) resolves to
             // surfaceContainerHigh. `divider` is this app's own "a tint distinct from
-            // card" token — already what outline/surfaceVariant use above — so both
-            // roles read as an app-palette neutral instead of Material's default
-            // lavender-tinted grey.
+            // card" token, so both roles read as an app-palette neutral instead of
+            // Material's default lavender-tinted grey.
             surfaceContainerHigh = colors.divider,
             surfaceContainerHighest = colors.divider,
         )
@@ -83,7 +93,9 @@ fun BatteryHealthTheme(
             onSurface = colors.textPrimary,
             surfaceVariant = colors.divider,
             onSurfaceVariant = colors.textSecondary,
-            outline = colors.divider,
+            // See the matching comment in the dark branch above.
+            outline = colors.textSecondary,
+            outlineVariant = colors.divider,
             error = colors.poor,
             // See the matching comment in the dark branch above.
             surfaceContainerHigh = colors.divider,
@@ -91,13 +103,7 @@ fun BatteryHealthTheme(
         )
     }
 
-    val shapes = Shapes(
-        extraSmall = RoundedCornerShape(language.shapes.small / 2),
-        small = RoundedCornerShape(language.shapes.small),
-        medium = RoundedCornerShape(language.shapes.card),
-        large = RoundedCornerShape(language.shapes.card),
-        extraLarge = RoundedCornerShape(language.shapes.card),
-    )
+    val shapes = materialShapesFor(language.shapes)
 
     CompositionLocalProvider(
         LocalDesignLanguage provides language,
@@ -112,3 +118,30 @@ fun BatteryHealthTheme(
         )
     }
 }
+
+/**
+ * The `Shapes` object [BatteryHealthTheme] hands to `MaterialTheme`, pulled out to a plain
+ * function so a JVM test (`MaterialShapesTest`) can pin the derivation without a composition.
+ * Before this existed, nothing asserted `MaterialTheme.shapes` at all: `DesignLanguageTest`
+ * pinned the *bundle's* `shapes.card`/`shapes.pill`, but deleting `shapes = shapes` above, or
+ * changing `OneUiShapes.small` from 8dp to 13dp, passed the full JVM suite -- silently
+ * reinstating the "two parallel sources of truth" defect this theme exists to close, on the
+ * one axis nothing guarded. `ThemeWiringTest.materialShapesAreDerivedFromTheSelectedLanguage`
+ * is the composition-level counterpart: it proves this function's result is what actually
+ * reaches `MaterialTheme`, which a JVM test cannot.
+ *
+ * `medium`/`large`/`extraLarge` all collapse onto `shapes.card`: this app has exactly one
+ * card corner radius per language, and Material has no live consumer that needs them to
+ * differ (`AlertDialog` reads `extraLarge`, everything else that could read `medium`/`large`
+ * is either absent from this app or explicitly shaped by its own call site).
+ * `extraSmall`/`small` come from `shapes.small`, halved for `extraSmall` -- `small` is what
+ * `OutlinedTextFieldTokens.ContainerShape` reads, so it is the one value here with a live
+ * Material consumer beyond `AlertDialog`.
+ */
+internal fun materialShapesFor(shapes: LanguageShapes): Shapes = Shapes(
+    extraSmall = RoundedCornerShape(shapes.small / 2),
+    small = RoundedCornerShape(shapes.small),
+    medium = RoundedCornerShape(shapes.card),
+    large = RoundedCornerShape(shapes.card),
+    extraLarge = RoundedCornerShape(shapes.card),
+)
