@@ -4,6 +4,7 @@ import com.alaminahamed.batteryhealth.data.privileged.CMD_DUMP_BATTERY
 import com.alaminahamed.batteryhealth.data.privileged.CMD_DUMP_CHECKIN
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedShell
 import com.alaminahamed.batteryhealth.data.privileged.TransportState
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -103,23 +104,32 @@ class AdbShell(
         if (!connectInFlight.compareAndSet(false, true)) return
         try {
             if (closed) return
-            // Close the previous socket before opening the next one. refresh() reconnects
-            // after every transport failure and the Health screen calls refresh() on every
-            // ON_RESUME -- skip this line and every single resume leaks a socket for the
-            // rest of the process's life. Do not "simplify" this away.
-            connection?.close()
-            val next = AdbConnection(port = portProvider(), signer = signer, soTimeoutMs = HANDSHAKE_TIMEOUT_MS)
-            connection = next
-            val result = next.connect()
-            if (closed) {
-                // close() landed while the handshake above was in flight. `next` may have
-                // just succeeded -- the socket is real and open -- but nothing else will
-                // ever close it once this method returns, so this is the one chance to.
-                next.close()
-                connection = null
-                return
+            // Taken for the whole reconnect, not just the close: run() reads `connection`
+            // and then calls into it, so closing the old socket outside this lock can and
+            // did strand an in-flight dump on a socket that just went away. Serializing
+            // reconnects against dumps is what actually prevents that; run()'s catch below
+            // is the safety net for anything this lock does not cover.
+            shellMutex.withLock {
+                // Close the previous socket before opening the next one. refresh()
+                // reconnects after every transport failure and the Health screen calls
+                // refresh() on every ON_RESUME -- skip this line and every single resume
+                // leaks a socket for the rest of the process's life. Do not "simplify"
+                // this away.
+                connection?.close()
+                val next = AdbConnection(port = portProvider(), signer = signer, soTimeoutMs = HANDSHAKE_TIMEOUT_MS)
+                connection = next
+                val result = next.connect()
+                if (closed) {
+                    // close() landed while the handshake above was in flight. `next` may
+                    // have just succeeded -- the socket is real and open -- but nothing
+                    // else will ever close it once this method returns, so this is the one
+                    // chance to.
+                    next.close()
+                    connection = null
+                    return
+                }
+                _state.value = result.toTransportState()
             }
-            _state.value = result.toTransportState()
         } finally {
             connectInFlight.set(false)
         }
@@ -142,7 +152,16 @@ class AdbShell(
         // The real bound is the socket's own read timeout, narrowed for just this call --
         // see AdbConnection.withSoTimeout's doc for why a coroutine-level timeout cannot
         // preempt the blocking reads inside shell().
-        val result = current.withSoTimeout(timeoutMs) { current.shell(command) }
+        // withSoTimeout touches the socket before its own try, so a socket closed underneath
+        // this call throws SocketException from a position no inner handler covers. That
+        // escaped to the Compose flow and killed the process on real hardware. Catching
+        // IOException here is what makes runDump()/runCheckin()'s documented "never throws"
+        // contract actually true, independent of whichever race closed the socket.
+        val result = try {
+            current.withSoTimeout(timeoutMs) { current.shell(command) }
+        } catch (e: IOException) {
+            null
+        }
         if (result == null) {
             // Live degradation: a transport that was Ready and just failed must reach
             // `state` with no exception anywhere downstream, so every privileged reading

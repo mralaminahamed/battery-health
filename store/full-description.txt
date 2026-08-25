@@ -1,0 +1,53 @@
+Most battery apps show you a state of health percentage. Almost none of them can actually read it — Android does not expose that number to ordinary apps, so it has to come from somewhere, and "somewhere" is usually an estimate presented as a measurement.
+
+Battery Health takes the opposite approach. It tells you plainly which numbers Android withholds, measures the ones it can, and reports a metric as unavailable when the measurement cannot be trusted — rather than showing you a plausible-looking number that happens to be wrong.
+
+How it measures capacity
+
+Your phone reports a charge counter in microamp-hours. By sampling that counter across a real charge session and comparing the change against the change in charge level, the app derives your battery's present full capacity and compares it to the design capacity for your model.
+
+Every guard in that calculation exists to stop a specific way it could produce a confident wrong answer:
+
+• Narrow charge windows are rejected — a 20% top-up is not enough to measure from
+• The median across several sessions is used, never just the most recent one
+• A charge counter synthesised from the level, rather than genuinely measured, is detected and refused
+• An implausible result is reported as unavailable instead of being clamped into a believable range
+• A device model with no known design capacity reports unavailable rather than assuming a default
+
+What Android will and will not tell an app
+
+Readable by any app: charge level, voltage, current, temperature, battery technology, charge counter, and time remaining.
+
+Not readable by any ordinary app, on any device: state of health, first-use date, and manufacturing date. These sit behind a system-level permission, and two of them are hidden APIs that appear in no public SDK. This was verified against real hardware, not assumed from documentation.
+
+Features
+
+Live readings
+See charge level, voltage, current draw, temperature, battery technology and charge-time-remaining as they change.
+
+History
+Battery samples and charge sessions are recorded on your device and kept, so capacity can be measured across many sessions rather than guessed from one. Sampling continues in the background and survives a restart.
+
+Per-app battery use
+See which apps are consuming power, based on the system's own accounting.
+
+Advanced metrics (optional)
+Some values are restricted to system apps. If you want them, the app can read them through Android's own debug bridge — running on your own phone, over a local connection that never leaves the device. This takes a one-time setup step from a computer, and is entirely optional. Without it the app works normally and simply reports those metrics as unavailable.
+
+Privacy
+
+Battery Health sends nothing anywhere. There is no server, no analytics, no crash reporting, no advertising, and no account. Everything it records stays in the app's private storage on your device, and uninstalling removes all of it.
+
+The app requests the Internet permission for one reason: Android requires it to open a network connection even when that connection goes to your own phone and nowhere else. That is the only connection this app makes, and an automated test fails the build if any part of the app could reach beyond it.
+
+There are no third-party libraries from analytics companies, data brokers or ad networks. The full source code is available and every claim above can be checked against it.
+
+Compatibility
+
+Works on Android 8.0 and above. Designed and tested on Samsung Galaxy devices, where One UI exposes additional battery information.
+
+Capacity measurement depends on your device reporting a genuine charge counter. Not every model does. Where yours does not, the app will tell you so instead of inventing a figure.
+
+What this app does not do
+
+It does not extend, optimise, boost or repair your battery. No app can. It measures what is there and reports it honestly, which is the part most battery apps skip.

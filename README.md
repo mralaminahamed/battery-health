@@ -251,7 +251,17 @@ Google Play needs the bundle, not the APK:
 
 ## Verified on
 
-- Samsung Galaxy A35 5G (SM-A356E), Android 16 (API 36)
+- **Samsung Galaxy A35 5G (SM-A356E), Android 16 (API 36)** — the battery API behaviour this
+  app is built on: which fields the platform exposes, which are `@SystemApi @hide`, and what
+  `dumpsys` actually returns. The captured fixtures under `app/src/test/resources/` come from
+  this device.
+- **Samsung Galaxy S26 Ultra (SM-S948B), Android 16 (API 36)** — install, launch, and the
+  one-time `adb tcpip 5555` setup path, confirmed over wireless debugging. The privileged tier
+  itself has **not** been exercised end to end on hardware yet.
+
+`DesignCapacityTable` currently holds a single entry, `SM-A356`. On any other model the app
+reports state of health as unavailable rather than guessing a design capacity — correct
+behaviour, but it means the headline metric is blank on most devices until the table grows.
 
 Design capacities are looked up per `Build.MODEL`; a model that is not in the table reports
 state of health as unavailable rather than guessing.

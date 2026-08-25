@@ -191,6 +191,38 @@ class AdbShellTest {
         // where the old, wrong behavior would land.
         assertTrue("expected roughly a 3s bound, took ${elapsedMs}ms", elapsedMs in 2_500..6_000)
     }
+
+    /**
+     * Crashed the app on real hardware (SM-S948B): `adb tcpip 5555` restarted adbd, the
+     * Health screen's ON_RESUME refresh() ran connect(), and connect() closed the socket a
+     * dump was already holding. run() then called withSoTimeout on it, whose
+     * `activeSocket.soTimeout` read sits outside its own try, so `SocketException: Socket
+     * is closed` escaped run() entirely -- past AdbGateway, past BatteryRepository, out
+     * through the Compose flow, FATAL EXCEPTION on main.
+     *
+     * run()'s own doc promises the opposite: "a transport that was Ready and just failed
+     * must reach `state` with no exception anywhere downstream", and PrivilegedShell.runDump
+     * is documented never to throw. Both were false.
+     *
+     * close() is the deterministic stand-in for that race: it closes the connection without
+     * touching `_state`, leaving the transport Ready while its socket is gone -- the exact
+     * combination connect() produced on the device, reachable here without racing anything.
+     */
+    @Test
+    fun runDumpReturnsNullWhenTheSocketClosedUnderAReadyTransport() = runTest {
+        val (signer, line) = FakeAdbDaemon.signer()
+        val fake = FakeAdbDaemon(
+            knownPublicKeyLine = line,
+            shellResponses = mapOf("shell:$CMD_DUMP_BATTERY" to "level: 84\n".toByteArray()),
+        ).also { daemon = it; it.start() }
+        val shell = AdbShell(portProvider = { fake.port }, signer = signer).also { adbShell = it }
+        shell.connect()
+        assertEquals(TransportState.Ready, shell.state.value)
+
+        shell.close()
+
+        assertNull(shell.runDump())
+    }
 }
 
 /** Polls [condition] until it is true or [timeoutMs] elapses, for asserting on an effect
