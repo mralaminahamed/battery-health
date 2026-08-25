@@ -9,6 +9,7 @@ import kotlin.concurrent.thread
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,6 +19,15 @@ class AdbConnectionTest {
 
     @After fun tearDown() { daemon?.stop() }
 
+    /**
+     * Regression test for M2: this test's name promises the already-known-key path never
+     * re-offers the public key, but until now it only checked `result == Connected` and
+     * `fake.authorized` -- both of which stay true even if `handshake()` always skipped
+     * straight to offering the key. In production that re-raises the on-device "Allow USB
+     * debugging?" dialog on *every* connect, destroying the authorize-once design.
+     * [assertNull] on [FakeAdbDaemon.receivedPublicKey] mirrors the assertion
+     * [offersThePublicKeyWhenTheDaemonDoesNotKnowIt] already makes in the other direction.
+     */
     @Test
     fun connectsWhenTheDaemonAlreadyKnowsTheKey() = runTest {
         val (signer, line) = FakeAdbDaemon.signer()
@@ -32,6 +42,7 @@ class AdbConnectionTest {
 
         assertEquals(AdbConnectResult.Connected, result)
         assertTrue(fake.authorized)
+        assertNull(fake.receivedPublicKey)
     }
 
     @Test
