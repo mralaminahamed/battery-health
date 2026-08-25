@@ -7,6 +7,8 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.Modifier
+import com.alaminahamed.batteryhealth.data.settings.DesignCapacitySource
+import com.alaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
 import com.alaminahamed.batteryhealth.domain.BatterySnapshot
 import com.alaminahamed.batteryhealth.domain.CapacityMethod
 import com.alaminahamed.batteryhealth.domain.ChargeState
@@ -77,6 +79,57 @@ class HealthScreenTest {
         // would be ambiguous, so the count is asserted exactly rather than just that the
         // text exists somewhere, the same way LiveScreenTest asserts multiplicity.
         compose.onAllNodesWithText("Not available on this device").assertCountEquals(3)
+    }
+
+    /**
+     * The fix for this whole task: a fresh install on a device the model table doesn't
+     * know now says how to fix it, rather than just reporting Unsupported and stopping.
+     */
+    @Test
+    fun noDesignCapacityPointsTheUserAtTheOverride() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.Unsupported,
+            designCapacity = EffectiveDesignCapacity.None,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText(
+            "No design capacity is known for this device. Set one in Settings to " +
+                "start measuring health from your charge counter -- it still takes a " +
+                "few real charge sessions to produce a number, and it won't add BSOH, " +
+                "first-use date or Battery Protect; those need the privileged tier above.",
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun aKnownDesignCapacityDoesNotShowTheOverrideHint() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.Unsupported,
+            designCapacity = EffectiveDesignCapacity(5000, DesignCapacitySource.Table),
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onAllNodesWithText("Set one in Settings", substring = true).assertCountEquals(0)
+    }
+
+    /**
+     * `headlinePct` can be `Available` from the privileged/ASOC path even while no
+     * design capacity is known at all -- the hint only makes sense while there is
+     * nothing else on this card to show, so a working headline must suppress it too,
+     * not just a known design capacity.
+     */
+    @Test
+    fun aWorkingHeadlineFromThePrivilegedTierAlsoSuppressesTheHint() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(stateOfHealthPct = Reading.Available(91, Source.Privileged)),
+            measured = Reading.Unsupported,
+            designCapacity = EffectiveDesignCapacity.None,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onAllNodesWithText("Set one in Settings", substring = true).assertCountEquals(0)
     }
 
     private fun snapshotWithBatteryProtect(modeEnabled: Boolean, thresholdPct: Int) = snapshot().copy(
