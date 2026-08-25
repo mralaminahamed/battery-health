@@ -68,11 +68,23 @@ class DesignCapacityTableTest {
     }
 
     @Test
-    fun theTestDeviceRemainsUnsupportedByTheTable() {
-        // SM-S948B (Galaxy S26 Ultra) is deliberately not added: no confidently-sourced
-        // design capacity for it was available at the time this table was written. It
-        // stays null here on purpose -- the override in Settings is how this device (or
-        // any other unlisted one) gets a working measured health path.
-        assertNull(DesignCapacityTable.lookup("SM-S948B"))
+    fun anUnlistedModelStaysUnsupported() {
+        // The table must keep returning null for what it does not know, rather than
+        // reaching for a plausible default. That absence is what routes the user to the
+        // Settings override instead of quietly measuring against a wrong design capacity.
+        assertNull(DesignCapacityTable.lookup("SM-X999Z"))
+        assertNull(DesignCapacityTable.lookup("Pixel 9 Pro"))
+    }
+
+    /**
+     * The project's own development device. Verified two ways rather than one: published
+     * specs for `SM-S948B` give 5000 mAh, and the device's own framework readings agree --
+     * a charge counter of 4205 mAh at level 84% implies a full charge of about 5006 mAh,
+     * with the vendor reporting state of health at 100% so full should sit at design.
+     */
+    @Test
+    fun galaxyS26UltraIsKnown() {
+        assertEquals(5000, DesignCapacityTable.lookup("SM-S948B"))
+        assertEquals(5000, DesignCapacityTable.lookup("SM-S948U"))
     }
 }

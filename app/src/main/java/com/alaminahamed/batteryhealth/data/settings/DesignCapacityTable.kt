@@ -31,6 +31,13 @@ object DesignCapacityTable {
         "SM-S931" to 4000,
         "SM-S936" to 4900,
         "SM-S938" to 5000,
+        // Galaxy S26 series
+        // Verified twice over: published specs for SM-S948B give 5000 mAh, and the device's
+        // own framework readings agree -- a 4205 mAh charge counter at level 84% implies a
+        // full charge near 5006 mAh, with the vendor reporting health at 100%. Only the
+        // Ultra is listed; the other S26 models are not here because their figures were not
+        // confirmed to the same standard, and a wrong entry is worse than no entry.
+        "SM-S948" to 5000, // S26 Ultra -- development device
         // Galaxy S26 is deliberately absent: no design capacity for it could be sourced
         // with confidence at the time this table was written (see DesignCapacityTable's
         // own doc on why a wrong entry here is worse than no entry). SM-S948B in

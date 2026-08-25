@@ -260,9 +260,10 @@ Google Play needs the bundle, not the APK:
   one-time `adb tcpip 5555` setup path, confirmed over wireless debugging. The privileged tier
   itself has **not** been exercised end to end on hardware yet.
 
-`DesignCapacityTable` covers the A34/A35/A36/A54/A55/A56 and the S23, S24 and S25 series.
-Galaxy S26 (including this project's own SM-S948B test device) is deliberately not in it: no
-figure for it could be sourced with confidence, and a wrong entry silently corrupts every
+`DesignCapacityTable` covers the A34/A35/A36/A54/A55/A56, the S23, S24 and S25 series, and the
+S26 Ultra. Entries are only added when the figure can be sourced with confidence — the S26
+Ultra's 5000 mAh is corroborated by the device's own readings, a 4205 mAh charge counter at
+level 84% implying a full charge near 5006 mAh — because a wrong entry silently corrupts every
 health percentage the app shows, which is worse than reporting unavailable. On a model the
 table doesn't know, the app reports state of health as unavailable rather than guessing a
 design capacity, but the headline metric no longer has to stay blank until the table grows --
