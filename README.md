@@ -259,9 +259,10 @@ Google Play needs the bundle, not the APK:
   one-time `adb tcpip 5555` setup path, confirmed over wireless debugging. The privileged tier
   itself has **not** been exercised end to end on hardware yet.
 
-`DesignCapacityTable` currently holds a single entry, `SM-A356`. On any other model the app
-reports state of health as unavailable rather than guessing a design capacity — correct
-behaviour, but it means the headline metric is blank on most devices until the table grows.
+`DesignCapacityTable` covers the A34/A35/A54/A55 and the S23 and S24 series. On a model it
+does not know, the app reports state of health as unavailable rather than guessing a design
+capacity — correct behaviour, but it does mean the headline metric is blank until either the
+table grows or the user supplies an override.
 
 Design capacities are looked up per `Build.MODEL`; a model that is not in the table reports
 state of health as unavailable rather than guessing.
