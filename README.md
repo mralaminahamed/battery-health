@@ -10,6 +10,7 @@
 [![Material 3](https://img.shields.io/badge/Material-3-757575.svg?logo=materialdesign&logoColor=white)](https://m3.material.io/)
 [![Room](https://img.shields.io/badge/Room-2.8.4-4285F4.svg)](https://developer.android.com/training/data-storage/room)
 [![Hilt](https://img.shields.io/badge/Hilt-2.60.1-34A853.svg)](https://dagger.dev/hilt/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 </div>
 
@@ -242,3 +243,7 @@ Two conventions are load-bearing rather than stylistic:
   when the property breaks is not evidence that the property holds
 - **The privileged surface stays an allowlist.** Never add a method that takes a command string,
   not even in debug builds
+
+## License
+
+MIT — see [LICENSE](LICENSE).
