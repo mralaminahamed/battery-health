@@ -58,4 +58,30 @@ class DesignLanguageChoiceTest {
             resolveDesignLanguageId(DesignLanguageChoice.Material, "samsung"),
         )
     }
+
+    @Test
+    fun autoDoesNotMatchWhenSamsungIsAPrefixOrSuffix() {
+        // Guards against a `startsWith` or `endsWith` implementation. The resolver must
+        // use exact match only, not substring with prefix/suffix boundaries.
+        for (notExact in listOf("samsungfoo", "foosamsung", "SamsungGalaxy", "myasamsung")) {
+            assertEquals(
+                "manufacturer=$notExact",
+                DesignLanguageId.Expressive,
+                resolveDesignLanguageId(DesignLanguageChoice.Auto, notExact),
+            )
+        }
+    }
+
+    @Test
+    fun autoTrimsWhitespaceFromTheManufacturerString() {
+        // The implementation applies .trim() to handle incidental padding in the
+        // manufacturer string. A padded "samsung" must still resolve to OneUi.
+        for (padded in listOf(" samsung", "samsung ", " samsung ", "\tsamsung\t")) {
+            assertEquals(
+                "manufacturer=$padded",
+                DesignLanguageId.OneUi,
+                resolveDesignLanguageId(DesignLanguageChoice.Auto, padded),
+            )
+        }
+    }
 }
