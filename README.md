@@ -223,9 +223,31 @@ adb shell am start -n com.mralaminahamed.batteryhealth/.MainActivity
 R8 is enabled for the release build type; project-specific keep rules live in
 `app/src/main/keepRules/` and AGP discovers them automatically.
 
-> **The release build type currently reuses the debug keystore.** That is deliberate and
-> temporary, so the R8-optimized build can be exercised on-device — a debug-signed release must
-> never be distributed. A real signing config has to replace it before any release ships.
+Release signing reads from `keystore.properties` at the repo root, falling back to the
+environment so CI needs no file on disk. Copy the template and fill it in:
+
+```bash
+cp keystore.properties.example keystore.properties
+
+keytool -genkeypair -v -keystore upload-keystore.jks -alias upload \
+        -keyalg RSA -keysize 4096 -validity 10000
+```
+
+`keystore.properties`, `*.jks` and `*.keystore` are gitignored. **Back the keystore up
+somewhere outside this repository** — losing it means losing the ability to publish updates
+under the same app identity. The CI equivalents are `RELEASE_STORE_FILE`,
+`RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD`.
+
+> **With no credentials configured, release builds are produced unsigned** — `assemblePlayRelease`
+> emits `app-play-release-unsigned.apk`. That is deliberate: the alternative, falling back to
+> the debug key, yields an artifact Play rejects at upload and that is easy to ship somewhere
+> by accident. An artifact that cannot be installed is the cheaper mistake.
+
+Google Play needs the bundle, not the APK:
+
+```bash
+./gradlew :app:bundlePlayRelease   # app/build/outputs/bundle/playRelease/app-play-release.aab
+```
 
 ## Verified on
 
