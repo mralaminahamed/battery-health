@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/icon-256.png" alt="Samsung Battery Health icon" width="96" height="96">
+<img src="assets/icon-256.png" alt="Battery Health icon" width="96" height="96">
 
-# Samsung Battery Health — Developer Guide
+# Battery Health — Developer Guide
 
 **Measure what Android will not tell you — an Android app that derives real battery capacity from charge-counter sampling, and reaches the metrics the platform hides through an ADB client it speaks itself, with no companion app and no third-party dependency.**
 
@@ -112,7 +112,7 @@ flowchart TD
 ```
 
 ```
-app/src/main/java/com/mralaminahamed/batteryhealth/
+app/src/main/java/com/alaminahamed/batteryhealth/
 ├── MainActivity.kt          Entry point; installs the splash screen
 ├── BatteryHealthApplication.kt
 ├── domain/                  Reading<T>, BatterySnapshot, HealthReport, ChargeSession
@@ -134,7 +134,7 @@ app/src/main/java/com/mralaminahamed/batteryhealth/
     └── theme/               Tokens, typography, BatteryHealthTheme
 ```
 
-- `applicationId` / `namespace`: `com.mralaminahamed.batteryhealth`
+- `applicationId` / `namespace`: `com.alaminahamed.batteryhealth`
 - UI is entirely Jetpack Compose with Material 3; there are no XML layouts beyond the splash
   theme
 - Dynamic colour is deliberately off — the fixed Samsung blue is the product identity
@@ -215,7 +215,7 @@ Two things that will otherwise cost you time:
 Launch the installed app from a shell:
 
 ```bash
-adb shell am start -n com.mralaminahamed.batteryhealth/.MainActivity
+adb shell am start -n com.alaminahamed.batteryhealth/.MainActivity
 ```
 
 ### Release builds
@@ -223,9 +223,31 @@ adb shell am start -n com.mralaminahamed.batteryhealth/.MainActivity
 R8 is enabled for the release build type; project-specific keep rules live in
 `app/src/main/keepRules/` and AGP discovers them automatically.
 
-> **The release build type currently reuses the debug keystore.** That is deliberate and
-> temporary, so the R8-optimized build can be exercised on-device — a debug-signed release must
-> never be distributed. A real signing config has to replace it before any release ships.
+Release signing reads from `keystore.properties` at the repo root, falling back to the
+environment so CI needs no file on disk. Copy the template and fill it in:
+
+```bash
+cp keystore.properties.example keystore.properties
+
+keytool -genkeypair -v -keystore upload-keystore.jks -alias upload \
+        -keyalg RSA -keysize 4096 -validity 10000
+```
+
+`keystore.properties`, `*.jks` and `*.keystore` are gitignored. **Back the keystore up
+somewhere outside this repository** — losing it means losing the ability to publish updates
+under the same app identity. The CI equivalents are `RELEASE_STORE_FILE`,
+`RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD`.
+
+> **With no credentials configured, release builds are produced unsigned** — `assemblePlayRelease`
+> emits `app-play-release-unsigned.apk`. That is deliberate: the alternative, falling back to
+> the debug key, yields an artifact Play rejects at upload and that is easy to ship somewhere
+> by accident. An artifact that cannot be installed is the cheaper mistake.
+
+Google Play needs the bundle, not the APK:
+
+```bash
+./gradlew :app:bundlePlayRelease   # app/build/outputs/bundle/playRelease/app-play-release.aab
+```
 
 ## Verified on
 

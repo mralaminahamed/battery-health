@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shipping Battery Health to Play</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --ground:      #F4F6F9;
+    --surface:     #FFFFFF;
+    --surface-alt: #EDF0F5;
+    --ink:         #101724;
+    --ink-soft:    #4B5768;
+    --ink-faint:   #79849A;
+    --accent:      #0F62FE;
+    --accent-soft: #E7EEFE;
+    --danger:      #A9200F;
+    --danger-soft: #FBEAE7;
+    --warn:        #8A5200;
+    --warn-soft:   #FBF1DF;
+    --ok:          #1F6B3B;
+    --line:        #DDE3EC;
+    --line-firm:   #C3CCDA;
+    --code-bg:     #10192B;
+    --code-ink:    #DCE5F2;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0B0F17;
+      --surface:     #121926;
+      --surface-alt: #182130;
+      --ink:         #E7ECF5;
+      --ink-soft:    #A2AEC1;
+      --ink-faint:   #74809A;
+      --accent:      #77A5FF;
+      --accent-soft: #16243D;
+      --danger:      #FF9584;
+      --danger-soft: #2E1613;
+      --warn:        #E7B45C;
+      --warn-soft:   #2A2011;
+      --ok:          #6FCB92;
+      --line:        #222C3D;
+      --line-firm:   #334056;
+      --code-bg:     #060A12;
+      --code-ink:    #CFDAEC;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0B0F17;
+    --surface:     #121926;
+    --surface-alt: #182130;
+    --ink:         #E7ECF5;
+    --ink-soft:    #A2AEC1;
+    --ink-faint:   #74809A;
+    --accent:      #77A5FF;
+    --accent-soft: #16243D;
+    --danger:      #FF9584;
+    --danger-soft: #2E1613;
+    --warn:        #E7B45C;
+    --warn-soft:   #2A2011;
+    --ok:          #6FCB92;
+    --line:        #222C3D;
+    --line-firm:   #334056;
+    --code-bg:     #060A12;
+    --code-ink:    #CFDAEC;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px 120px; }
+
+  /* ---- masthead ---- */
+  header.top {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    padding: 56px 0 40px;
+    margin-bottom: 48px;
+  }
+  header.top .wrap { padding-bottom: 0; display: flex; flex-direction: column; gap: 18px; }
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 12px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(32px, 5.2vw, 48px);
+    line-height: 1.08;
+    letter-spacing: -.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 19px; color: var(--ink-soft);
+    max-width: 62ch; margin: 0;
+  }
+  .facts {
+    display: flex; flex-wrap: wrap; gap: 8px 28px;
+    padding-top: 10px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  .facts b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---- sections ---- */
+  h2 {
+    font-family: var(--display);
+    font-size: 13px; font-weight: 700;
+    letter-spacing: .16em; text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 64px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line-firm);
+  }
+  h2:first-of-type { margin-top: 0; }
+
+  /* ---- steps: real sequence, so numbers carry meaning ---- */
+  .step {
+    display: grid;
+    grid-template-columns: 46px 1fr;
+    gap: 0 20px;
+    padding: 26px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .step:last-child { border-bottom: none; }
+  .num {
+    font-family: var(--mono);
+    font-size: 13px; font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 3px;
+    height: 30px; width: 38px;
+    display: grid; place-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .step h3 {
+    font-family: var(--display);
+    font-size: 20px; font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 2px 0 8px;
+    text-wrap: balance;
+  }
+  .step > div > :last-child { margin-bottom: 0; }
+  .step p { margin: 0 0 12px; max-width: 66ch; }
+  .where {
+    font-family: var(--mono); font-size: 12.5px;
+    color: var(--ink-faint); margin: 0 0 10px;
+  }
+  .where::before { content: "▸ "; color: var(--accent); }
+
+  /* ---- code ---- */
+  pre {
+    background: var(--code-bg); color: var(--code-ink);
+    font-family: var(--mono); font-size: 13px; line-height: 1.65;
+    padding: 16px 18px; border-radius: 6px;
+    overflow-x: auto; margin: 0 0 14px;
+  }
+  code { font-family: var(--mono); font-size: .89em; }
+  p code, li code, td code {
+    background: var(--surface-alt); color: var(--ink);
+    padding: 1px 5px; border-radius: 3px;
+    border: 1px solid var(--line);
+  }
+
+  /* ---- callouts ---- */
+  .note {
+    border-left: 3px solid var(--line-firm);
+    background: var(--surface);
+    padding: 16px 18px; margin: 0 0 16px;
+    border-radius: 0 5px 5px 0;
+  }
+  .note p { margin: 0 0 10px; }
+  .note p:last-child { margin: 0; }
+  .note .label {
+    font-family: var(--display); font-size: 11px; font-weight: 700;
+    letter-spacing: .13em; text-transform: uppercase;
+    display: block; margin-bottom: 7px;
+  }
+  .stop { border-left-color: var(--danger); background: var(--danger-soft); }
+  .stop .label { color: var(--danger); }
+  .care { border-left-color: var(--warn); background: var(--warn-soft); }
+  .care .label { color: var(--warn); }
+  .done { border-left-color: var(--ok); background: var(--surface); }
+  .done .label { color: var(--ok); }
+
+  /* ---- tables ---- */
+  .scroll { overflow-x: auto; margin: 0 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td {
+    text-align: left; padding: 9px 14px 9px 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--display); font-size: 11px; font-weight: 700;
+    letter-spacing: .11em; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  td:first-child { white-space: nowrap; padding-right: 22px; }
+
+  ul { margin: 0 0 14px; padding-left: 20px; }
+  li { margin-bottom: 6px; max-width: 64ch; }
+  li::marker { color: var(--accent); }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px;
+  }
+  strong { font-weight: 600; }
+
+  footer {
+    margin-top: 72px; padding-top: 20px;
+    border-top: 1px solid var(--line-firm);
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink-faint);
+  }
+
+  @media (max-width: 620px) {
+    .step { grid-template-columns: 1fr; gap: 10px; }
+    .num { width: 38px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <span class="eyebrow">Battery Health</span>
+    <h1>Shipping to Google Play</h1>
+    <p class="standfirst">
+      Everything between the current repository state and a live listing — including two
+      decisions that cannot be reversed once the first upload lands.
+    </p>
+    <div class="facts">
+      <span><b>Package</b> com.alaminahamed.batteryhealth</span>
+      <span><b>Name</b> Battery Health</span>
+      <span><b>Version</b> 0.1.0 (1)</span>
+      <span><b>Flavour</b> play</span>
+      <span><b>minSdk</b> 26</span>
+      <span><b>targetSdk</b> 37</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <h2>Read before anything else</h2>
+
+  <div class="note stop">
+    <span class="label">Irreversible — decide now</span>
+    <p>
+      <strong>The application ID is permanent from the first upload.</strong> Google Play keys a
+      listing on its package name forever. It cannot be renamed, and a different ID is a
+      different app: new listing, zero installs, zero reviews, no upgrade path for anyone who
+      installed the old one.
+    </p>
+    <p>
+      <strong>Settled.</strong> The package is now
+      <code>com.alaminahamed.batteryhealth</code> — renamed across 130 files in commit
+      <code>7a9b2db</code>, verified in the built bundle, and done before any upload. Nothing
+      further is needed here; it is recorded because it is the one choice on this page that can
+      never be revisited.
+    </p>
+  </div>
+
+  <div class="note care">
+    <span class="label">Blocks submission</span>
+    <p>
+      <strong>The privacy policy needs a publicly reachable URL.</strong> The policy is written
+      and committed at <code>docs/privacy-policy.md</code>, but this repository is
+      <strong>private</strong>, so no GitHub link to it will resolve for a reviewer. Host it
+      somewhere public before you reach step 13.
+    </p>
+  </div>
+
+  <div class="note">
+    <span class="label">Unverified</span>
+    <p>
+      The privileged tier — the ADB handshake, Keystore signing, the authorisation prompt — has
+      never successfully run on real hardware. It is covered by 265 unit tests against a
+      protocol-speaking fake daemon, which is not the same claim. Finishing the on-device pass
+      before you publish is strongly advised.
+    </p>
+  </div>
+
+  <h2>Part one · Build a publishable artifact</h2>
+
+  <div class="step">
+    <span class="num">01</span>
+    <div>
+      <h3>Application ID: com.alaminahamed.batteryhealth</h3>
+      <p>
+        <strong>Decided and applied</strong> — commit <code>7a9b2db</code> moved all five source
+        sets and rewrote every reference. <code>namespace</code> and <code>applicationId</code>
+        match, and the built bundle carries the new ID.
+      </p>
+      <p>
+        This had to happen before the first upload and it did. Play binds a listing to its
+        package name on that upload and never lets it change.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">02</span>
+    <div>
+      <h3>App name: Battery Health</h3>
+      <p>
+        <strong>Decided.</strong> The store title is <strong>Battery Health</strong> — matching
+        <code>app_name</code> in <code>strings.xml</code>, which already says exactly that. No code
+        change is needed, and the launcher label and store listing now agree.
+      </p>
+      <div class="note care">
+        <span class="label">Why not "Samsung Battery Health"</span>
+        <p>
+          Play's Impersonation policy forbids titles that suggest a relationship with another
+          company that does not exist. A battery app named for Samsung, published by an individual
+          developer, reads as first-party Samsung software — a clear-cut rejection, and a more
+          likely one than the ADB question further down. "Galaxy" carries the same trademark and
+          the same risk.
+        </p>
+        <p>
+          Device compatibility belongs in the description, where it is descriptive rather than
+          claimed: <em>"Works with Samsung Galaxy devices"</em> is fine. The trademark in the
+          <em>title</em> is not.
+        </p>
+      </div>
+      <p>
+        The known cost is discoverability — the name is generic, and Play enforces uniqueness on
+        the package name rather than the title, so you will sit among many identical results. That
+        is an acceptable trade for an internal-track release, and unlike the package name the
+        store title <strong>can be changed later</strong> if you want something more distinctive
+        once the app is proven.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">03</span>
+    <div>
+      <h3>Create the upload key</h3>
+      <p>Generate it yourself and keep it out of the repository.</p>
+<pre>keytool -genkeypair -v \
+  -keystore upload-keystore.jks \
+  -alias upload \
+  -keyalg RSA -keysize 4096 -validity 10000</pre>
+      <div class="note stop">
+        <span class="label">Back this up</span>
+        <p>
+          Losing the keystore means losing the ability to publish updates under this listing,
+          permanently. Store a copy somewhere outside the repository and outside this machine.
+          <code>*.jks</code> and <code>*.keystore</code> are gitignored so it cannot be committed
+          by accident.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">04</span>
+    <div>
+      <h3>Wire the credentials in</h3>
+<pre>cp keystore.properties.example keystore.properties
+# then fill in storeFile, storePassword, keyAlias, keyPassword</pre>
+      <p>
+        <code>keystore.properties</code> is gitignored. For CI, set <code>RELEASE_STORE_FILE</code>,
+        <code>RELEASE_STORE_PASSWORD</code>, <code>RELEASE_KEY_ALIAS</code> and
+        <code>RELEASE_KEY_PASSWORD</code> instead — no file on disk is needed.
+      </p>
+      <p>
+        With nothing configured, release builds come out <strong>unsigned</strong> rather than
+        falling back to the debug key. That is deliberate: Play rejects debug-signed uploads, and
+        an unsigned artifact fails loudly instead of quietly shipping wrong.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">05</span>
+    <div>
+      <h3>Set the version</h3>
+      <p>
+        In <code>app/build.gradle.kts</code>. <code>versionCode</code> must increase on every
+        single upload — Play refuses a code it has already seen, even on a closed track, and even
+        for a build you deleted.
+      </p>
+      <p>
+        <code>versionCode = 1</code> and <code>versionName = "0.1.0"</code> are fine for a first
+        internal build.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">06</span>
+    <div>
+      <h3>Build the bundle</h3>
+      <p>Play takes an <code>.aab</code>. An APK will be rejected at upload.</p>
+<pre>./gradlew clean :app:bundlePlayRelease</pre>
+      <p class="where">app/build/outputs/bundle/playRelease/app-play-release.aab</p>
+      <p>
+        Build the <code>play</code> flavour, never <code>full</code>. The <code>full</code> flavour
+        declares <code>QUERY_ALL_PACKAGES</code>, which Play does not accept for battery
+        attribution; <code>play</code> deliberately omits it.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">07</span>
+    <div>
+      <h3>Verify it is actually signed</h3>
+      <p>Cheaper to check here than to be rejected at upload.</p>
+<pre>unzip -l app/build/outputs/bundle/playRelease/app-play-release.aab \
+  | grep -E 'META-INF/.*\.(RSA|DSA|EC)'</pre>
+      <p>
+        A match means signed. <strong>No output means unsigned</strong> — your credentials were not
+        picked up, so go back to step 4.
+      </p>
+    </div>
+  </div>
+
+  <h2>Part two · Console setup</h2>
+
+  <div class="step">
+    <span class="num">08</span>
+    <div>
+      <h3>Developer account</h3>
+      <p class="where">play.google.com/console</p>
+      <p>
+        A one-time 25 USD registration fee. Individual accounts now require identity
+        verification, and new personal developer accounts must run a closed test with
+        <strong>at least 12 testers for 14 continuous days</strong> before production access is
+        granted. Plan for that timeline — it is not a formality you can skip at the end.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">09</span>
+    <div>
+      <h3>Create the app</h3>
+      <p class="where">All apps → Create app</p>
+      <div class="scroll">
+        <table>
+          <tr><th>Field</th><th>Value</th></tr>
+          <tr><td>App name</td><td>Battery Health <span style="color:var(--ink-faint)">(matches app_name; 30 char limit)</span></td></tr>
+          <tr><td>Default language</td><td>English (United States)</td></tr>
+          <tr><td>App or game</td><td>App</td></tr>
+          <tr><td>Free or paid</td><td>Free</td></tr>
+        </table>
+      </div>
+      <p>
+        Free to paid is a one-way door as well — a free app can never be converted to paid later.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">10</span>
+    <div>
+      <h3>Enrol in Play App Signing</h3>
+      <p>
+        Effectively mandatory for new apps. Google holds the app signing key and re-signs for
+        distribution; your upload key only proves the upload came from you.
+      </p>
+      <p>
+        The practical upside: if the upload key from step 3 is ever lost or compromised, it can be
+        reset. The app signing key cannot — which is exactly why Google keeps it.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">11</span>
+    <div>
+      <h3>Store listing</h3>
+      <p class="where">Grow → Store presence → Main store listing</p>
+      <div class="scroll">
+        <table>
+          <tr><th>Asset</th><th>Requirement</th><th>Status</th></tr>
+          <tr><td>App icon</td><td>512 × 512 PNG, 32-bit</td><td>Derivable from the adaptive icon vectors</td></tr>
+          <tr><td>Feature graphic</td><td>1024 × 500 PNG or JPEG</td><td>Not created</td></tr>
+          <tr><td>Phone screenshots</td><td>2–8 images, 16:9 or 9:16</td><td>Needs the app running on a device</td></tr>
+          <tr><td>Short description</td><td>80 characters</td><td>Draft below</td></tr>
+          <tr><td>Full description</td><td>4000 characters</td><td>Adapt from the README</td></tr>
+        </table>
+      </div>
+      <p>Short description, at 76 characters:</p>
+<pre>Measure real battery capacity from charge data — no guessing, no fake numbers.</pre>
+      <div class="note care">
+        <span class="label">Wording matters here</span>
+        <p>
+          Do not claim the app <em>reads</em> state of health. It measures capacity by sampling
+          charge counters, and reports unavailable when it cannot. A listing that overpromises
+          invites both one-star reviews and a policy complaint about misleading claims.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">12</span>
+    <div>
+      <h3>App access — do not skip this one</h3>
+      <p class="where">Policy → App content → App access</p>
+      <p>
+        The privileged tier is off until a user runs a setup step. A reviewer who launches the app
+        cold sees most metrics reporting unavailable, and may reasonably conclude it is broken.
+      </p>
+      <p>Choose <strong>All or some functionality is restricted</strong> and give the reviewer instructions:</p>
+<pre>Advanced battery metrics (state of health, first-use date) require a
+one-time setup, because Android restricts them to system apps.
+
+1. Enable Developer options, then USB debugging.
+2. From a computer with adb installed, run:  adb tcpip 5555
+3. Open the app and tap "Unlock more readings".
+4. Approve the "Allow USB debugging?" prompt shown on the device.
+
+No account or credentials are needed. Without this the app still works
+and honestly reports the affected metrics as unavailable.</pre>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">13</span>
+    <div>
+      <h3>Privacy policy</h3>
+      <p class="where">Policy → App content → Privacy policy</p>
+      <p>
+        Paste the public URL. The content is ready at <code>docs/privacy-policy.md</code> — it just
+        needs hosting somewhere a reviewer can load without a login.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">14</span>
+    <div>
+      <h3>Data safety</h3>
+      <p class="where">Policy → App content → Data safety</p>
+      <p>
+        Answers are prepared in <code>docs/play-data-safety.md</code>. The short version: the app
+        collects and shares <strong>nothing</strong>. Play defines "collect" as transmitting off
+        the device, and this app makes no outbound requests at all.
+      </p>
+      <p>
+        Expect the <code>INTERNET</code> permission to draw attention. The answer is that Android
+        enforces it at socket creation regardless of destination and does not exempt loopback, so
+        an app cannot talk to its own device without it — and a test fails the build if any source
+        opens a socket that could reach anywhere else.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">15</span>
+    <div>
+      <h3>Foreground service declaration</h3>
+      <p class="where">Policy → App content → Foreground service permissions</p>
+      <p>
+        The manifest already carries the required <code>PROPERTY_SPECIAL_USE_FGS_SUBTYPE</code>
+        subtag — the part most submissions get wrong. Paste the matching justification verbatim:
+      </p>
+<pre>Samples battery charge counters every five seconds while charging to
+measure full capacity, which cannot be derived from 15-minute periodic
+work.</pre>
+      <p>
+        If pressed: WorkManager's floor is a 15-minute period, at which cadence charge-counter
+        deltas are dominated by noise and the derived capacity is not trustworthy. No other
+        foreground service type describes this use.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">16</span>
+    <div>
+      <h3>Content rating, audience, ads</h3>
+      <p class="where">Policy → App content</p>
+      <ul>
+        <li><strong>Content rating</strong> — a questionnaire. A utility with no user content rates as Everyone / PEGI 3.</li>
+        <li><strong>Target audience</strong> — 18+. Selecting any child age band pulls the app into Families policy and a stricter review.</li>
+        <li><strong>Ads</strong> — no. The app contains no ad SDK.</li>
+        <li><strong>Government apps</strong> — no.</li>
+        <li><strong>Financial features</strong> — none.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Part three · Release</h2>
+
+  <div class="step">
+    <span class="num">17</span>
+    <div>
+      <h3>Internal testing first</h3>
+      <p class="where">Test and release → Testing → Internal testing</p>
+      <p>
+        Up to 100 testers, available within minutes, and it does not go through full review. Use
+        it to confirm the signed bundle installs and the privileged tier works from a real Play
+        install — not a sideloaded debug build.
+      </p>
+      <p>
+        This also surfaces anything R8 broke in the release build that debug never exercised.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">18</span>
+    <div>
+      <h3>Upload and roll out</h3>
+      <ul>
+        <li>Create a release, upload the <code>.aab</code> from step 6.</li>
+        <li>Write release notes — for 0.1.0, what the app does and that the advanced tier needs setup.</li>
+        <li>Save → Review release → Start rollout.</li>
+      </ul>
+      <p>
+        Internal builds go live in minutes. Closed and production tracks take days, and a first
+        submission usually takes longer than later ones.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">19</span>
+    <div>
+      <h3>Closed test, then production</h3>
+      <p>
+        For a new personal developer account, production is gated behind a closed test with 12+
+        testers running 14 continuous days. Start that clock as early as you can — it is usually
+        the longest item on this page.
+      </p>
+    </div>
+  </div>
+
+  <h2>Risks specific to this app</h2>
+
+  <div class="note care">
+    <span class="label">Policy · genuinely uncertain</span>
+    <p>
+      An app that instructs users to enable ADB debugging and then acts as an ADB client against
+      its own device sits in unsettled territory under
+      <strong>Device and Network Abuse</strong>, which covers circumventing the Android permission
+      model. Shizuku-based apps exist on Play, but this shape is different — the app is the client
+      itself.
+    </p>
+    <p>
+      Two facts are worth having ready if it is questioned. The privileged surface is exactly two
+      commands compiled in as constants, with no method anywhere accepting a command string, so it
+      is structurally incapable of running anything else. And the tier is entirely optional — the
+      app works without it and says so rather than estimating.
+    </p>
+    <p>
+      A rejection here is not fatal but costs a review cycle. The internal track lets you learn
+      this cheaply.
+    </p>
+  </div>
+
+  <div class="note">
+    <span class="label">Product</span>
+    <p>
+      <code>DesignCapacityTable</code> holds exactly one entry — <code>SM-A356</code>. Every other
+      device reports state of health as unavailable, which is honest but means most installs see
+      the app's headline feature blank. Worth either expanding the table or setting expectations
+      clearly in the listing before a public launch.
+    </p>
+  </div>
+
+  <h2>Order of work</h2>
+
+  <div class="note done">
+    <span class="label">Recommended sequence</span>
+    <ul>
+      <li><strong>Decide the package name.</strong> Free now, impossible later.</li>
+      <li><strong>App name is settled: Battery Health.</strong> Matches the launcher label already; no trademark exposure.</li>
+      <li><strong>Finish on-device verification.</strong> Do not ship an unproven core feature.</li>
+      <li><strong>Host the privacy policy.</strong> Blocks submission outright.</li>
+      <li><strong>Keystore, then bundle, then internal track.</strong> Cheapest way to learn what breaks.</li>
+      <li><strong>Screenshots and feature graphic.</strong> Only worth the effort once the app is proven.</li>
+      <li><strong>Start the 14-day closed test.</strong> The long pole — begin it early.</li>
+    </ul>
+  </div>
+
+  <footer>
+    Generated 25 August 2026 · verified against the repository at commit f4265ed on branch
+    release-readiness · steps 7–18 describe Play Console as of this date and its layout does shift
+  </footer>
+
+</div>
+</body>
+</html>
