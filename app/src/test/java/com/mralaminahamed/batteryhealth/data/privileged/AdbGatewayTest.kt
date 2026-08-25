@@ -19,11 +19,13 @@ class AdbGatewayTest {
         override val state = flow
         var connectCalls = 0
             private set
+        var refreshCalls = 0
+            private set
 
         override suspend fun runDump() = dump
         override suspend fun runCheckin() = checkin
         override suspend fun connect() { connectCalls++ }
-        override fun refresh() = Unit
+        override fun refresh() { refreshCalls++ }
     }
 
     @Test
@@ -82,5 +84,56 @@ class AdbGatewayTest {
 
         // Constructing the gateway must not raise Magisk's dialog.
         assertEquals(0, root.connectCalls)
+    }
+
+    // connect() itself -- as opposed to construction, which the test above covers -- was
+    // previously unexercised entirely: deleting `if (shouldConnectRoot())`, inverting it,
+    // or dropping `adb.connect()` from AdbGateway.connect() all left every test green. The
+    // three tests below each pin one edge of that gate.
+
+    @Test
+    fun connectAlwaysDialsAdbRegardlessOfShouldConnectRoot() = runTest {
+        val adb = FakeShell()
+        val gateway = AdbGateway(FakeShell(), adb, shouldConnectRoot = { false })
+
+        gateway.connect()
+
+        // adb has no on-device dialog of its own to raise unprompted, so it is dialed
+        // unconditionally -- see AdbGateway.connect()'s own doc.
+        assertEquals(1, adb.connectCalls)
+    }
+
+    @Test
+    fun connectProbesRootWhenShouldConnectRootReturnsTrue() = runTest {
+        val root = FakeShell()
+        val gateway = AdbGateway(root, FakeShell(), shouldConnectRoot = { true })
+
+        gateway.connect()
+
+        assertEquals(1, root.connectCalls)
+    }
+
+    @Test
+    fun connectNeverProbesRootWhenShouldConnectRootReturnsFalse() = runTest {
+        val root = FakeShell()
+        val gateway = AdbGateway(root, FakeShell(), shouldConnectRoot = { false })
+
+        gateway.connect()
+
+        // Running `su` at all is what raises Magisk's own grant dialog, so this must stay
+        // gated -- an unconditional root.connect() here would pop that dialog unprompted.
+        assertEquals(0, root.connectCalls)
+    }
+
+    @Test
+    fun refreshReChecksBothTransports() = runTest {
+        val root = FakeShell()
+        val adb = FakeShell()
+        val gateway = AdbGateway(root, adb)
+
+        gateway.refresh()
+
+        assertEquals(1, root.refreshCalls)
+        assertEquals(1, adb.refreshCalls)
     }
 }
