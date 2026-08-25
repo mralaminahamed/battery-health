@@ -11,12 +11,13 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class AppsViewModel @Inject constructor(
     private val repository: BatteryRepository,
-    private val shizuku: PrivilegedBatterySource,
+    private val privileged: PrivilegedBatterySource,
     private val rowMapper: AppRowMapper,
 ) : ViewModel() {
 
@@ -24,10 +25,10 @@ class AppsViewModel @Inject constructor(
         repository.appPower(),
         repository.appPowerFailed,
         repository.appPowerLoading,
-        shizuku.state,
+        privileged.state,
     ) { entries, failed, loading, availability ->
         AppsUiState(
-            shizukuAvailability = availability,
+            privilegedAvailability = availability,
             // Reading.map, the same extension every other screen's Reading transforms
             // go through -- label resolution happens per row here, not inside
             // BatteryRepository, because AppRowMapper needs AppLabelResolver
@@ -42,27 +43,28 @@ class AppsViewModel @Inject constructor(
         initialValue = AppsUiState(),
     )
 
-    /** Same no-op-outside-PermissionNotGranted contract as
-     * `HealthViewModel.requestShizukuPermission` -- see `PrivilegedBatterySource.requestPermission`'s
-     * own doc. */
-    fun requestShizukuPermission() {
-        shizuku.requestPermission()
+    /** Same no-op-unless-there-is-something-to-connect contract as
+     * `HealthViewModel.connectPrivilegedTier` -- see `PrivilegedBatterySource.connect`'s
+     * own doc. `connect()` is `suspend`, so this launches it on [viewModelScope]. */
+    fun connectPrivilegedTier() {
+        viewModelScope.launch { privileged.connect() }
     }
 
     /**
-     * Called from every `ON_RESUME`, mirroring `HealthViewModel.refreshShizuku`: installing
-     * or granting Shizuku happens outside this app entirely, so re-checking on resume is
-     * what notices it without needing this screen recreated. Also retries the privileged
-     * read via [BatteryRepository.retryPrivilegedDump] -- the same shared trigger
-     * `BatteryRepository.appPower` and `BatteryRepository.snapshots` both react to, so
-     * this one call refreshes both screens' privileged data, not just this one's.
+     * Called from every `ON_RESUME`, mirroring `HealthViewModel.refreshPrivilegedTier`:
+     * enabling wireless debugging or granting root happens outside this app entirely, so
+     * re-checking on resume is what notices it without needing this screen recreated.
+     * Also retries the privileged read via [BatteryRepository.retryPrivilegedDump] -- the
+     * same shared trigger `BatteryRepository.appPower` and `BatteryRepository.snapshots`
+     * both react to, so this one call refreshes both screens' privileged data, not just
+     * this one's.
      */
-    fun refreshShizuku() {
-        shizuku.refresh()
+    fun refreshPrivilegedTier() {
+        privileged.refresh()
         repository.retryPrivilegedDump()
     }
 
-    /** The Apps screen's manual "Retry" action on `UnlockCard` once it is `Bound` but the
+    /** The Apps screen's manual "Retry" action on `UnlockCard` once it is `Ready` but the
      * last checkin attempt failed -- see `BatteryRepository.appPowerFailed`. */
     fun retryPrivilegedDump() {
         repository.retryPrivilegedDump()

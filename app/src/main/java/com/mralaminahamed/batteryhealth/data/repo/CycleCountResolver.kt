@@ -11,7 +11,7 @@ import com.mralaminahamed.batteryhealth.domain.Source
  * Every other privileged-only field this app reads (ASOC, BSOH, first-use date) has no
  * framework counterpart to weigh against, so `BatteryRepository`'s general
  * `privilegedReading`/`privilegedAbsence` pair -- Available when the dump has it,
- * otherwise Unsupported if a dump was obtained at all, NeedsShizuku if it was not -- is
+ * otherwise Unsupported if a dump was obtained at all, NeedsPrivilegedAccess if it was not -- is
  * the whole answer there. Reusing that general rule unchanged for cycle count would be
  * this codebase's recurring defect shape (a general rule where a more specific one is
  * required) all over again: it has no way to fall back to a real framework reading just
@@ -24,26 +24,27 @@ import com.mralaminahamed.batteryhealth.domain.Source
 internal object CycleCountResolver {
 
     /**
-     * [dumpAvailable] carries the same bound-vs-failed-vs-absent distinction
-     * `BatteryRepository.privilegedReading` already relies on: `false` only when Shizuku
-     * was never bound (or the shell call itself failed), never merely because this one
-     * field happened to be missing from an otherwise-successful dump.
+     * [dumpAvailable] carries the same connected-vs-failed-vs-absent distinction
+     * `BatteryRepository.privilegedReading` already relies on: `false` only when the
+     * privileged tier was never connected (or the shell call itself failed), never merely
+     * because this one field happened to be missing from an otherwise-successful dump.
      *
      * - [privilegedCycles] present -> `Available(Privileged)`, regardless of what the
      *   broadcast says: Samsung's own accumulated figure is the more direct measurement of
      *   this device's actual history, so it wins outright rather than merely on points.
      * - [privilegedCycles] absent but [broadcastCycles] present -> `Available(Framework)`.
      *   The fallback the general privileged-only rule cannot express: a real number
-     *   already in hand must not be hidden behind "Needs Shizuku" or "Not available" just
-     *   because the more detailed source did not also have it -- whether that is because
-     *   Shizuku was never bound, or because it was bound and the dump simply omitted the
-     *   field.
+     *   already in hand must not be hidden behind "Needs privileged access" or "Not
+     *   available" just because the more detailed source did not also have it -- whether
+     *   that is because the privileged tier was never connected, or because it was
+     *   connected and the dump simply omitted the field.
      * - Both absent -> [dumpAvailable] decides which absence is true, exactly as
      *   `privilegedAbsence` already does for every other field: `Unsupported` once a real
-     *   dump was obtained and still did not carry it (granting Shizuku again cannot help),
-     *   `NeedsShizuku` when there was no dump to try at all (it might still help). This is
-     *   the one branch where bound-but-absent and never-bound must land differently, and
-     *   the only reason [dumpAvailable] is threaded through at all.
+     *   dump was obtained and still did not carry it (reconnecting the privileged tier
+     *   again cannot help), `NeedsPrivilegedAccess` when there was no dump to try at all
+     *   (it might still help). This is the one branch where connected-but-absent and
+     *   never-connected must land differently, and the only reason [dumpAvailable] is
+     *   threaded through at all.
      */
     fun resolve(
         privilegedCycles: Int?,
@@ -53,6 +54,6 @@ internal object CycleCountResolver {
         privilegedCycles != null -> Reading.Available(privilegedCycles, Source.Privileged)
         broadcastCycles != null -> Reading.Available(broadcastCycles, Source.Framework)
         dumpAvailable -> Reading.Unsupported
-        else -> Reading.NeedsShizuku
+        else -> Reading.NeedsPrivilegedAccess
     }
 }

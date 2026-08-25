@@ -53,8 +53,41 @@ class SettingsStore @Inject constructor(private val context: Context) {
         .map { prefs -> prefs[CURRENT_SCALE]?.let { stored -> runCatching { CurrentScale.valueOf(stored) }.getOrNull() } }
         .distinctUntilChanged()
 
+    /**
+     * The TCP port the ADB client dials on loopback. User-overridable because they choose
+     * the port when running `adb tcpip N`; absent devices default to the standard port 5555.
+     */
+    val adbPort: Flow<Int> =
+        context.dataStore.data.map { it[ADB_PORT] ?: 5555 }.distinctUntilChanged()
+
+    /**
+     * Whether the user has previously granted root access to the privileged gateway.
+     * Load-bearing default of false: probing by running su raises Magisk's grant dialog,
+     * and defaulting true here would trigger that dialog on first launch before the user
+     * has asked for anything — hostile in a battery app. The flag exists so the gateway
+     * skips a probe the user has already answered, never triggering one they haven't.
+     */
+    val rootPreviouslyGranted: Flow<Boolean> =
+        context.dataStore.data.map { it[ROOT_PREVIOUSLY_GRANTED] ?: false }.distinctUntilChanged()
+
     suspend fun setCurrentScale(scale: CurrentScale) {
         context.dataStore.edit { it[CURRENT_SCALE] = scale.name }
+    }
+
+    suspend fun setAdbPort(port: Int) {
+        // Reject out-of-range ports silently. InetSocketAddress throws IllegalArgumentException
+        // on construction if port is <0 or >65535, an unchecked exception that would escape the
+        // privileged boundary and crash the caller. Silently ignoring an invalid write is better
+        // than throwing (keeping this setter total like all others here) and better than clamping
+        // (which would have the app quietly dial a port the user never chose). The caller can
+        // check the flow's value afterward if they need confirmation of acceptance.
+        if (port in 1..65535) {
+            context.dataStore.edit { it[ADB_PORT] = port }
+        }
+    }
+
+    suspend fun setRootPreviouslyGranted(granted: Boolean) {
+        context.dataStore.edit { it[ROOT_PREVIOUSLY_GRANTED] = granted }
     }
 
     suspend fun setDesignCapacityOverride(mah: Int?) {
@@ -105,5 +138,7 @@ class SettingsStore @Inject constructor(private val context: Context) {
         val DESIGN_CAPACITY_OVERRIDE = intPreferencesKey("design_capacity_override_mah")
         val RECORDER_ENABLED = booleanPreferencesKey("recorder_enabled")
         val CURRENT_SCALE = stringPreferencesKey("current_scale")
+        val ADB_PORT = intPreferencesKey("adb_port")
+        val ROOT_PREVIOUSLY_GRANTED = booleanPreferencesKey("root_previously_granted")
     }
 }
