@@ -25,7 +25,7 @@ class HealthViewModel @Inject constructor(
     private val repository: BatteryRepository,
     private val settings: SettingsStore,
     designCapacity: DesignCapacityProvider,
-    private val shizuku: PrivilegedBatterySource,
+    private val privileged: PrivilegedBatterySource,
     // @ApplicationContext, explicitly: lint's StaticFieldLeak check flags any bare
     // Context field on a long-lived class like a ViewModel, since it can't tell
     // whether an injected Context is Activity- or Application-scoped just from the
@@ -57,8 +57,8 @@ class HealthViewModel @Inject constructor(
             HealthUiState(snapshot, measured, enabled, startFailed, notifDenied)
         }.combine(designCapacity.effective) { partial, capacity ->
             partial.copy(designCapacity = capacity)
-        }.combine(shizuku.state) { partial, availability ->
-            partial.copy(shizukuAvailability = availability)
+        }.combine(privileged.state) { partial, availability ->
+            partial.copy(privilegedAvailability = availability)
         }.combine(repository.privilegedDumpFailed) { partial, dumpFailed ->
             partial.copy(privilegedDumpFailed = dumpFailed)
         }.stateIn(
@@ -110,35 +110,36 @@ class HealthViewModel @Inject constructor(
     }
 
     /**
-     * Shows Shizuku's own permission prompt. `UnlockCard` only calls this while
-     * `state.shizukuAvailability` already reads `PermissionNotGranted` -- see
-     * `PrivilegedBatterySource.requestPermission`'s doc for why it is a safe no-op
-     * outside that state regardless.
+     * Establishes the privileged tier -- see `PrivilegedBatterySource.connect`'s own doc
+     * for exactly what that means and which prompt, if any, it raises. `connect()` is
+     * `suspend`, so this launches it on [viewModelScope] rather than calling it directly;
+     * `UnlockCard` only wires its action button to this while `state.privilegedAvailability`
+     * is a state that actually has something to connect.
      */
-    fun requestShizukuPermission() {
-        shizuku.requestPermission()
+    fun connectPrivilegedTier() {
+        viewModelScope.launch { privileged.connect() }
     }
 
     /**
-     * Re-checks whether the separate Shizuku app has been installed since this
-     * ViewModel was created -- the one fact `shizuku.state` cannot learn on its own; see
-     * `PrivilegedBatterySource.refresh`'s doc. Called from the Health screen's own
-     * resume, not just once here, so installing Shizuku, granting it, and switching back
-     * to this app all update the same session without a restart.
+     * Re-checks or re-establishes both transports since this ViewModel was created -- the
+     * facts `privileged.state` cannot learn on its own; see `PrivilegedBatterySource.refresh`'s
+     * doc. Called from the Health screen's own resume, not just once here, so enabling
+     * wireless debugging, granting root, and switching back to this app all update the
+     * same session without a restart.
      *
      * Also re-dumps the privileged fields (`repository.retryPrivilegedDump()`): Battery
      * Protect's mode and threshold are a live Samsung Settings toggle the user could have
-     * just changed in the background, and `shizuku.refresh()` alone would not notice --
+     * just changed in the background, and `privileged.refresh()` alone would not notice --
      * see `BatteryRepository.redumpRequests`'s doc for why both that and a stuck failed
      * dump share this one entry point.
      */
-    fun refreshShizuku() {
-        shizuku.refresh()
+    fun refreshPrivilegedTier() {
+        privileged.refresh()
         repository.retryPrivilegedDump()
     }
 
     /**
-     * The Health screen's manual "Retry" action on `UnlockCard` once it is `Bound` but
+     * The Health screen's manual "Retry" action on `UnlockCard` once it is `Ready` but
      * the last privileged dump attempt failed -- see `BatteryRepository.retryPrivilegedDump`.
      * A thin pass-through by design: this ViewModel is not where the retry/resume policy
      * decision lives, the repository is.

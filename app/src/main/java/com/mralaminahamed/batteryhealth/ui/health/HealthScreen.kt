@@ -42,7 +42,6 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.mralaminahamed.batteryhealth.data.privileged.SHIZUKU_PACKAGE_NAME
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacitySource
 import com.mralaminahamed.batteryhealth.data.settings.DesignCapacityValidation
 import com.mralaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
@@ -63,7 +62,9 @@ import com.mralaminahamed.batteryhealth.ui.format.Formatters
 import com.mralaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 import com.mralaminahamed.batteryhealth.data.repo.HealthEstimator
 
-private const val SHIZUKU_INFO_URL = "https://github.com/RikkaApps/Shizuku/releases/latest"
+// General adb-over-wifi documentation, not a link to a specific app -- there is no
+// separate companion app to point at any more, only a one-time host-side command.
+private const val PRIVILEGED_TIER_INFO_URL = "https://developer.android.com/tools/adb#wireless"
 
 object HealthScreenTags {
     const val ROOT = "health-root"
@@ -90,8 +91,8 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         ActivityResultContracts.RequestPermission(),
     ) { granted -> viewModel.onNotificationPermissionResult(granted) }
 
-    // Installing Shizuku, or granting it from its own app, both happen outside this
-    // app entirely -- neither produces a broadcast or a callback this process would
+    // Enabling wireless debugging, or granting root, both happen outside this app
+    // entirely -- neither produces a broadcast or a callback this process would
     // otherwise see. Re-checking on every resume is what notices the user coming back
     // having done either, without needing this screen to be recreated.
     val currentViewModel by rememberUpdatedState(viewModel)
@@ -99,7 +100,7 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                currentViewModel.refreshShizuku()
+                currentViewModel.refreshPrivilegedTier()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -109,17 +110,9 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
     HealthContent(
         state = state,
         modifier = modifier,
-        onRequestShizukuPermission = viewModel::requestShizukuPermission,
-        onOpenShizuku = {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE_NAME)
-            if (launchIntent != null) {
-                context.startActivity(launchIntent)
-            } else {
-                context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
-            }
-        },
-        onLearnMoreAboutShizuku = {
-            context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
+        onConnect = viewModel::connectPrivilegedTier,
+        onLearnMore = {
+            context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
         onRecorderEnabledChange = { enabled ->
             // The notification is the honest signal that measurement is running (Task
@@ -156,9 +149,8 @@ fun HealthContent(
     onRecorderEnabledChange: (Boolean) -> Unit = {},
     onSaveDesignCapacity: (Int) -> Unit = {},
     onClearDesignCapacity: () -> Unit = {},
-    onRequestShizukuPermission: () -> Unit = {},
-    onOpenShizuku: () -> Unit = {},
-    onLearnMoreAboutShizuku: () -> Unit = {},
+    onConnect: () -> Unit = {},
+    onLearnMore: () -> Unit = {},
     onRetryPrivilegedDump: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
@@ -204,11 +196,10 @@ fun HealthContent(
         }
 
         UnlockCard(
-            availability = state.shizukuAvailability,
+            availability = state.privilegedAvailability,
             dumpFailed = state.privilegedDumpFailed,
-            onRequestPermission = onRequestShizukuPermission,
-            onOpenShizuku = onOpenShizuku,
-            onLearnMore = onLearnMoreAboutShizuku,
+            onConnect = onConnect,
+            onLearnMore = onLearnMore,
             onRetry = onRetryPrivilegedDump,
         )
 
@@ -300,7 +291,7 @@ fun HealthContent(
                 // rather than upstream in the Reading itself: the number is genuinely
                 // known (a real dump returned it), just not in force right now, and
                 // Reading's three absences have no case for "known but not applicable" --
-                // forcing it into Unsupported or NeedsShizuku would misstate *why* it is
+                // forcing it into Unsupported or NeedsPrivilegedAccess would misstate *why* it is
                 // absent. When the mode reading itself is not Available (rarer: the two
                 // fields parse independently), there is no positive signal it is off, so
                 // this falls back to showing the raw value rather than guessing.

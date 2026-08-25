@@ -1,10 +1,37 @@
-# Samsung Battery Health
+<div align="center">
 
-An Android app for inspecting battery health on Samsung devices.
+<img src="assets/icon-256.png" alt="Samsung Battery Health icon" width="96" height="96">
 
-> **Status: in progress.** The data layer is built and tested — battery sources, Room
-> storage, settings, and the capacity estimator. The Health, Live and History screens are
-> not written yet, so `MainActivity` still renders a placeholder.
+# Samsung Battery Health — Developer Guide
+
+**Measure what Android will not tell you — an Android app that derives real battery capacity from charge-counter sampling, and reaches the metrics the platform hides through an ADB client it speaks itself, with no companion app and no third-party dependency.**
+
+[![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84.svg?logo=android&logoColor=white)](https://developer.android.com/)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.4.10-7F52FF.svg?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Compose](https://img.shields.io/badge/Jetpack%20Compose-BOM%202026.08-4285F4.svg?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
+[![Material 3](https://img.shields.io/badge/Material-3-757575.svg?logo=materialdesign&logoColor=white)](https://m3.material.io/)
+[![Room](https://img.shields.io/badge/Room-2.8.4-4285F4.svg)](https://developer.android.com/training/data-storage/room)
+[![Hilt](https://img.shields.io/badge/Hilt-2.60.1-34A853.svg)](https://dagger.dev/hilt/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+</div>
+
+## What it is
+
+Every battery app claims to show you state of health. Almost none of them can read it —
+Android does not expose it, so the number has to come from somewhere, and "somewhere" is
+usually a guess dressed up as a measurement.
+
+This app takes the opposite position. It states plainly which numbers the platform withholds,
+**measures** the ones it can rather than inventing them, and reports a metric as unavailable
+when the measurement is not trustworthy — never as a plausible-looking number.
+
+Where a metric genuinely does sit behind a privileged permission, the app does not give up and
+does not ask you to install a helper app either. It implements the **ADB wire protocol
+directly** — the same `CNXN`/`AUTH` handshake `adb connect` performs, an RSA key held
+non-exportably in the Android Keystore — and talks to your own device's `adbd` over loopback.
+On a rooted device it uses `su` instead. Either way the privileged surface is a fixed
+allowlist of two commands; nothing you type ever reaches a shell.
 
 ## What it can and cannot know
 
@@ -12,24 +39,105 @@ Android exposes very little battery data to an unprivileged app, and the numbers
 want are the ones it withholds. This matters enough to state up front, because it shapes the
 whole design.
 
-Readable by any app: charge level, voltage, current, temperature, technology, charge counter,
-and charge-time-remaining.
+**Readable by any app:** charge level, voltage, current, temperature, technology, charge
+counter, and charge-time-remaining.
 
 **Not readable by any unprivileged app, on any device:** state of health, first-use date, and
 manufacturing date. All three sit behind `BATTERY_STATS`, a signature-level permission, and
-two of them are `@SystemApi @hide` so their constants appear in no public SDK. Verified
+two of them are `@SystemApi @hide`, so their constants appear in no public SDK. Verified
 against real hardware, not assumed from API levels.
 
-Consequently the app **measures** health rather than reading it: it samples the charge
-counter across charge sessions and derives full capacity, comparing against a design capacity
-looked up from `Build.MODEL`. Every guard in that calculation exists to stop a specific way it
-could produce a confident wrong answer — narrow charge windows are rejected, the median of
-several sessions is used rather than the latest, a charge counter synthesised from the level
-is detected and refused, and an implausible result is reported as unavailable rather than
-clamped into a believable-looking number.
+Consequently the app **measures** health rather than reading it: it samples the charge counter
+across charge sessions and derives full capacity, comparing against a design capacity looked
+up from `Build.MODEL`. Every guard in that calculation exists to stop a specific way it could
+produce a confident wrong answer — narrow charge windows are rejected, the median of several
+sessions is used rather than the latest, a charge counter synthesised from the level is
+detected and refused, and an implausible result is reported as unavailable rather than clamped
+into a believable-looking number.
 
-Metrics that need the privileged tier report "needs Shizuku" rather than "unavailable on this
-device", because a permission denial is not a hardware limitation.
+Metrics that need the privileged tier report "needs privileged access" rather than
+"unavailable on this device", because a permission denial is not a hardware limitation.
+
+## Features
+
+**Measurement**
+- **State of health** derived from charge-counter deltas across real charge sessions, not from
+  a vendor string
+- Design capacity resolved from `Build.MODEL`; an unknown model degrades to unavailable rather
+  than to a default
+- Median-of-sessions rather than latest-session, so one bad charge cannot move the headline
+- Synthesised charge counters (level × nominal capacity) detected and refused
+
+**Live and history**
+- Live view — level, voltage, current, temperature, technology, charge-time-remaining
+- History persisted in Room with exported schemas and real migrations; destructive migration is
+  prohibited, because recorded history is the only data here that cannot be recomputed
+- Background sampling via WorkManager, surviving reboot
+
+**Privileged tier — no companion app, no third-party dependency**
+- A hand-rolled **ADB client**: 24-byte wire framing, `CNXN`/`AUTH` handshake, `OPEN`/`OKAY`/
+  `WRTE`/`CLSE` streams, `ANDROID_PUBKEY` encoding — all over `127.0.0.1`
+- RSA key generated **non-exportably in the AndroidKeystore**; signing uses `NONEwithRSA` over
+  the pre-digested token, so the key never leaves hardware and there is no file fallback
+- **Root transport** via `su` where available, preferred over ADB when both are ready
+- **Fixed allowlist**: exactly two commands (`dumpsys battery`, `dumpsys batterystats --checkin`)
+  are `const val`. No method takes a command string — the restriction is structural, not a filter
+- `INTERNET` is declared for loopback only, and a unit test fails the build if any production
+  source constructs a socket that could reach anywhere else
+
+**Honesty by construction**
+- Every metric reaches the UI wrapped in `Reading<T>` — either a value plus its provenance, or a
+  specific reason for absence
+- `ReadingSlot` is the only sanctioned way to render one, and it invokes its content lambda
+  solely for available readings, so a missing metric cannot be styled as data by accident
+- The user-facing copy explaining *why* a reading is missing is pinned by tests, so a copy edit
+  cannot quietly turn a transient failure into a claimed permission denial
+
+## Architecture
+
+```mermaid
+flowchart TD
+  ui["Compose UI — Health · Live · History · Apps"] --> vm["ViewModels"]
+  vm --> repo["BatteryRepository"]
+  repo --> fw["framework/ — BatteryManager + broadcast"]
+  repo --> room[("Room — sessions, history")]
+  repo --> priv["AdbGateway"]
+  priv --> shell{"PrivilegedShell"}
+  shell -->|"su -c"| root["RootShell"]
+  shell -->|"loopback TCP"| adb["AdbShell"]
+  adb --> conn["AdbConnection — CNXN/AUTH"]
+  conn --> keystore[["AndroidKeystore RSA"]]
+  conn -.->|"127.0.0.1"| adbd(("adbd"))
+  work["WorkManager sampler"] --> repo
+```
+
+```
+app/src/main/java/com/mralaminahamed/batteryhealth/
+├── MainActivity.kt          Entry point; installs the splash screen
+├── BatteryHealthApplication.kt
+├── domain/                  Reading<T>, BatterySnapshot, HealthReport, ChargeSession
+├── data/
+│   ├── framework/           Battery broadcast + BatteryManager sources, capability probe
+│   ├── local/               Room entities, DAOs, database
+│   ├── settings/            DataStore preferences, design-capacity table
+│   ├── apps/                Per-app label resolution (flavour-specific)
+│   ├── privileged/          Transport seam, state reducer, dumpsys parsers
+│   │   └── adb/             Wire framing, key encoding, handshake, streams
+│   └── repo/                BatteryRepository, HealthEstimator, CycleCountResolver
+├── sampling/                WorkManager sampler + boot receiver
+├── di/                      Hilt modules
+└── ui/
+    ├── nav/                 Destinations and NavHost
+    ├── health/  live/  history/  apps/    Screens and their UI state
+    ├── charts/  format/                   Rendering helpers
+    ├── components/          One UI card/row/metric primitives, ReadingSlot, UnlockCard
+    └── theme/               Tokens, typography, BatteryHealthTheme
+```
+
+- `applicationId` / `namespace`: `com.mralaminahamed.batteryhealth`
+- UI is entirely Jetpack Compose with Material 3; there are no XML layouts beyond the splash
+  theme
+- Dynamic colour is deliberately off — the fixed Samsung blue is the product identity
 
 ## Requirements
 
@@ -42,9 +150,11 @@ device", because a permission denial is not a hardware limitation.
 | compileSdk / targetSdk | 37                                      |
 | minSdk                 | 26 (Android 8.0)                        |
 
-Dependencies track their latest stable versions; see `gradle/libs.versions.toml`.
+Dependencies are AndroidX/Google/Kotlin only and track their latest stable versions; see
+`gradle/libs.versions.toml`. There are deliberately **no third-party dependencies** — the
+privileged tier that would normally justify one is implemented in this repo instead.
 
-## Getting started
+## Installation
 
 Clone the repo and create `local.properties` pointing at your Android SDK — the file is
 intentionally untracked:
@@ -53,15 +163,8 @@ intentionally untracked:
 sdk.dir=/Users/<you>/Library/Android/sdk
 ```
 
-### Building from Android Studio
-
-Open the project directory and let Gradle sync. Everything else is configured by the version
-catalog in `gradle/libs.versions.toml`.
-
-### Building from the command line
-
-The Gradle wrapper needs a JDK on `PATH`. If you have no system-wide JDK installed, point
-`JAVA_HOME` at the runtime bundled with Android Studio:
+Open the project in Android Studio and let Gradle sync; the version catalog configures the
+rest. To build from a shell, the wrapper needs a JDK on `PATH`:
 
 ```bash
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
@@ -72,32 +175,42 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 There are two, so **every Gradle task name is flavour-qualified**:
 
-- **`play`** (default) — omits `QUERY_ALL_PACKAGES`, keeping it out of a Play submission.
-- **`full`** — declares it, so per-app battery attribution can resolve app names and icons.
-
-Build and install a debug APK on a connected device:
+- **`play`** (default) — omits `QUERY_ALL_PACKAGES`, keeping it out of a Play submission
+- **`full`** — declares it, so per-app battery attribution can resolve app names and icons
 
 ```bash
-./gradlew installFullDebug   # or installPlayDebug for the Play-safe flavour
+./gradlew installFullDebug             # or installPlayDebug for the Play-safe flavour
+./gradlew assemblePlayDebug            # build without installing
 ```
 
-Other useful tasks:
+### Enabling the privileged tier
+
+The app raises Android's own "Allow USB debugging?" prompt and remembers the grant afterwards.
+Before it can connect, `adbd` has to be listening on TCP — a one-time step from a computer:
 
 ```bash
-./gradlew assemblePlayDebug            # build without installing
-./gradlew testPlayDebugUnitTest        # host-side unit tests
-./gradlew connectedPlayDebugAndroidTest # instrumented tests on a connected device
+adb tcpip 5555
+```
+
+On most devices that does **not** survive a reboot, so the command has to be repeated after a
+restart. A rooted device skips this entirely and uses `su`.
+
+## Development
+
+```bash
+./gradlew testPlayDebugUnitTest          # host-side unit tests
+./gradlew connectedPlayDebugAndroidTest  # instrumented tests on a connected device
 ```
 
 Two things that will otherwise cost you time:
 
 - `connectedPlayDebugAndroidTest` does **not** accept `--tests`. Filter with
-  `-Pandroid.testInstrumentationRunnerArguments.class=<fully.qualified.ClassName>`.
+  `-Pandroid.testInstrumentationRunnerArguments.class=<fully.qualified.ClassName>`
 - The device must be awake and unlocked, or Compose tests fail with a misleading
   "No compose hierarchies found". Run
-  `adb shell input keyevent KEYCODE_WAKEUP && adb shell wm dismiss-keyguard` first.
+  `adb shell input keyevent KEYCODE_WAKEUP && adb shell wm dismiss-keyguard` first
 - The connected-test task **uninstalls the app** when it finishes. Reinstall before launching
-  it by hand.
+  it by hand
 
 Launch the installed app from a shell:
 
@@ -105,37 +218,34 @@ Launch the installed app from a shell:
 adb shell am start -n com.mralaminahamed.batteryhealth/.MainActivity
 ```
 
-## Project layout
+### Release builds
 
-```
-app/src/main/java/com/mralaminahamed/batteryhealth/
-├── MainActivity.kt          Entry point; installs the splash screen
-├── BatteryHealthApplication.kt
-├── domain/                  Reading<T>, BatterySnapshot, HealthReport, ChargeSession
-├── data/
-│   ├── framework/           Battery broadcast + BatteryManager sources, capability probe
-│   ├── local/               Room entities, DAOs, database
-│   ├── settings/            DataStore preferences, design-capacity table
-│   └── repo/                HealthEstimator
-├── di/                      Hilt modules
-└── ui/
-    ├── theme/               Tokens, typography, BatteryHealthTheme
-    └── components/          One UI card/row/metric primitives, ReadingSlot
-```
+R8 is enabled for the release build type; project-specific keep rules live in
+`app/src/main/keepRules/` and AGP discovers them automatically.
 
-- `applicationId` / `namespace`: `com.mralaminahamed.batteryhealth`
-- UI is entirely Jetpack Compose with Material 3 (Compose BOM 2026.08.00); there are no XML
-  layouts beyond the splash theme.
-- Dynamic colour is deliberately off — the fixed Samsung blue is the product identity.
-- Every metric reaches the UI wrapped in `Reading<T>`, which carries either a value plus its
-  provenance or a specific reason for absence. `ReadingSlot` is the only sanctioned way to
-  render one, and it invokes its content lambda solely for available readings, so a missing
-  metric cannot be styled as data by accident.
-- Room uses exported schemas and real migrations; destructive migration is prohibited,
-  because recorded history is the only data here that cannot be recomputed.
-- R8 optimization is currently disabled for release builds in `app/build.gradle.kts`. Enable
-  it before shipping.
+> **The release build type currently reuses the debug keystore.** That is deliberate and
+> temporary, so the R8-optimized build can be exercised on-device — a debug-signed release must
+> never be distributed. A real signing config has to replace it before any release ships.
 
 ## Verified on
 
 - Samsung Galaxy A35 5G (SM-A356E), Android 16 (API 36)
+
+Design capacities are looked up per `Build.MODEL`; a model that is not in the table reports
+state of health as unavailable rather than guessing.
+
+## Contributing
+
+Branch from `trunk`, keep the full gate green, and open a pull request. Commit subjects are
+imperative and sentence-case, with no `type:` prefix.
+
+Two conventions are load-bearing rather than stylistic:
+
+- **A test must be shown failing before its fix.** A test that cannot be demonstrated to go red
+  when the property breaks is not evidence that the property holds
+- **The privileged surface stays an allowlist.** Never add a method that takes a command string,
+  not even in debug builds
+
+## License
+
+MIT — see [LICENSE](LICENSE).
