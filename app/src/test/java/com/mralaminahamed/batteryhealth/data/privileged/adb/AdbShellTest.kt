@@ -15,6 +15,7 @@ import org.junit.Test
 class AdbShellTest {
 
     private var daemon: FakeAdbDaemon? = null
+    private var secondDaemon: FakeAdbDaemon? = null
 
     // close() is on the concrete class, not PrivilegedShell -- see AdbShell's own doc for
     // why. Without this, every test here leaks the client-side socket even after the fake
@@ -26,6 +27,7 @@ class AdbShellTest {
     fun tearDown() {
         adbShell?.close()
         daemon?.stop()
+        secondDaemon?.stop()
     }
 
     @Test
@@ -39,7 +41,7 @@ class AdbShellTest {
             ),
         ).also { daemon = it; it.start() }
 
-        val shell = AdbShell(port = fake.port, signer = signer).also { adbShell = it }
+        val shell = AdbShell(portProvider = { fake.port }, signer = signer).also { adbShell = it }
         shell.connect()
 
         assertEquals(TransportState.Ready, shell.state.value)
@@ -53,11 +55,40 @@ class AdbShellTest {
         val port = closed.port
         closed.stop()
 
-        val shell = AdbShell(port = port, signer = FakeAdbDaemon.signer().first).also { adbShell = it }
+        val shell = AdbShell(portProvider = { port }, signer = FakeAdbDaemon.signer().first).also { adbShell = it }
         shell.connect()
 
         assertEquals(TransportState.Unavailable, shell.state.value)
         assertNull(shell.runDump())
+    }
+
+    /**
+     * Regression test for M5: [AdbShell] used to capture the port as a plain `Int` at
+     * construction time -- fine while `setAdbPort` had no production caller, but the moment
+     * a settings screen calls it, a captured value would keep dialing the *old* port on
+     * every `refresh()` until the process happened to die, with no error anywhere to say
+     * so. The fix is for [AdbShell] to read the port fresh on every [AdbShell.connect]
+     * rather than once. Proven here by pointing the same `AdbShell` at two different
+     * daemons across two `connect()` calls, purely by mutating what the provider lambda
+     * returns -- no second `AdbShell` involved.
+     */
+    @Test
+    fun connectUsesTheCurrentPortFromTheProviderNotACapturedOne() = runTest {
+        val (signer, line) = FakeAdbDaemon.signer()
+        val fake = FakeAdbDaemon(knownPublicKeyLine = line).also { daemon = it; it.start() }
+        var currentPort = fake.port
+        val shell = AdbShell(portProvider = { currentPort }, signer = signer).also { adbShell = it }
+
+        shell.connect()
+        assertEquals(TransportState.Ready, shell.state.value)
+
+        val relocated = FakeAdbDaemon(knownPublicKeyLine = line).also { secondDaemon = it; it.start() }
+        currentPort = relocated.port
+
+        shell.connect()
+
+        assertEquals(TransportState.Ready, shell.state.value)
+        assertEquals(1, relocated.acceptedSockets.size)
     }
 
     /**
@@ -80,7 +111,7 @@ class AdbShellTest {
                 "shell:$CMD_DUMP_CHECKIN" to "9,0,i,vers,36\n".toByteArray(),
             ),
         ).also { daemon = it; it.start() }
-        val shell = AdbShell(port = fake.port, signer = signer).also { adbShell = it }
+        val shell = AdbShell(portProvider = { fake.port }, signer = signer).also { adbShell = it }
         shell.connect()
         assertEquals(TransportState.Ready, shell.state.value)
 
@@ -109,7 +140,7 @@ class AdbShellTest {
     fun connectClosesThePreviousConnectionBeforeOpeningTheNext() = runTest {
         val (signer, line) = FakeAdbDaemon.signer()
         val fake = FakeAdbDaemon(knownPublicKeyLine = line).also { daemon = it; it.start() }
-        val shell = AdbShell(port = fake.port, signer = signer).also { adbShell = it }
+        val shell = AdbShell(portProvider = { fake.port }, signer = signer).also { adbShell = it }
 
         shell.connect()
         assertEquals(TransportState.Ready, shell.state.value)
@@ -144,7 +175,7 @@ class AdbShellTest {
         val (signer, line) = FakeAdbDaemon.signer()
         val fake = FakeAdbDaemon(knownPublicKeyLine = line, withholdShellCompletion = true)
             .also { daemon = it; it.start() }
-        val shell = AdbShell(port = fake.port, signer = signer).also { adbShell = it }
+        val shell = AdbShell(portProvider = { fake.port }, signer = signer).also { adbShell = it }
         shell.connect()
         assertEquals(TransportState.Ready, shell.state.value)
 
