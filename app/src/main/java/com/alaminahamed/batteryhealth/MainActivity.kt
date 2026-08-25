@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             BatteryHealthTheme(
-                languageId = resolveDesignLanguageId(DesignLanguageChoice.Auto, Build.MANUFACTURER),
+                languageId = resolveDesignLanguageId(DesignLanguageChoice.Auto, Build.MANUFACTURER.orEmpty()),
             ) {
                 BatteryHealthApp()
             }

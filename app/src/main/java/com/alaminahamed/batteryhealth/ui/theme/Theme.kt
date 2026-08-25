@@ -60,6 +60,16 @@ fun BatteryHealthTheme(
             onSurfaceVariant = colors.textSecondary,
             outline = colors.divider,
             error = colors.poor,
+            // Unset, these fall back to Material's baseline surface-container tokens
+            // rather than anything from the bundle: Switch's uncheckedTrackColor
+            // (SwitchTokens.UnselectedTrackColor) resolves to surfaceContainerHighest,
+            // and AlertDialog's container (DialogTokens.ContainerColor) resolves to
+            // surfaceContainerHigh. `divider` is this app's own "a tint distinct from
+            // card" token — already what outline/surfaceVariant use above — so both
+            // roles read as an app-palette neutral instead of Material's default
+            // lavender-tinted grey.
+            surfaceContainerHigh = colors.divider,
+            surfaceContainerHighest = colors.divider,
         )
     } else {
         lightColorScheme(
@@ -75,6 +85,9 @@ fun BatteryHealthTheme(
             onSurfaceVariant = colors.textSecondary,
             outline = colors.divider,
             error = colors.poor,
+            // See the matching comment in the dark branch above.
+            surfaceContainerHigh = colors.divider,
+            surfaceContainerHighest = colors.divider,
         )
     }
 
