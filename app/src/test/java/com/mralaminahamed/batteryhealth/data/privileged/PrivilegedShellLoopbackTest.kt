@@ -15,9 +15,11 @@ import org.junit.Test
  *    unnoticed.
  *  - Inside that one file, every socket construction must be the bare, argument-less
  *    `Socket()` form. `AdbConnection` itself has no host constructor parameter any more --
- *    [com.mralaminahamed.batteryhealth.data.privileged.adb.LOOPBACK_HOST] is wired in
- *    directly at the `connect()` call site -- so a `Socket("host", ...)` appearing here can
- *    only mean the invariant has been broken.
+ *    so a `Socket("host", ...)` appearing here can only mean the invariant has been broken.
+ *  - The destination that bare `Socket()` is later `connect()`-ed to must be
+ *    `java.net.InetAddress.getLoopbackAddress()`, not a named host string -- see
+ *    [adbConnectionDialsTheJdkLoopbackAddressNotANamedHostString] for why guarding
+ *    construction alone is not enough.
  *  - No production source may reach for another outbound-network surface
  *    ([java.nio.channels.SocketChannel], `HttpURLConnection`, `openConnection`, `URL(`)
  *    instead.
@@ -172,6 +174,33 @@ class PrivilegedShellLoopbackTest {
             fail(
                 "AdbConnection.kt constructs a Socket with a named host instead of the " +
                     "bare Socket() form: $offenders",
+            )
+        }
+    }
+
+    /**
+     * H1: guarding socket *construction* and the bare `Socket()` form is not the same as
+     * guarding the *destination* -- `InetSocketAddress(` is deliberately excluded from
+     * [socketConstruction] (it doesn't contain "Socket(" at all) and was never in
+     * [otherEgressTokens] either, so a `LOOPBACK_HOST` swapped for any other host string
+     * left every other test in this suite green. The structural fix is to dial
+     * `java.net.InetAddress.getLoopbackAddress()` -- the one JDK API that cannot return a
+     * non-loopback address -- rather than name a host at all. This pins its presence, so a
+     * regression back to a named host (the constant this fix removed, or a new one) fails
+     * here even though it would satisfy every guard above it.
+     */
+    @Test
+    fun adbConnectionDialsTheJdkLoopbackAddressNotANamedHostString() {
+        val files = productionKotlinFiles()
+        val adbConnectionFile = files.first { it.name == "AdbConnection.kt" }
+        val text = stripComments(adbConnectionFile.readText())
+
+        if (!text.contains("InetAddress.getLoopbackAddress()")) {
+            fail(
+                "AdbConnection.kt no longer dials InetAddress.getLoopbackAddress() -- the " +
+                    "one JDK API that cannot return a non-loopback address. A named host " +
+                    "(a String constant, a literal) can be swapped for another host with " +
+                    "every other guard in this suite still green; only this one catches it.",
             )
         }
     }
