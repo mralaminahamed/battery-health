@@ -28,7 +28,7 @@ several sessions is used rather than the latest, a charge counter synthesised fr
 is detected and refused, and an implausible result is reported as unavailable rather than
 clamped into a believable-looking number.
 
-Metrics that need the privileged tier report "needs Shizuku" rather than "unavailable on this
+Metrics that need the privileged tier report "needs privileged access" rather than "unavailable on this
 device", because a permission denial is not a hardware limitation.
 
 ## Requirements
