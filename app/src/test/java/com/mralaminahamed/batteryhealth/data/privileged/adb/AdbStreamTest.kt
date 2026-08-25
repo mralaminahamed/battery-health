@@ -79,6 +79,58 @@ class AdbStreamTest {
         }
     }
 
+    /**
+     * Regression test for C1's stream-id filtering: [AdbConnection.shell]'s receive loop
+     * used to fold in whatever arrived regardless of which stream it was addressed to. Here
+     * the daemon interleaves one A_WRTE for a second, unrelated stream id -- exactly what
+     * residue from an earlier, improperly-abandoned call (or, absent the serializing Mutex
+     * this defect also adds, a genuinely concurrent call) looks like on the wire -- with the
+     * real body. A correct receive loop drains and ignores it; the buggy one appends it,
+     * producing "POISON" + the real body instead of the real body alone.
+     */
+    @Test
+    fun doesNotCrossAttributeBytesFromAnOverlappingStream() = runTest {
+        val body = "Current Battery Service state:\n  level: 84\n"
+        val (signer, line) = FakeAdbDaemon.signer()
+        val fake = FakeAdbDaemon(
+            knownPublicKeyLine = line,
+            shellResponses = mapOf("shell:dumpsys battery" to body.toByteArray()),
+            noiseForForeignStreamId = 999_001,
+        ).also { daemon = it; it.start() }
+        val connection = AdbConnection(port = fake.port, signer = signer, soTimeoutMs = 2_000)
+            .also { it.connect() }
+
+        try {
+            assertEquals(body, connection.shell("dumpsys battery"))
+        } finally {
+            connection.close()
+        }
+    }
+
+    /**
+     * Regression test for C1's third part: the maxBytes bailout used to `return@withContext
+     * null` without ever sending A_CLSE, abandoning the stream -- adbd would keep writing
+     * for it, and the *next* shell() call on the same connection would consume that residue
+     * as its own output. Asserted from the daemon's side, which only learns the stream was
+     * closed once the OS actually delivers those bytes -- asynchronous to this coroutine
+     * even over loopback, hence the short poll rather than an immediate assertion.
+     */
+    @Test
+    fun bailingOutOverTheCapClosesTheStreamInsteadOfAbandoningIt() = runTest {
+        val body = ByteArray(4096) { 'y'.code.toByte() }
+        val connection = connected(mapOf("shell:dumpsys battery" to body))
+
+        try {
+            assertNull(connection.shell("dumpsys battery", maxBytes = 1024))
+            assertTrue(
+                "expected the daemon to receive an A_CLSE for the abandoned stream",
+                awaitTrue(timeoutMs = 2_000) { daemon!!.closedStreamLocalIds.isNotEmpty() },
+            )
+        } finally {
+            connection.close()
+        }
+    }
+
     @Test
     fun returnsNullWhenTheConnectionDiesDuringTheExchange() = runTest {
         val body = "x".repeat(200)
@@ -97,4 +149,19 @@ class AdbStreamTest {
             connection.close()
         }
     }
+}
+
+/** Polls [condition] until it is true or [timeoutMs] elapses, for asserting on an effect (the
+ * daemon noticing a message on its own connection-serving thread) that lands asynchronously
+ * to the calling coroutine, rather than synchronously with the call that caused it. A plain
+ * blocking loop, not `kotlinx.coroutines.delay`: under `runTest`, `delay` resolves against the
+ * test dispatcher's virtual clock, which is wrong for a condition that depends on real
+ * wall-clock time on a real background thread -- mirrors [AdbShellTest]'s own `awaitTrue`. */
+private fun awaitTrue(timeoutMs: Long, condition: () -> Boolean): Boolean {
+    val deadlineMs = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadlineMs) {
+        if (condition()) return true
+        Thread.sleep(10)
+    }
+    return condition()
 }

@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * This connection's *default* per-read socket timeout -- set once by [AdbConnection.connect]
@@ -78,6 +80,17 @@ class AdbShell(
     // one of which ever gets stored in `connection` -- the other silently orphaned.
     private val connectInFlight = AtomicBoolean(false)
 
+    // This transport is deliberately one command at a time: a single AdbConnection, reused
+    // across calls, has no stream-id filtering strong enough on its own to make two
+    // concurrent shell() calls safe -- see AdbConnection.shell's own doc. Two coroutines
+    // both sitting in shell() on this one unsynchronized socket is not theoretical:
+    // BatteryRepository's snapshots and appPower flows are two independent collectors that
+    // both resolve to this one AdbShell, and a ready-transition or redump fires both
+    // runDump()/runCheckin() together. This Mutex is what actually serializes them --
+    // without it, whichever coroutine's read() happens to run next can consume the other
+    // call's header, misattributing one dump's bytes to the other's caller.
+    private val shellMutex = Mutex()
+
     override suspend fun connect() {
         if (!connectInFlight.compareAndSet(false, true)) return
         try {
@@ -112,12 +125,12 @@ class AdbShell(
 
     override suspend fun runCheckin(): String? = run(CMD_DUMP_CHECKIN, CHECKIN_TIMEOUT_MS)
 
-    private suspend fun run(command: String, timeoutMs: Int): String? {
+    private suspend fun run(command: String, timeoutMs: Int): String? = shellMutex.withLock {
         // Gated on Ready rather than merely "connection != null": a connection whose own
         // connect() ended in AwaitingAuthorization/Unavailable/Failed still exists as an
         // object (its socket may never have opened) and calling shell() on it would either
         // throw or hang rather than fail cleanly the way this method's null contract promises.
-        val current = connection?.takeIf { _state.value == TransportState.Ready } ?: return null
+        val current = connection?.takeIf { _state.value == TransportState.Ready } ?: return@withLock null
         // The real bound is the socket's own read timeout, narrowed for just this call --
         // see AdbConnection.withSoTimeout's doc for why a coroutine-level timeout cannot
         // preempt the blocking reads inside shell().
@@ -128,7 +141,7 @@ class AdbShell(
             // degrades on the repository's next emission rather than on a crash.
             _state.value = TransportState.Unavailable
         }
-        return result
+        result
     }
 
     /**

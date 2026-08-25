@@ -3,6 +3,8 @@ package com.mralaminahamed.batteryhealth.data.privileged.adb
 import com.mralaminahamed.batteryhealth.data.privileged.CMD_DUMP_BATTERY
 import com.mralaminahamed.batteryhealth.data.privileged.CMD_DUMP_CHECKIN
 import com.mralaminahamed.batteryhealth.data.privileged.TransportState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -56,6 +58,37 @@ class AdbShellTest {
 
         assertEquals(TransportState.Unavailable, shell.state.value)
         assertNull(shell.runDump())
+    }
+
+    /**
+     * Regression test for C1's first part: `AdbShell` reuses one [AdbConnection] for every
+     * call, and nothing used to serialize them -- `BatteryRepository`'s two independent
+     * flows (`snapshots`/`appPower`) both resolve to this one shell, and a ready-transition
+     * or redump fires both `runDump()`/`runCheckin()` together. Without a Mutex, two
+     * coroutines sit in `shell()` on one unsynchronized socket, and can read each other's
+     * headers -- `dumpsys battery` output parsed as checkin data or vice versa. Fired via
+     * `async(Dispatchers.IO)` rather than the test dispatcher precisely so the two calls can
+     * genuinely race for the shared connection the way two ViewModels' collectors would.
+     */
+    @Test
+    fun concurrentDumpAndCheckinCallsDoNotCrossAttributeResults() = runTest {
+        val (signer, line) = FakeAdbDaemon.signer()
+        val fake = FakeAdbDaemon(
+            knownPublicKeyLine = line,
+            shellResponses = mapOf(
+                "shell:$CMD_DUMP_BATTERY" to "level: 84\n".toByteArray(),
+                "shell:$CMD_DUMP_CHECKIN" to "9,0,i,vers,36\n".toByteArray(),
+            ),
+        ).also { daemon = it; it.start() }
+        val shell = AdbShell(port = fake.port, signer = signer).also { adbShell = it }
+        shell.connect()
+        assertEquals(TransportState.Ready, shell.state.value)
+
+        val dumpResult = async(Dispatchers.IO) { shell.runDump() }
+        val checkinResult = async(Dispatchers.IO) { shell.runCheckin() }
+
+        assertEquals("level: 84\n", dumpResult.await())
+        assertEquals("9,0,i,vers,36\n", checkinResult.await())
     }
 
     /**

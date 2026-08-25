@@ -36,6 +36,12 @@ class FakeAdbDaemon(
      * is that client's own socket timeout, which is the point ([AdbShellTest]'s
      * `runDumpGivesUpAtItsOwnBoundNotTheLongerHandshakeDefault` regression test). */
     private val withholdShellCompletion: Boolean = false,
+    /** When set, every shell OPEN this daemon serves is immediately followed by one A_WRTE
+     * addressed to this *other*, unrelated stream id -- simulating a second, genuinely
+     * overlapping stream's traffic already live on the same connection (e.g. residue from
+     * an earlier call the client abandoned without a CLSE). A correct receive loop must
+     * drain and ignore it rather than fold it into the stream it is actually reading for. */
+    private val noiseForForeignStreamId: Int? = null,
 ) {
     private val server = ServerSocket(0)
     private val pool = Executors.newCachedThreadPool()
@@ -56,6 +62,12 @@ class FakeAdbDaemon(
 
     /** Every ack the client sent, so a test can assert flow control was honoured. */
     val acks: MutableList<Int> = Collections.synchronizedList(mutableListOf())
+
+    /** The client's local id from every A_CLSE this daemon received while mid-way through
+     * writing a shell body -- i.e. the client tore the stream down instead of abandoning it.
+     * Populated asynchronously to whatever coroutine triggered it, on this daemon's own
+     * connection-serving thread -- see [FakeAdbDaemon]'s own class doc for why. */
+    val closedStreamLocalIds: MutableList<Int> = Collections.synchronizedList(mutableListOf())
 
     /**
      * Whatever serve() threw, including a require() tripped by a protocol violation.
@@ -155,6 +167,9 @@ class FakeAdbDaemon(
                     val remoteId = 1
                     val localId = header.arg0
                     send(A_OKAY, remoteId, localId)
+                    if (noiseForForeignStreamId != null) {
+                        send(A_WRTE, remoteId, noiseForForeignStreamId, "POISON".toByteArray())
+                    }
                     if (withholdShellCompletion) {
                         // Deliberately never returns from serveConnected on this path: the
                         // socket stays open and silent rather than closing (which would
@@ -166,14 +181,26 @@ class FakeAdbDaemon(
                     }
                     val body = shellResponses[destination] ?: ByteArray(0)
                     // Chunked on purpose: a client that does not ack each WRTE stalls here
-                    // rather than silently passing on a single-chunk payload.
-                    body.toList().chunked(writeChunkSize).forEach { chunk ->
+                    // rather than silently passing on a single-chunk payload. A `for` loop,
+                    // not `forEach`, so the client closing the stream mid-transfer can
+                    // actually break out instead of merely skipping one iteration.
+                    var closedByClient = false
+                    for (chunk in body.toList().chunked(writeChunkSize)) {
                         send(A_WRTE, remoteId, localId, chunk.toByteArray())
                         val (ack, _) = read()
+                        if (ack.command == A_CLSE) {
+                            // The client tore the stream down early (e.g. the maxBytes
+                            // bailout) instead of abandoning it -- exactly what that code
+                            // path is required to do. Not folded into `acks`: that list is
+                            // for real flow-control acknowledgements only.
+                            closedStreamLocalIds += ack.arg0
+                            closedByClient = true
+                            break
+                        }
                         acks += ack.command
                         require(ack.command == A_OKAY) { "client did not ack WRTE" }
                     }
-                    send(A_CLSE, remoteId, localId)
+                    if (!closedByClient) send(A_CLSE, remoteId, localId)
                 }
                 header.command == A_CLSE -> return
             }
