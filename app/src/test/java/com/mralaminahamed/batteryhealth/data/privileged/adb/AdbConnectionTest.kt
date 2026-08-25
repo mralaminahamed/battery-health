@@ -16,7 +16,7 @@ class AdbConnectionTest {
     fun connectsWhenTheDaemonAlreadyKnowsTheKey() = runTest {
         val (signer, line) = FakeAdbDaemon.signer()
         val fake = FakeAdbDaemon(knownPublicKeyLine = line).also { daemon = it; it.start() }
-        val connection = AdbConnection("127.0.0.1", fake.port, signer, soTimeoutMs = 2_000)
+        val connection = AdbConnection(port = fake.port, signer = signer, soTimeoutMs = 2_000)
 
         val result = try {
             connection.connect()
@@ -32,7 +32,7 @@ class AdbConnectionTest {
     fun offersThePublicKeyWhenTheDaemonDoesNotKnowIt() = runTest {
         val (signer, line) = FakeAdbDaemon.signer()
         val fake = FakeAdbDaemon(knownPublicKeyLine = null).also { daemon = it; it.start() }
-        val connection = AdbConnection("127.0.0.1", fake.port, signer, soTimeoutMs = 2_000)
+        val connection = AdbConnection(port = fake.port, signer = signer, soTimeoutMs = 2_000)
 
         val result = try {
             connection.connect()
@@ -53,7 +53,7 @@ class AdbConnectionTest {
         val port = closed.port
         closed.stop()
         val connection = AdbConnection(
-            "127.0.0.1", port, FakeAdbDaemon.signer().first, soTimeoutMs = 500,
+            port = port, signer = FakeAdbDaemon.signer().first, soTimeoutMs = 500,
         )
 
         val result = try {
@@ -69,7 +69,7 @@ class AdbConnectionTest {
     fun reportsFailedWhenTheDaemonHangsUpMidHandshake() = runTest {
         val fake = FakeAdbDaemon(dropConnectionAfterCnxn = true).also { daemon = it; it.start() }
         val connection = AdbConnection(
-            "127.0.0.1", fake.port, FakeAdbDaemon.signer().first, soTimeoutMs = 2_000,
+            port = fake.port, signer = FakeAdbDaemon.signer().first, soTimeoutMs = 2_000,
         )
 
         val result = try {
@@ -87,7 +87,7 @@ class AdbConnectionTest {
         val fake = FakeAdbDaemon(withholdCnxnAfterPublicKey = true).also { daemon = it; it.start() }
         // Short on purpose: this test's whole point is to actually hit the client's own
         // read timeout while waiting for a CNXN this daemon has deliberately withheld.
-        val connection = AdbConnection("127.0.0.1", fake.port, signer, soTimeoutMs = 300)
+        val connection = AdbConnection(port = fake.port, signer = signer, soTimeoutMs = 300)
 
         val result = try {
             connection.connect()
