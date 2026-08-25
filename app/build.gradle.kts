@@ -1,9 +1,46 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.room)
+}
+
+/**
+ * Release signing credentials, from `keystore.properties` (gitignored) or, failing that, the
+ * environment -- so CI can supply them without a file on disk.
+ *
+ * Null when nothing is configured, which is the normal state for a fresh clone and for anyone
+ * who only ever builds debug. The release build type reacts to that by staying *unsigned*
+ * rather than falling back to the debug key: a debug-signed release is rejected by Play at
+ * upload, and worse, it is the kind of thing that gets noticed only after it ships somewhere.
+ * Failing to produce an artifact is the safer failure.
+ *
+ * The keystore itself must never be committed. Losing it means losing the ability to update
+ * the app under the same identity, so back it up somewhere outside this repository.
+ */
+val releaseSigning: Map<String, String>? = run {
+    val fromFile = rootProject.file("keystore.properties")
+        .takeIf { it.exists() }
+        ?.let { file -> Properties().apply { file.inputStream().use(::load) } }
+
+    fun value(key: String, env: String): String? =
+        fromFile?.getProperty(key)?.takeIf(String::isNotBlank)
+            ?: System.getenv(env)?.takeIf(String::isNotBlank)
+
+    val storePath = value("storeFile", "RELEASE_STORE_FILE") ?: return@run null
+    val storePassword = value("storePassword", "RELEASE_STORE_PASSWORD") ?: return@run null
+    val keyAlias = value("keyAlias", "RELEASE_KEY_ALIAS") ?: return@run null
+    val keyPassword = value("keyPassword", "RELEASE_KEY_PASSWORD") ?: return@run null
+
+    mapOf(
+        "storeFile" to storePath,
+        "storePassword" to storePassword,
+        "keyAlias" to keyAlias,
+        "keyPassword" to keyPassword,
+    )
 }
 
 android {
@@ -33,15 +70,37 @@ android {
         }
     }
 
+    signingConfigs {
+        // Only declared when credentials were actually found. Declaring it unconditionally
+        // would let a half-configured setup produce an artifact signed with blank or stale
+        // values, which fails much later and much less clearly than not existing at all.
+        releaseSigning?.let { creds ->
+            create("release") {
+                storeFile = rootProject.file(creds.getValue("storeFile"))
+                storePassword = creds.getValue("storePassword")
+                keyAlias = creds.getValue("keyAlias")
+                keyPassword = creds.getValue("keyPassword")
+                // Play's upload requirements: v1 is long dead, and Play App Signing
+                // re-signs for distribution anyway, so what matters here is that the
+                // upload artifact verifies under v2/v3.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TEMPORARY, local-verification only: reuses the debug keystore so this build
-            // type can actually be built, installed, and exercised on-device now that R8
-            // runs against it for the first time. A real signing config MUST replace this
-            // before any release build is distributed -- a debug-signed release must never
-            // ship. There is no release-signing config in this project yet (see the task
-            // report for why: no keystore is checked in on purpose).
-            signingConfig = signingConfigs.getByName("debug")
+            // Signed only when keystore.properties or the RELEASE_* environment variables
+            // supplied every credential; otherwise this stays null and the build produces an
+            // UNSIGNED release artifact. That is deliberate. The previous behaviour here was
+            // to fall back to the debug keystore so the R8 build could be exercised locally,
+            // and a debug-signed release is both rejected by Play at upload and exactly the
+            // sort of thing that gets discovered only after it has shipped somewhere. An
+            // artifact that cannot be installed is a far cheaper mistake than one that can.
+            // See README "Release builds" for how to configure it.
+            signingConfig = signingConfigs.findByName("release")
             optimization {
                 enable = true
                 // keepRules.includeDefault defaults to true, which is the equivalent of
