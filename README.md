@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/icon-256.png" alt="Samsung Battery Health icon" width="96" height="96">
+
 # Samsung Battery Health — Developer Guide
 
 **Measure what Android will not tell you — an Android app that derives real battery capacity from charge-counter sampling, and reaches the metrics the platform hides through an ADB client it speaks itself, with no companion app and no third-party dependency.**
