@@ -20,11 +20,15 @@ class DesignLanguageTest {
         assertEquals(Color(0xFF0F62FE), light.colors.accent)
         assertEquals(Color(0xFFF3F4F6), light.colors.canvas)
         assertEquals(24, light.shapes.card.value.toInt())
+        assertEquals(999, light.shapes.pill.value.toInt())
         assertEquals(14, light.spacing.cardOuterHorizontal.value.toInt())
         assertEquals(5, light.spacing.cardOuterVertical.value.toInt())
         assertEquals(16, light.spacing.cardInner.value.toInt())
         assertEquals(9, light.spacing.rowVertical.value.toInt())
+        assertEquals(6, light.spacing.sectionHeaderBottom.value.toInt())
         assertEquals(9, light.spacing.progressHeight.value.toInt())
+        assertEquals(4, light.spacing.unitOffsetStart.value.toInt())
+        assertEquals(6, light.spacing.unitOffsetBottom.value.toInt())
         assertEquals(OneUiTypography, light.typography)
     }
 
