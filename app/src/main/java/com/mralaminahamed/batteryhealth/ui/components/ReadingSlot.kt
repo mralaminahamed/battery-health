@@ -35,7 +35,7 @@ fun <T> ReadingSlot(
         }
 
         Reading.Unsupported -> Reason("Not available on this device", modifier)
-        Reading.NeedsShizuku -> Reason("Needs Shizuku", modifier)
+        Reading.NeedsPrivilegedAccess -> Reason("Needs privileged access", modifier)
         Reading.NotYetMeasured -> Reason("Measuring", modifier)
     }
 }

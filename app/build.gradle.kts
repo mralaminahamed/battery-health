@@ -59,10 +59,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-        // Off by default under AGP 8+. IUserService.aidl (the privileged tier's small
-        // shell-UID surface, `data/privileged/`) needs the generated Binder stub, so this
-        // has to be turned back on explicitly rather than relying on the old default.
-        aidl = true
     }
 }
 
@@ -89,8 +85,6 @@ dependencies {
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.hilt.work)
-    implementation(libs.shizuku.api)
-    implementation(libs.shizuku.provider)
     ksp(libs.hilt.compiler)
     ksp(libs.hilt.ext.compiler)
     ksp(libs.androidx.room.compiler)

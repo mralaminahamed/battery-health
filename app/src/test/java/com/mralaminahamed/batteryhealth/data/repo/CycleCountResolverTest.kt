@@ -22,12 +22,12 @@ class CycleCountResolverTest {
     }
 
     @Test
-    fun aBoundDumpMissingTheFieldFallsBackToARealFrameworkReading() {
-        // Bound, a real dump was obtained, but this specific field's regex found nothing
-        // in it (or the plausibility guard rejected it) -- dumpAvailable is true, yet the
-        // broadcast still has a genuine reading. The general "prefer privileged when
-        // available" rule must not translate into "discard a real framework number just
-        // because the privileged tier came back empty for this one field."
+    fun aConnectedDumpMissingTheFieldFallsBackToARealFrameworkReading() {
+        // Connected, a real dump was obtained, but this specific field's regex found
+        // nothing in it (or the plausibility guard rejected it) -- dumpAvailable is true,
+        // yet the broadcast still has a genuine reading. The general "prefer privileged
+        // when available" rule must not translate into "discard a real framework number
+        // just because the privileged tier came back empty for this one field."
         val reading = CycleCountResolver.resolve(
             privilegedCycles = null,
             dumpAvailable = true,
@@ -38,8 +38,8 @@ class CycleCountResolverTest {
     }
 
     @Test
-    fun notBoundAtAllStillFallsBackToARealFrameworkReading() {
-        // Never bound (dumpAvailable false), but the broadcast reading is still real.
+    fun notConnectedAtAllStillFallsBackToARealFrameworkReading() {
+        // Never connected (dumpAvailable false), but the broadcast reading is still real.
         // Not being able to try the privileged tier is not a reason to hide a number the
         // framework already reported.
         val reading = CycleCountResolver.resolve(
@@ -52,13 +52,14 @@ class CycleCountResolverTest {
     }
 
     /**
-     * The distinction the task explicitly calls out: bound-but-absent and never-bound must
-     * not collapse into the same answer once neither tier has a real number. A dump was
-     * obtained here, and full shell privilege still did not turn up the field, so granting
-     * Shizuku again cannot help -- Unsupported, not NeedsShizuku.
+     * The distinction the task explicitly calls out: connected-but-absent and
+     * never-connected must not collapse into the same answer once neither tier has a real
+     * number. A dump was obtained here, and full shell privilege still did not turn up the
+     * field, so reconnecting the privileged tier again cannot help -- Unsupported, not
+     * NeedsPrivilegedAccess.
      */
     @Test
-    fun boundWithNoDataAnywhereIsUnsupportedNotNeedsShizuku() {
+    fun connectedWithNoDataAnywhereIsUnsupportedNotNeedsPrivilegedAccess() {
         val reading = CycleCountResolver.resolve(
             privilegedCycles = null,
             dumpAvailable = true,
@@ -71,20 +72,21 @@ class CycleCountResolverTest {
     /**
      * The other half of the same distinction, and the one this whole feature turns the
      * field's previous behaviour on: before Samsung's own figure was discovered, this
-     * exact input (Shizuku never bound, broadcast reporting the untracked sentinel) was
-     * correctly Unsupported -- the app had no way to ever produce a number. It is not
-     * true anymore: granting Shizuku might now supply it, so this must be NeedsShizuku.
-     * Reporting Unsupported here would repeat the defect fixed two tasks before this one,
-     * where the app told users a value could never be supplied when it now can.
+     * exact input (the privileged tier never connected, broadcast reporting the untracked
+     * sentinel) was correctly Unsupported -- the app had no way to ever produce a number.
+     * It is not true anymore: connecting the privileged tier might now supply it, so this
+     * must be NeedsPrivilegedAccess. Reporting Unsupported here would repeat the defect
+     * fixed two tasks before this one, where the app told users a value could never be
+     * supplied when it now can.
      */
     @Test
-    fun neverBoundWithNoFrameworkValueIsNeedsShizukuNotUnsupported() {
+    fun neverConnectedWithNoFrameworkValueIsNeedsPrivilegedAccessNotUnsupported() {
         val reading = CycleCountResolver.resolve(
             privilegedCycles = null,
             dumpAvailable = false,
             broadcastCycles = null,
         )
 
-        assertEquals(Reading.NeedsShizuku, reading)
+        assertEquals(Reading.NeedsPrivilegedAccess, reading)
     }
 }

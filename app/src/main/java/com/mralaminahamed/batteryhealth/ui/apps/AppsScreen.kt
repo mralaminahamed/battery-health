@@ -49,7 +49,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.mralaminahamed.batteryhealth.data.apps.AppLabel
 import com.mralaminahamed.batteryhealth.data.apps.AppRow
-import com.mralaminahamed.batteryhealth.data.privileged.SHIZUKU_PACKAGE_NAME
 import com.mralaminahamed.batteryhealth.domain.Reading
 import com.mralaminahamed.batteryhealth.ui.components.OneUiCard
 import com.mralaminahamed.batteryhealth.ui.components.ReadingSlot
@@ -59,7 +58,9 @@ import com.mralaminahamed.batteryhealth.ui.components.Value
 import com.mralaminahamed.batteryhealth.ui.format.Formatters
 import com.mralaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 
-private const val SHIZUKU_INFO_URL = "https://github.com/RikkaApps/Shizuku/releases/latest"
+// See HealthScreen's own copy of this constant for why it points at general adb docs
+// rather than a specific app.
+private const val PRIVILEGED_TIER_INFO_URL = "https://developer.android.com/tools/adb#wireless"
 
 object AppsScreenTags {
     const val ROOT = "apps-root"
@@ -68,10 +69,10 @@ object AppsScreenTags {
 
 /**
  * The fourth navigation destination: per-uid battery power from `dumpsys batterystats
- * --checkin`, the second command the Shizuku gateway now supports (see `data/privileged/`).
+ * --checkin`, the second command the privileged gateway supports (see `data/privileged/`).
  *
  * Reuses [UnlockCard] rather than a second unlock affordance -- one entry point into the
- * privileged tier is enough, and this screen genuinely needs the same four not-yet-bound
+ * privileged tier is enough, and this screen genuinely needs the same not-yet-ready
  * states the Health screen already explains. [AppsUiState.appPowerFailed] is this
  * screen's own failure signal, independent of Health's `privilegedDumpFailed`, so a
  * checkin-call failure here shows "read failed, retry" here and nowhere else -- see
@@ -87,7 +88,7 @@ fun AppsScreen(modifier: Modifier = Modifier, viewModel: AppsViewModel = hiltVie
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                currentViewModel.refreshShizuku()
+                currentViewModel.refreshPrivilegedTier()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -97,17 +98,9 @@ fun AppsScreen(modifier: Modifier = Modifier, viewModel: AppsViewModel = hiltVie
     AppsContent(
         state = state,
         modifier = modifier,
-        onRequestShizukuPermission = viewModel::requestShizukuPermission,
-        onOpenShizuku = {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE_NAME)
-            if (launchIntent != null) {
-                context.startActivity(launchIntent)
-            } else {
-                context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
-            }
-        },
-        onLearnMoreAboutShizuku = {
-            context.startActivity(Intent(Intent.ACTION_VIEW, SHIZUKU_INFO_URL.toUri()))
+        onConnect = viewModel::connectPrivilegedTier,
+        onLearnMore = {
+            context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
         onRetry = viewModel::retryPrivilegedDump,
     )
@@ -117,9 +110,8 @@ fun AppsScreen(modifier: Modifier = Modifier, viewModel: AppsViewModel = hiltVie
 fun AppsContent(
     state: AppsUiState,
     modifier: Modifier = Modifier,
-    onRequestShizukuPermission: () -> Unit = {},
-    onOpenShizuku: () -> Unit = {},
-    onLearnMoreAboutShizuku: () -> Unit = {},
+    onConnect: () -> Unit = {},
+    onLearnMore: () -> Unit = {},
     onRetry: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
@@ -131,11 +123,10 @@ fun AppsContent(
             .verticalScroll(rememberScrollState()),
     ) {
         UnlockCard(
-            availability = state.shizukuAvailability,
+            availability = state.privilegedAvailability,
             dumpFailed = state.appPowerFailed,
-            onRequestPermission = onRequestShizukuPermission,
-            onOpenShizuku = onOpenShizuku,
-            onLearnMore = onLearnMoreAboutShizuku,
+            onConnect = onConnect,
+            onLearnMore = onLearnMore,
             onRetry = onRetry,
         )
 

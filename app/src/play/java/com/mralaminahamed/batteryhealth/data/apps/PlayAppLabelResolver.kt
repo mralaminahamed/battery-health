@@ -8,7 +8,7 @@ import javax.inject.Inject
  * `play` does **not** declare `QUERY_ALL_PACKAGES` (Play does not approve it for a
  * battery tool's declared category -- see this feature's task report), so
  * [PackageManager][android.content.pm.PackageManager] here can only see this app's own
- * package, whatever `<queries>` names (Shizuku), and packages the platform already
+ * package, whatever `<queries>` names, and packages the platform already
  * considers visible for other reasons. For every uid whose package sits outside that
  * narrow set -- the overwhelming majority `batterystats`' own uid dictionary names --
  * `getApplicationInfo` throws `NameNotFoundException`, and [resolveViaPackageManager]
