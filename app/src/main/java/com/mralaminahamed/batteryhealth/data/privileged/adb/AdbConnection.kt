@@ -3,6 +3,7 @@ package com.mralaminahamed.batteryhealth.data.privileged.adb
 import java.io.DataInputStream
 import java.io.IOException
 import java.net.ConnectException
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -10,13 +11,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 enum class AdbConnectResult { Connected, AwaitingAuthorization, Unreachable, Failed }
-
-/**
- * The only address this client will ever dial. [AdbConnection] takes no host constructor
- * parameter -- [connect] passes this constant to [InetSocketAddress] directly, so there is
- * no argument a caller could supply to aim this class anywhere else.
- */
-const val LOOPBACK_HOST = "127.0.0.1"
 
 /**
  * The `maxdata` this client advertises to adbd in its own [A_CNXN] (see [connect]). adbd is
@@ -31,6 +25,14 @@ const val MAX_PAYLOAD_BYTES = 256 * 1024
  * needs no separate privileged helper app running as a mediator. One socket, one CNXN/AUTH
  * exchange; stream multiplexing (OPEN/OKAY/WRTE/CLSE) is layered on top by `AdbStream` in a
  * later task, which is why [send] and [read] are exposed rather than kept private.
+ *
+ * [AdbConnection] takes no host constructor parameter -- [connect] dials
+ * [InetAddress.getLoopbackAddress] directly, so there is no named host string anywhere in
+ * this class, let alone an argument a caller could supply to aim it anywhere else. That JDK
+ * API cannot return a non-loopback address, which is what makes this guarantee structural
+ * rather than a convention a future edit could quietly weaken -- see
+ * [com.mralaminahamed.batteryhealth.data.privileged.PrivilegedShellLoopbackTest] for the
+ * enforcement.
  */
 class AdbConnection(
     private val port: Int,
@@ -47,7 +49,7 @@ class AdbConnection(
         // same name -- every connection would target port 0 instead of the real one.
         val newSocket = Socket()
         val socket = try {
-            newSocket.connect(InetSocketAddress(LOOPBACK_HOST, port), soTimeoutMs)
+            newSocket.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), port), soTimeoutMs)
             newSocket.soTimeout = soTimeoutMs
             // OPEN/OKAY/WRTE/CLSE is strictly lockstep -- every write already waits on the
             // previous round trip, so there is nothing for Nagle's coalescing to buy us.
