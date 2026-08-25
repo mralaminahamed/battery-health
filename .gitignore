@@ -19,3 +19,6 @@ local.properties
 /keystore.properties
 *.jks
 *.keystore
+
+# Tester email lists — personal data, kept out of git.
+/testers/
