@@ -50,9 +50,17 @@ private const val CHECKIN_TIMEOUT_MS = 8_000
  * store that does not exist yet at this point in the build-out, so an injected constructor
  * would not compile. The gateway that wires this up from `SettingsStore.adbPort` and
  * `AdbKeyPair.loadOrCreate()` is a later task's job, not this class's.
+ *
+ * [portProvider] is a suspend supplier, not a plain `Int`: [connect] calls it fresh on
+ * every reconnect rather than a value captured once at construction time. `setAdbPort` has
+ * no production caller yet, but the moment a settings screen calls it, a captured `Int`
+ * would keep dialing the old port until the process happened to die -- silently, since
+ * `refresh()`'s reconnect would still "succeed" against whatever was listening on the
+ * stale port. Reading straight from `SettingsStore.adbPort` each time is what makes a port
+ * change actually take effect on the very next connect.
  */
 class AdbShell(
-    private val port: Int,
+    private val portProvider: suspend () -> Int,
     private val signer: AdbSigner,
 ) : PrivilegedShell {
 
@@ -100,7 +108,7 @@ class AdbShell(
             // ON_RESUME -- skip this line and every single resume leaks a socket for the
             // rest of the process's life. Do not "simplify" this away.
             connection?.close()
-            val next = AdbConnection(port = port, signer = signer, soTimeoutMs = HANDSHAKE_TIMEOUT_MS)
+            val next = AdbConnection(port = portProvider(), signer = signer, soTimeoutMs = HANDSHAKE_TIMEOUT_MS)
             connection = next
             val result = next.connect()
             if (closed) {

@@ -11,7 +11,6 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import javax.inject.Singleton
 
 @Module
@@ -34,16 +33,16 @@ object PrivilegedModule {
 
     /**
      * [AdbShell] deliberately has no `@Inject` constructor of its own (see its own doc):
-     * the port it dials lives in [SettingsStore], a `Flow`, so reading it here needs
-     * `runBlocking` -- the same pattern [BootReceiver][com.mralaminahamed.batteryhealth.sampling.BootReceiver]
-     * already uses to read a `SettingsStore` flow from a non-suspend call site. This runs
-     * once, at Hilt's singleton construction time (app start), not per-call, so the
-     * blocking read of one DataStore preference is a one-time cost, not a hot-path one.
-     * [AdbKeyPair.loadOrCreate] is likewise synchronous -- AndroidKeystore's own API is
-     * blocking, not suspend.
+     * the port it dials lives in [SettingsStore], a `Flow`. Wired up as a suspend provider
+     * rather than a value read once here -- [AdbShell] calls it fresh on every reconnect,
+     * so a port change written via `SettingsStore.setAdbPort` takes effect on the next
+     * `refresh()` instead of silently doing nothing until the process dies. No
+     * `runBlocking` needed: nothing here has to read the flow eagerly at Hilt's singleton
+     * construction time any more. [AdbKeyPair.loadOrCreate] is still synchronous --
+     * AndroidKeystore's own API is blocking, not suspend.
      */
     @Provides
     @Singleton
     fun provideAdbShell(settingsStore: SettingsStore): AdbShell =
-        AdbShell(port = runBlocking { settingsStore.adbPort.first() }, signer = AdbKeyPair.loadOrCreate())
+        AdbShell(portProvider = { settingsStore.adbPort.first() }, signer = AdbKeyPair.loadOrCreate())
 }
