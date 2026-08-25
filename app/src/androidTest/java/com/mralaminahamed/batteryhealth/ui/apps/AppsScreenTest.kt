@@ -135,6 +135,12 @@ class AppsScreenTest {
         compose.onNodeWithTag(UnlockCardTags.ROOT).assertIsDisplayed()
         compose.onNodeWithText("PRIVILEGED READ FAILED").assertIsDisplayed()
         compose.onNodeWithTag(UnlockCardTags.ACTION).assertIsDisplayed()
+
+        // Same shared-card honesty claims UnlockCardTest pins for this state: a dropped
+        // shell call, not a permission denial, and a retry that costs nothing.
+        compose.onNodeWithText("most likely a dropped shell call", substring = true)
+            .assertIsDisplayed()
+        compose.onNodeWithText("Retrying costs nothing", substring = true).assertIsDisplayed()
     }
 
     /**
