@@ -5781,7 +5781,7 @@
 9,10477,l,awl,0,0
 9,10477,l,wl,Icing,0,f,0,0,0,0,0,p,0,0,0,0,0,bp,0,0,0,0,0,w,0,0,0,0
 9,10480,l,awl,0,0
-9,10480,l,wl,NotificationManagerService:post:com.alaminahamed.batteryhealth,0,f,0,0,0,0,0,p,0,0,0,0,0,bp,0,0,0,0,0,w,0,0,0,0
+9,10480,l,wl,NotificationManagerService:post:com.mralaminahamed.batteryhealth,0,f,0,0,0,0,0,p,0,0,0,0,0,bp,0,0,0,0,0,w,0,0,0,0
 9,10480,l,wl,*job*r//BaselineSampleWorker/@eM_ADDR/androidx.work.impl.background.systemjob.SystemJobService,0,f,0,0,0,0,0,p,0,0,0,0,0,bp,0,0,0,0,0,w,0,0,0,0
 9,10480,l,wl,*launch*,0,f,0,0,0,0,0,p,0,0,0,0,0,bp,0,0,0,0,0,w,0,0,0,0
-9,10480,l,apk,0,com.alaminahamed.batteryhealth,com.alaminahamed.batteryhealth.sampling.ChargeRecorderService,0,1,1
+9,10480,l,apk,0,com.mralaminahamed.batteryhealth,com.mralaminahamed.batteryhealth.sampling.ChargeRecorderService,0,1,1

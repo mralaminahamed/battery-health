@@ -288,6 +288,51 @@ class BatteryModelsTest {
         assertEquals(-50, session.deltaLevelPct)
     }
 
+    @Test
+    fun milliwattsProvenanceIsTheLeastDirectOfItsTwoInputsForEveryCombination() {
+        // Framework is the most direct claim, then Privileged, then Measured; the least
+        // direct of the two inputs wins, and the rule is symmetric -- hence keying on a
+        // Set. Driven off Source.entries rather than spelled out one case at a time, so a
+        // new provenance value fails here too instead of going quietly untested.
+        val leastDirect = mapOf(
+            setOf(Source.Framework) to Source.Framework,
+            setOf(Source.Privileged) to Source.Privileged,
+            setOf(Source.Measured) to Source.Measured,
+            setOf(Source.Framework, Source.Privileged) to Source.Privileged,
+            setOf(Source.Framework, Source.Measured) to Source.Measured,
+            setOf(Source.Privileged, Source.Measured) to Source.Measured,
+        )
+        for (voltage in Source.entries) {
+            for (current in Source.entries) {
+                val expected = leastDirect[setOf(voltage, current)]
+                    ?: error("no expectation for $voltage + $current: a new Source value?")
+                val milliwatts = snapshotWithSources(voltage, current).milliwatts
+                assertTrue(milliwatts is Reading.Available)
+                assertEquals(
+                    "voltage=$voltage current=$current",
+                    expected,
+                    (milliwatts as Reading.Available).source,
+                )
+            }
+        }
+    }
+
+    private fun snapshotWithSources(voltage: Source, current: Source) = BatterySnapshot(
+        levelPct = Reading.Available(50, Source.Framework),
+        chargeState = Reading.Available(ChargeState.Charging, Source.Framework),
+        plugType = Reading.Available(PlugType.Ac, Source.Framework),
+        voltageMv = Reading.Available(4000, voltage),
+        currentUa = Reading.Available(1_000_000, current),
+        temperatureDeciC = Reading.Available(250, Source.Framework),
+        technology = Reading.Available("Li-ion", Source.Framework),
+        chargeCounterUah = Reading.Available(1_000_000, Source.Framework),
+        cycleCount = Reading.Available(100, Source.Framework),
+        stateOfHealthPct = Reading.Available(85, Source.Framework),
+        firstUsageDateEpochDay = Reading.Available(18000, Source.Framework),
+        manufacturingDateEpochDay = Reading.Available(17000, Source.Framework),
+        chargeTimeRemainingMs = Reading.Available(3600000, Source.Framework),
+    )
+
     private fun assertTrue(condition: Boolean) {
         org.junit.Assert.assertTrue(condition)
     }

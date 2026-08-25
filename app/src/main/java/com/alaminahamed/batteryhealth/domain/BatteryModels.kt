@@ -83,15 +83,29 @@ data class BatterySnapshot(
 }
 
 /**
- * Provenance of a value derived from two readings. Measured is the least direct claim
- * (the app inferred it), then Privileged (read through a shell), then Framework (read
- * straight from the platform).
+ * How directly a source observed its value. Framework is the most direct claim (read
+ * straight from the platform), then Privileged (read through a shell), then Measured
+ * (the app derived it).
+ *
+ * Exhaustive over [Source] deliberately. The rule this replaced ended in
+ * `else -> Source.Framework`, so a new provenance value would have compiled cleanly and
+ * been labelled with the most authoritative source this app has. Adding one now fails
+ * the build here instead, which is the only place that check can live: no test can
+ * observe an enum value nobody has written yet.
  */
-private fun leastDirectOf(first: Source, second: Source): Source = when {
-    first == Source.Measured || second == Source.Measured -> Source.Measured
-    first == Source.Privileged || second == Source.Privileged -> Source.Privileged
-    else -> Source.Framework
-}
+private val Source.directness: Int
+    get() = when (this) {
+        Source.Framework -> 0
+        Source.Privileged -> 1
+        Source.Measured -> 2
+    }
+
+/**
+ * Provenance of a value derived from two readings: the least direct of the two, so a
+ * derived number never claims to be more directly measured than its weakest input.
+ */
+private fun leastDirectOf(first: Source, second: Source): Source =
+    if (first.directness >= second.directness) first else second
 
 data class HealthReport(
     val healthPct: Int,
