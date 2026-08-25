@@ -12,12 +12,9 @@ import kotlinx.coroutines.withContext
 enum class AdbConnectResult { Connected, AwaitingAuthorization, Unreachable, Failed }
 
 /**
- * The only address this client will ever dial. Declared here, not in a shared constants
- * file, because [AdbConnection] is the only class in this app that opens a [Socket] --
- * keeping the constant next to the one call site that can use it is what lets a later
- * enforcement test grep every `Socket(`-bearing file for it and actually mean something.
- * Defaulted on [host] rather than left as a caller convention: a transport that forgot to
- * pass it would otherwise silently be free to dial anything.
+ * The only address this client will ever dial. [AdbConnection] takes no host constructor
+ * parameter -- [connect] passes this constant to [InetSocketAddress] directly, so there is
+ * no argument a caller could supply to aim this class anywhere else.
  */
 const val LOOPBACK_HOST = "127.0.0.1"
 
@@ -28,7 +25,6 @@ const val LOOPBACK_HOST = "127.0.0.1"
  * later task, which is why [send] and [read] are exposed rather than kept private.
  */
 class AdbConnection(
-    private val host: String = LOOPBACK_HOST,
     private val port: Int,
     private val signer: AdbSigner,
     private val soTimeoutMs: Int,
@@ -43,7 +39,7 @@ class AdbConnection(
         // same name -- every connection would target port 0 instead of the real one.
         val newSocket = Socket()
         val socket = try {
-            newSocket.connect(InetSocketAddress(host, port), soTimeoutMs)
+            newSocket.connect(InetSocketAddress(LOOPBACK_HOST, port), soTimeoutMs)
             newSocket.soTimeout = soTimeoutMs
             // OPEN/OKAY/WRTE/CLSE is strictly lockstep -- every write already waits on the
             // previous round trip, so there is nothing for Nagle's coalescing to buy us.

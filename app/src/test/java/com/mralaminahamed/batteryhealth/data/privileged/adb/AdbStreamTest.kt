@@ -17,7 +17,7 @@ class AdbStreamTest {
         val (signer, line) = FakeAdbDaemon.signer()
         val fake = FakeAdbDaemon(line, responses, writeChunkSize = chunk)
             .also { daemon = it; it.start() }
-        return AdbConnection("127.0.0.1", fake.port, signer, soTimeoutMs = 2_000)
+        return AdbConnection(port = fake.port, signer = signer, soTimeoutMs = 2_000)
             .also { it.connect() }
     }
 
