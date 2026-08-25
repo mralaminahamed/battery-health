@@ -35,7 +35,10 @@ class DesignCapacityProviderTest {
 
     @Test
     fun neitherAnOverrideNorATableEntryReportsNone() {
-        val result = DesignCapacityProvider.resolve(overrideMah = null, model = "SM-S948B")
+        // A model the table genuinely does not carry. Deliberately not a real device that
+        // might later be added to the table, which would silently turn this test green for
+        // the wrong reason.
+        val result = DesignCapacityProvider.resolve(overrideMah = null, model = "SM-X999Z")
         assertEquals(EffectiveDesignCapacity.None, result)
     }
 }
