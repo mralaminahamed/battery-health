@@ -1,5 +1,6 @@
 package com.alaminahamed.batteryhealth.ui.theme
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -19,14 +20,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
  * previewable and testable without a device or a DataStore read. `BatteryHealthApp`'s
  * caller supplies it.
  *
- * [languageId] defaults to [DesignLanguageId.OneUi]: that is the only language this app
- * rendered with before this task, and the default keeps every pre-existing preview and
- * screen test — none of which pass it explicitly — rendering exactly as they did before.
- * Task 5 removes the need for the default once every caller supplies the stored choice.
+ * [languageId] defaults to resolving [DesignLanguageChoice.Auto] from the device rather than
+ * to a fixed language: a forgotten parameter must degrade to the language that device should
+ * have, not to a constant that happens to be right on whichever phone tested it. Every
+ * pre-existing preview and screen test omits this parameter, and on a Samsung device that
+ * still resolves to [DesignLanguageId.OneUi] — the language they were written against — so
+ * they keep rendering exactly as before. On any other manufacturer it now correctly resolves
+ * to [DesignLanguageId.Expressive] instead of silently rendering Samsung's language. `.orEmpty()`
+ * guards a JVM unit test reaching this composable off-device, where `Build.MANUFACTURER` would
+ * otherwise NPE; `resolveDesignLanguageId` already treats an empty string as non-Samsung. Task 5
+ * removes the need for the default once every caller supplies the stored choice.
  */
 @Composable
 fun BatteryHealthTheme(
-    languageId: DesignLanguageId = DesignLanguageId.OneUi,
+    languageId: DesignLanguageId = resolveDesignLanguageId(
+        DesignLanguageChoice.Auto,
+        Build.MANUFACTURER.orEmpty(),
+    ),
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
