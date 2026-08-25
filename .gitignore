@@ -22,3 +22,7 @@ local.properties
 
 # Tester email lists — personal data, kept out of git.
 /testers/
+
+# Apps-screen captures list a real device's installed applications.
+# They live in the private battery-health-store repo instead.
+store/screenshots*/04-apps.png
