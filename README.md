@@ -63,8 +63,9 @@ Metrics that need the privileged tier report "needs privileged access" rather th
 **Measurement**
 - **State of health** derived from charge-counter deltas across real charge sessions, not from
   a vendor string
-- Design capacity resolved from `Build.MODEL`; an unknown model degrades to unavailable rather
-  than to a default
+- Design capacity resolved from `Build.MODEL`, with a user override (Settings) available on any
+  model the table doesn't know; an unknown model with no override degrades to unavailable
+  rather than to a default
 - Median-of-sessions rather than latest-session, so one bad charge cannot move the headline
 - Synthesised charge counters (level × nominal capacity) detected and refused
 
@@ -97,7 +98,7 @@ Metrics that need the privileged tier report "needs privileged access" rather th
 
 ```mermaid
 flowchart TD
-  ui["Compose UI — Health · Live · History · Apps"] --> vm["ViewModels"]
+  ui["Compose UI — Health · Live · History · Apps · Settings"] --> vm["ViewModels"]
   vm --> repo["BatteryRepository"]
   repo --> fw["framework/ — BatteryManager + broadcast"]
   repo --> room[("Room — sessions, history")]
@@ -128,7 +129,7 @@ app/src/main/java/com/alaminahamed/batteryhealth/
 ├── di/                      Hilt modules
 └── ui/
     ├── nav/                 Destinations and NavHost
-    ├── health/  live/  history/  apps/    Screens and their UI state
+    ├── health/  live/  history/  apps/  settings/    Screens and their UI state
     ├── charts/  format/                   Rendering helpers
     ├── components/          One UI card/row/metric primitives, ReadingSlot, UnlockCard
     └── theme/               Tokens, typography, BatteryHealthTheme
@@ -259,12 +260,16 @@ Google Play needs the bundle, not the APK:
   one-time `adb tcpip 5555` setup path, confirmed over wireless debugging. The privileged tier
   itself has **not** been exercised end to end on hardware yet.
 
-`DesignCapacityTable` currently holds a single entry, `SM-A356`. On any other model the app
-reports state of health as unavailable rather than guessing a design capacity — correct
-behaviour, but it means the headline metric is blank on most devices until the table grows.
+`DesignCapacityTable` covers the A34/A35/A36/A54/A55/A56 and the S23, S24 and S25 series.
+Galaxy S26 (including this project's own SM-S948B test device) is deliberately not in it: no
+figure for it could be sourced with confidence, and a wrong entry silently corrupts every
+health percentage the app shows, which is worse than reporting unavailable. On a model the
+table doesn't know, the app reports state of health as unavailable rather than guessing a
+design capacity, but the headline metric no longer has to stay blank until the table grows --
+Settings now lets the user supply their own design capacity directly.
 
-Design capacities are looked up per `Build.MODEL`; a model that is not in the table reports
-state of health as unavailable rather than guessing.
+Design capacities are looked up per `Build.MODEL`; a model that is not in the table, and has
+no user override set in Settings, reports state of health as unavailable rather than guessing.
 
 ## Contributing
 

@@ -33,15 +33,24 @@ class DesignCapacityProvider @Inject constructor(
      * "the model table" vs. "your override" vs. inviting the user to set one -- without
      * re-deriving that from the bare value.
      */
-    val effective: Flow<EffectiveDesignCapacity> = settings.designCapacityOverrideMah.map { override ->
-        when {
-            override != null -> EffectiveDesignCapacity(override, DesignCapacitySource.Override)
+    val effective: Flow<EffectiveDesignCapacity> =
+        settings.designCapacityOverrideMah.map { override -> resolve(override, model) }
+
+    /** A user override always wins; the table is only the fallback. */
+    val designCapacityMah: Flow<Int?> = effective.map { it.mah }
+
+    companion object {
+        /**
+         * The precedence rule itself, pulled out as a pure function so it is provable on
+         * the JVM without a `SettingsStore`/`Context` -- see this class's own test for
+         * why. [effective] is a thin `Flow.map` around this; there is no second copy of
+         * the rule anywhere else.
+         */
+        internal fun resolve(overrideMah: Int?, model: String): EffectiveDesignCapacity = when {
+            overrideMah != null -> EffectiveDesignCapacity(overrideMah, DesignCapacitySource.Override)
             else -> DesignCapacityTable.lookup(model)
                 ?.let { EffectiveDesignCapacity(it, DesignCapacitySource.Table) }
                 ?: EffectiveDesignCapacity.None
         }
     }
-
-    /** A user override always wins; the table is only the fallback. */
-    val designCapacityMah: Flow<Int?> = effective.map { it.mah }
 }
