@@ -180,6 +180,29 @@ fun HealthContent(
                     color = colors.textSecondary,
                 )
             }
+            // The whole reason a fresh install on an unlisted device is a bad first-run
+            // experience: with no design capacity known, `measured` can only ever be
+            // Unsupported (HealthEstimator.estimate's very first check), and `framework`
+            // is Unsupported too until the privileged tier is connected -- so headlinePct
+            // itself is not yet Available, and ReadingSlot's own "Not available on this
+            // device" above says nothing about there being a fix. This is that fix,
+            // stated plainly and without overselling it: setting a design capacity
+            // unlocks only the measured trend (not BSOH, first-use date or Battery
+            // Protect -- those genuinely need the privileged tier), and even then it
+            // needs real charge sessions before it can say anything, same as the
+            // NotYetMeasured case just above.
+            if (state.headlinePct !is Reading.Available && state.designCapacity.mah == null) {
+                Text(
+                    text = "No design capacity is known for this device. Set one in " +
+                        "Settings to start measuring health from your charge counter -- " +
+                        "it still takes a few real charge sessions to produce a number, " +
+                        "and it won't add BSOH, first-use date or Battery Protect; those " +
+                        "need the privileged tier above.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
             if (report != null) {
                 Text(
                     text = "${report.measuredFullMah} mAh of ${report.designCapacityMah} mAh",
