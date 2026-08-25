@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -145,6 +146,12 @@ fun ProgressTrack(
 fun CollapsingTitleScaffold(
     title: String,
     bottomBar: @Composable () -> Unit,
+    // Empty by default: most callers (every screen but the root nav host) have nothing
+    // to put here. Threaded through to LargeTopAppBar's own `actions` slot rather than
+    // this composable inventing a fixed one-icon shape, so the one caller that does need
+    // an action (a Settings entry point, kept out of the bottom bar -- see
+    // BatteryHealthApp's own doc) can supply it without a second top-bar composable.
+    actions: @Composable RowScope.() -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
     val colors = LocalOneUiColors.current
@@ -163,6 +170,7 @@ fun CollapsingTitleScaffold(
                         textAlign = TextAlign.Start,
                     )
                 },
+                actions = actions,
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = colors.canvas,
                     scrolledContainerColor = colors.canvas,

@@ -1,5 +1,6 @@
 package com.alaminahamed.batteryhealth.ui.nav
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -9,6 +10,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -18,13 +21,32 @@ import com.alaminahamed.batteryhealth.ui.components.CollapsingTitleScaffold
 import com.alaminahamed.batteryhealth.ui.health.HealthScreen
 import com.alaminahamed.batteryhealth.ui.history.HistoryScreen
 import com.alaminahamed.batteryhealth.ui.live.LiveScreen
+import com.alaminahamed.batteryhealth.ui.settings.SettingsScreen
 import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 
+/**
+ * [Settings] is a real [NavHost] destination -- it needs a route and a title the same as
+ * every other screen -- but is deliberately excluded from the bottom [NavigationBar]
+ * loop below rather than becoming its fifth item. Four content tabs with text-only
+ * labels (no icon set is depended on anywhere else in this app either) already use most
+ * of a phone-width bar's room; Settings is also qualitatively different from the other
+ * four -- app configuration, not a data view -- so it gets its own entry point instead:
+ * a gear glyph in the top bar, the same plain-text-glyph convention `AppsScreen` already
+ * uses for its own gear icon (`AppRowIcon`'s System-row glyph), so this doesn't need a
+ * Material Icons dependency this project otherwise has no reason to add.
+ */
 enum class Destination(val route: String, val label: String) {
     Health("health", "Health"),
     Live("live", "Live"),
     History("history", "History"),
     Apps("apps", "Apps"),
+    Settings("settings", "Settings"),
+}
+
+private val BOTTOM_NAV_DESTINATIONS = Destination.entries.filterNot { it == Destination.Settings }
+
+object BatteryHealthAppTags {
+    const val SETTINGS_ACTION = "settings-top-bar-action"
 }
 
 @Composable
@@ -36,10 +58,28 @@ fun BatteryHealthApp() {
 
     CollapsingTitleScaffold(
         title = current.label,
+        actions = {
+            if (current != Destination.Settings) {
+                val colors = LocalOneUiColors.current
+                Text(
+                    text = "⚙",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .clickable {
+                            navController.navigate(Destination.Settings.route) {
+                                launchSingleTop = true
+                            }
+                        }
+                        .testTag(BatteryHealthAppTags.SETTINGS_ACTION),
+                )
+            }
+        },
         bottomBar = {
             val colors = LocalOneUiColors.current
             NavigationBar(containerColor = colors.card) {
-                Destination.entries.forEach { destination ->
+                BOTTOM_NAV_DESTINATIONS.forEach { destination ->
                     NavigationBarItem(
                         selected = destination == current,
                         onClick = {
@@ -76,6 +116,7 @@ fun BatteryHealthApp() {
             composable(Destination.Live.route) { LiveScreen() }
             composable(Destination.History.route) { HistoryScreen() }
             composable(Destination.Apps.route) { AppsScreen() }
+            composable(Destination.Settings.route) { SettingsScreen() }
         }
     }
 }
