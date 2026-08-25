@@ -1,0 +1,5 @@
+Fixes a crash that could close the app while it was reading privileged battery
+data — for example if USB debugging restarted, or the connection dropped, while
+a reading was in progress.
+
+No other behaviour changes.
