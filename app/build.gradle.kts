@@ -44,13 +44,13 @@ val releaseSigning: Map<String, String>? = run {
 }
 
 android {
-    namespace = "com.mralaminahamed.batteryhealth"
+    namespace = "com.alaminahamed.batteryhealth"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.mralaminahamed.batteryhealth"
+        applicationId = "com.alaminahamed.batteryhealth"
         minSdk = 26
         targetSdk = 37
         versionCode = 1

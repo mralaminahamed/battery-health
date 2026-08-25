@@ -1,8 +1,8 @@
-# Privacy Policy — Samsung Battery Health
+# Privacy Policy — Battery Health
 
 **Last updated: 25 August 2026**
 
-Samsung Battery Health does not collect, transmit, or share your personal data. Everything the
+Battery Health does not collect, transmit, or share your personal data. Everything the
 app records stays on your device.
 
 That is not a summary of a longer, more qualified answer further down. It is the whole answer,
@@ -93,7 +93,7 @@ The Google Play build does not declare this permission.
 ## Your data, your control
 
 The app's data lives in its private storage, so uninstalling it deletes everything permanently.
-You can also clear it at any time from Android Settings → Apps → Samsung Battery Health →
+You can also clear it at any time from Android Settings → Apps → Battery Health →
 Storage → Clear data.
 
 Because nothing is uploaded, there is no copy anywhere else to request, correct, or delete.

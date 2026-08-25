@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/icon-256.png" alt="Samsung Battery Health icon" width="96" height="96">
+<img src="assets/icon-256.png" alt="Battery Health icon" width="96" height="96">
 
-# Samsung Battery Health — Developer Guide
+# Battery Health — Developer Guide
 
 **Measure what Android will not tell you — an Android app that derives real battery capacity from charge-counter sampling, and reaches the metrics the platform hides through an ADB client it speaks itself, with no companion app and no third-party dependency.**
 
@@ -112,7 +112,7 @@ flowchart TD
 ```
 
 ```
-app/src/main/java/com/mralaminahamed/batteryhealth/
+app/src/main/java/com/alaminahamed/batteryhealth/
 ├── MainActivity.kt          Entry point; installs the splash screen
 ├── BatteryHealthApplication.kt
 ├── domain/                  Reading<T>, BatterySnapshot, HealthReport, ChargeSession
@@ -134,7 +134,7 @@ app/src/main/java/com/mralaminahamed/batteryhealth/
     └── theme/               Tokens, typography, BatteryHealthTheme
 ```
 
-- `applicationId` / `namespace`: `com.mralaminahamed.batteryhealth`
+- `applicationId` / `namespace`: `com.alaminahamed.batteryhealth`
 - UI is entirely Jetpack Compose with Material 3; there are no XML layouts beyond the splash
   theme
 - Dynamic colour is deliberately off — the fixed Samsung blue is the product identity
@@ -215,7 +215,7 @@ Two things that will otherwise cost you time:
 Launch the installed app from a shell:
 
 ```bash
-adb shell am start -n com.mralaminahamed.batteryhealth/.MainActivity
+adb shell am start -n com.alaminahamed.batteryhealth/.MainActivity
 ```
 
 ### Release builds
