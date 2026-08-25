@@ -14,3 +14,11 @@ local.properties
 .remember/
 /.superpowers/
 /docs/superpowers/
+
+# Release signing -- credentials and keys must never be committed.
+/keystore.properties
+*.jks
+*.keystore
+
+# Tester email lists — personal data, kept out of git.
+/testers/
