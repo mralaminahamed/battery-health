@@ -88,6 +88,13 @@ class RootShell : PrivilegedShell {
             // is not a refusal, so stay in AwaitingAuthorization rather than dropping to
             // Denied or Unavailable.
             RootExecResult.TimedOut -> TransportState.AwaitingAuthorization
+            // `su -c id` itself already exited by the time this fired -- the dialog may
+            // already be resolved one way or the other -- but the reader thread never
+            // confirmed it, so there is nothing here safe to read as a grant or a refusal.
+            // Mapped the same as TimedOut, not because the two situations are the same
+            // (see RootExecResult.DrainTimedOut's own doc), but because both boil down to
+            // "cannot confirm the outcome of this attempt, safe to retry."
+            RootExecResult.DrainTimedOut -> TransportState.AwaitingAuthorization
             // su itself could not be started -- there is no root to grant on this device.
             RootExecResult.Unavailable -> TransportState.Unavailable
         }
@@ -152,6 +159,22 @@ internal sealed interface RootExecResult {
      * that arrived before a non-zero exit, not just detected the exit code. */
     data class NonZeroExit(val output: String) : RootExecResult
     data object TimedOut : RootExecResult
+
+    /**
+     * The process itself exited -- `waitFor` succeeded, so [Success] or [NonZeroExit] would
+     * otherwise apply -- but the reader thread had not finished draining the pipe when
+     * `READER_DRAIN_TIMEOUT_MS` ran out. `Thread.join(millis)` returning does not mean the
+     * thread finished; it can just as easily mean the budget did, and nothing distinguishes
+     * those two outcomes without checking `isAlive` afterward. Whatever text is sitting in
+     * `output` at that point may be short whatever the process actually wrote, so this
+     * carries no output at all rather than risk a caller treating a partial string as
+     * complete -- see [runRootCommand]'s own doc for how this is constructed. Deliberately
+     * not reusing [TimedOut]: that case means the *process* never exited (Magisk's dialog
+     * may still be up); this means the process is already gone and only the reader lagged,
+     * a materially different situation that [RootShell.probe] maps the same way today only
+     * because both are equally "can't confirm, safe to retry."
+     */
+    data object DrainTimedOut : RootExecResult
     data object Unavailable : RootExecResult
 }
 
@@ -200,9 +223,16 @@ internal fun runRootCommand(argv: List<String>, timeoutSeconds: Long): RootExecR
         return RootExecResult.TimedOut
     }
     // The process exiting does not guarantee the reader thread has drained every byte
-    // already sitting in the pipe yet -- join, not an immediate read of `output`, ensures
-    // the last chunk is actually in hand before this decides success or failure.
+    // already sitting in the pipe yet -- join, not an immediate read of `output`, is what
+    // gives the last chunk a chance to land before this decides success or failure. But
+    // `join(millis)` returning is ambiguous by itself: it means either the thread finished
+    // or the budget ran out, and only `isAlive` afterward tells those two apart. Skipping
+    // that check and reading `output` regardless is exactly how a timed-out join turns a
+    // partial dump into a reported `Success`.
     reader.join(READER_DRAIN_TIMEOUT_MS)
+    if (reader.isAlive) {
+        return RootExecResult.DrainTimedOut
+    }
     val text = synchronized(output) { output.toString() }
     if (process.exitValue() != 0) {
         RootExecResult.NonZeroExit(text)
