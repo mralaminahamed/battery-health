@@ -95,4 +95,27 @@ class RootShellTest {
         check(result is RootExecResult.Success) { "expected Success, got $result" }
         assertEquals(expectedByteCount, result.output.length)
     }
+
+    /**
+     * `Thread.join(millis)` returns for two different reasons -- the thread finished, or the
+     * budget simply ran out -- and nothing at the call site distinguishes them. This
+     * constructs the second case deterministically rather than hoping to catch a real GC or
+     * scheduler stall: `sh` backgrounds `sleep 5` (inheriting the same merged stdout pipe
+     * this reader drains) and exits immediately after printing "partial", so
+     * `process.waitFor` succeeds almost instantly -- but the pipe's write end stays open,
+     * held by the still-running background process, so the reader thread's blocking `read()`
+     * has nothing to return and no EOF to see. It is therefore still alive, unable to say
+     * whether "partial" is the whole story, when the 2-second drain budget expires.
+     *
+     * RED without the fix: `reader.join` returning (for either reason) is read as "drained",
+     * so this returns `Success("partial")` -- a partial dump reported as complete. GREEN
+     * with it: `reader.isAlive` after the join catches the still-blocked thread and this
+     * returns a distinct non-success result instead.
+     */
+    @Test
+    fun aReaderThreadStillDrainingWhenTheProcessExitsIsNotReportedAsSuccess() {
+        val result = runRootCommand(listOf("sh", "-c", "sleep 5 & printf partial"), timeoutSeconds = 5)
+
+        assertEquals(RootExecResult.DrainTimedOut, result)
+    }
 }
