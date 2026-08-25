@@ -2,6 +2,7 @@ package com.mralaminahamed.batteryhealth.data.privileged.adb
 
 import java.io.DataInputStream
 import java.net.ServerSocket
+import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
@@ -161,4 +162,69 @@ class AdbConnectionTest {
 
         assertEquals(AdbConnectResult.Failed, result)
     }
+
+    /**
+     * Regression test for M1: the outer `try { send(A_CNXN...); handshake() } catch (e:
+     * IOException)` in [AdbConnection.connect] used to leave the socket open on a declared
+     * failure, unlike the three catches around the initial TCP connect a few lines above it,
+     * which all `runCatching { newSocket.close() }`. An idle loopback connection to adbd is
+     * left open after every handshake failure until this leaks.
+     *
+     * The server here deliberately never responds after the client's initial A_CNXN and
+     * never closes its own side either -- the client's handshake read blocks until its own
+     * `soTimeoutMs` elapses and throws `SocketTimeoutException` (an `IOException`), driving
+     * [AdbConnectResult.Failed]. Asserted from the still-open server side: if the client
+     * closed its own socket as this fix requires, this side's next read sees a prompt EOF;
+     * if the client leaked it, no FIN is ever sent and this side just keeps timing out.
+     */
+    @Test
+    fun connectClosesTheSocketWhenTheHandshakeThrows() = runTest {
+        val server = ServerSocket(0)
+        var serverSideSocket: Socket? = null
+        val serverThread = thread {
+            val socket = runCatching { server.accept() }.getOrNull() ?: return@thread
+            serverSideSocket = socket
+            socket.soTimeout = 5_000
+            runCatching {
+                val input = DataInputStream(socket.getInputStream())
+                input.readFully(ByteArray(ADB_HEADER_BYTES)) // the client's A_CNXN
+                // Deliberately no response and no close from this side -- the whole point
+                // is observing whether the CLIENT closed its own socket.
+            }
+        }
+
+        val connection = AdbConnection(
+            port = server.localPort, signer = FakeAdbDaemon.signer().first, soTimeoutMs = 500,
+        )
+        val result = connection.connect()
+        serverThread.join(2_000)
+
+        try {
+            assertEquals(AdbConnectResult.Failed, result)
+            val accepted = requireNotNull(serverSideSocket) { "server never accepted a connection" }
+            accepted.soTimeout = 50
+            assertTrue(
+                "expected the client to have closed its socket, causing this side to see EOF",
+                awaitUntilTrue(timeoutMs = 2_000) {
+                    runCatching { accepted.getInputStream().read() == -1 }.getOrDefault(false)
+                },
+            )
+        } finally {
+            runCatching { server.close() }
+            runCatching { serverSideSocket?.close() }
+        }
+    }
+}
+
+/** Polls [condition] until it is true or [timeoutMs] elapses, for asserting on an effect (the
+ * peer noticing the client closed its socket) that lands asynchronously to the calling
+ * coroutine, on a real background thread. A plain blocking loop, not
+ * `kotlinx.coroutines.delay`: under `runTest`, `delay` resolves against the test dispatcher's
+ * virtual clock, which is wrong for a condition that depends on real wall-clock time here. */
+private fun awaitUntilTrue(timeoutMs: Long, condition: () -> Boolean): Boolean {
+    val deadlineMs = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadlineMs) {
+        if (condition()) return true
+    }
+    return condition()
 }

@@ -80,6 +80,11 @@ class AdbConnection(
             send(A_CNXN, 0x01000000, MAX_PAYLOAD_BYTES, "host::features=cmd\u0000".toByteArray())
             handshake()
         } catch (e: IOException) {
+            // Mirrors the three catches around the initial TCP connect a few lines above --
+            // a declared failure here must not leave an idle loopback connection to adbd
+            // open. Without this, every handshake failure (adbd hanging up, a malformed
+            // reply, a timeout) leaked the socket instead of tearing it down.
+            close()
             AdbConnectResult.Failed
         }
     }
