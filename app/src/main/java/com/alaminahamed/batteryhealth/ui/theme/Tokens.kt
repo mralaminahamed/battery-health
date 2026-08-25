@@ -59,4 +59,17 @@ val DarkOneUiColors = OneUiColors(
     poor = Color(0xFFFF6369),
 )
 
-val LocalOneUiColors = staticCompositionLocalOf { LightOneUiColors }
+/**
+ * TEMPORARY compatibility shim, to be removed in P3.
+ *
+ * 33 call sites across 11 files read this local. P1 keeps them working by having
+ * `BatteryHealthTheme` provide it from `LocalDesignLanguage.current.colors`, so no screen
+ * changes in P1. New code must read `LocalDesignLanguage` instead — this exists only so the
+ * token layer can land without rewriting every screen in the same change.
+ *
+ * The error default is deliberate: it is provided by the theme, so reading it outside the
+ * theme is a bug rather than something to paper over with a plausible palette.
+ */
+val LocalOneUiColors = staticCompositionLocalOf<OneUiColors> {
+    error("No OneUiColors provided. Wrap the content in BatteryHealthTheme.")
+}
