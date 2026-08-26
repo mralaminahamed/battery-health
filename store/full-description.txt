@@ -18,7 +18,7 @@ What Android will and will not tell an app
 
 Readable by any app: charge level, voltage, current, temperature, battery technology, charge counter, and time remaining.
 
-Not readable by any ordinary app, on any device: state of health, first-use date, and manufacturing date. These sit behind a system-level permission, and two of them are hidden APIs that appear in no public SDK. This was verified against real hardware, not assumed from documentation.
+Not readable by an ordinary install: state of health, first-use date, and manufacturing date. These sit behind a system-level permission and appear in no public SDK. One command from a computer unlocks them, once, and it survives restarts. Without it they report as unavailable. Verified against real hardware.
 
 Features
 

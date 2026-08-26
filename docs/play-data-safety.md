@@ -50,6 +50,31 @@ across a charge session. `WorkManager`'s minimum periodic interval is 15 minutes
 too coarse: at that cadence the counter deltas are dominated by noise and the derived capacity
 is not trustworthy. No other foreground service type describes this use.
 
+### `BATTERY_STATS`
+
+Declared, and **not held by default**. Its protection level is
+`signature|privileged|development`, so it can never be granted by a user tapping
+something and is never granted on a normal install. The `development` flag means it can be
+granted over adb:
+
+```
+adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STATS
+```
+
+That is an explicit, deliberate action taken by the device's owner from their own computer.
+Ungranted, the declaration is inert: the app behaves exactly as it does without it, and the
+three affected readings (state of health, first-use date, manufacturing date) report as
+unavailable.
+
+Justification if a reviewer asks: the app's stated purpose is reporting battery health
+honestly, and these are the values that make that possible. It does not fail, degrade, or
+nag when the permission is absent — it says the readings are unavailable, which is the same
+thing it does for every other value it cannot obtain.
+
+Nothing read under this permission leaves the device. The battery serial number is
+deliberately **not** recorded even into the app's own diagnostic report — it is a
+per-device identifier, and the report is meant to be shareable.
+
 ### `RECEIVE_BOOT_COMPLETED`
 
 Re-registers the sampling schedule after a restart, so recorded history is not silently

@@ -184,17 +184,34 @@ There are two, so **every Gradle task name is flavour-qualified**:
 ./gradlew assemblePlayDebug            # build without installing
 ```
 
-### Enabling the privileged tier
+### Unlocking the restricted readings
 
-The app raises Android's own "Allow USB debugging?" prompt and remembers the grant afterwards.
-Before it can connect, `adbd` has to be listening on TCP — a one-time step from a computer:
+Two routes, and the first is better for almost everyone.
+
+**Grant the permission (once, ever).** `BATTERY_STATS` is
+`signature|privileged|development`. No user tap can grant it, but the `development` flag
+means adb can, and Android then persists it across reboots and app updates:
+
+```bash
+adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STATS
+```
+
+That unlocks state of health, first-use date and manufacturing date, read straight from
+`BatteryManager` with no shell, no socket and no prompt.
+
+**The shell tier (per reboot).** Samsung's cycle count and the enforced charge limit have
+no `BATTERY_PROPERTY` id, so they still come from `dumpsys` over the in-app adb client.
+That needs `adbd` listening on TCP, which most devices forget on restart:
 
 ```bash
 adb tcpip 5555
 ```
 
-On most devices that does **not** survive a reboot, so the command has to be repeated after a
-restart. A rooted device skips this entirely and uses `su`.
+The app then raises Android's own "Allow USB debugging?" prompt and remembers the grant. A
+rooted device skips both routes and uses `su`.
+
+Neither is required. Without them the app measures health from the charge counter and
+reports the restricted values as unavailable.
 
 ## Development
 
@@ -256,9 +273,20 @@ Google Play needs the bundle, not the APK:
   app is built on: which fields the platform exposes, which are `@SystemApi @hide`, and what
   `dumpsys` actually returns. The captured fixtures under `app/src/test/resources/` come from
   this device.
-- **Samsung Galaxy S26 Ultra (SM-S948B), Android 16 (API 36)** — install, launch, and the
-  one-time `adb tcpip 5555` setup path, confirmed over wireless debugging. The privileged tier
-  itself has **not** been exercised end to end on hardware yet.
+- **Samsung Galaxy S26 Ultra (SM-S948B), Android 16 (API 36)** — the privileged tier
+  end to end, both routes. Over the shell tier: cycle count 7, BSOH 100%, first use
+  2026-08-13, Battery Protect on with an 80% limit. Over a granted `BATTERY_STATS`: state
+  of health 100, manufacturing date 2026-03-28, first-use date, charging policy and part
+  status, all previously reporting `SecurityException`. The full instrumented suite runs
+  green here (121 tests), and the discovery sweep's output across all five channels comes
+  from this device.
+
+  Two findings from it are load-bearing elsewhere in the codebase. `power_profile.xml`
+  carries **both** `battery.capacity` (4855, the rated figure) and Samsung's own
+  `battery.typical.capacity` (5000) — reading AOSP's field would over-report health by
+  about 3% on every Samsung. And `Settings.Global.battery_protection_threshold` (95)
+  mirrors `mMaximumProtectionThreshold`, the Maximum-mode ceiling, not the
+  `mProtectionThreshold` (80) actually in force.
 
 `DesignCapacityTable` covers the A34/A35/A36/A54/A55/A56, the S23, S24 and S25 series, and the
 S26 Ultra. Entries are only added when the figure can be sourced with confidence — the S26
