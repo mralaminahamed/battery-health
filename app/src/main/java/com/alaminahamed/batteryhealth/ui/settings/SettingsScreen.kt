@@ -186,7 +186,11 @@ fun SettingsContent(
             }
         }
 
-        OneUiCard {
+        // Hidden where no transport exists. The Play build compiles none in, so this card
+        // offered a port for a connection that build cannot make, describing a command
+        // ("adb tcpip") that would achieve nothing on it. A setting that cannot affect
+        // anything is worse than a missing one: it invites the user to go and try.
+        if (state.privilegedTierSupported) OneUiCard {
             SectionHeader("Privileged tier")
             Text(
                 text = "Only needed if you connect the optional privileged tier from " +

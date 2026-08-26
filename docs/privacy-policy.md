@@ -47,39 +47,53 @@ local settings file that no other app can read. None of it is uploaded anywhere.
 - **No accounts.** There is no sign-in, and the app never asks who you are.
 - **No advertising identifier.** The app does not read or use one.
 
-## About the Internet permission
+## About permissions
 
-The app declares `android.permission.INTERNET`, and it is reasonable to want an explanation
-for that in an app claiming to send nothing.
+The app on Google Play declares **no Internet permission at all**. It cannot open a network
+socket, to any address, even in principle — the code that once did so is not compiled into
+that build.
 
-It is required to open a network socket to `127.0.0.1` — your device talking to itself.
-Android enforces the `INTERNET` permission at socket creation regardless of destination, and
-loopback is not exempt, so an app cannot connect to its own device without holding it.
+A separate build distributed outside Google Play does declare `android.permission.INTERNET`,
+and only for one purpose: opening a socket to `127.0.0.1`, your device talking to itself.
+Android enforces that permission at socket creation regardless of destination, and loopback is
+not exempt, so an app cannot connect to its own device without holding it. No bytes leave the
+handset either way.
 
-The app uses this to reach the Android Debug Bridge daemon running on your own phone, which is
-how it reads the battery metrics Android does not expose to ordinary apps. Those bytes never
-leave the handset.
+That separation is mechanical rather than promised. An automated test fails the build if any
+production source constructs a network socket that could reach an address other than loopback.
 
-This is enforced mechanically, not merely promised: an automated test fails the build if any
-part of the app constructs a network socket that could reach an address other than loopback.
+### `BATTERY_STATS`
+
+The app declares this permission and is **not granted it** on a normal install. Android
+reserves it for system applications, and no user action inside the app can obtain it.
+
+It can be granted deliberately by the device's owner, from their own computer, with a single
+command. Ungranted, the declaration does nothing and the app behaves exactly as it would
+without it, reporting the affected values as unavailable.
+
+Where the permission is granted, the app reads state of health, first-use date and
+manufacturing date directly from Android's own `BatteryManager`. Nothing read this way leaves
+the device. The battery's serial number is deliberately **not** recorded even into the app's
+own diagnostic report, because that report is meant to be shareable and a serial identifies
+one physical device.
 
 ## About the privileged tier
 
-Some battery metrics — state of health, first-use date, manufacturer data — are protected by
-`BATTERY_STATS`, a permission Android grants only to system applications.
+**The Google Play build has none.** It contains no debug-bridge client, no `su` handling, and
+no network permission. Everything it shows comes from ordinary Android APIs, from settings the
+manufacturer publishes to any app, or from measurements the app takes itself.
 
-If you choose to enable it, the app reads those values by running two fixed commands,
+A separate build distributed outside Google Play carries an optional tier for two values that
+have no public API at all: the manufacturer's own accumulated cycle count and its second
+health figure. Where a user enables it, that build reads them by running two fixed commands,
 `dumpsys battery` and `dumpsys batterystats --checkin`, through the debug bridge or through
 `su` on a rooted device. Those two commands are the entire privileged surface: they are
-compiled into the app as constants, and there is no code path by which any other command can
-be run.
+compiled in as constants, and there is no code path by which any other command can be run.
 
-Enabling this is entirely optional. The app works without it and simply reports the affected
-metrics as unavailable.
-
-To authenticate to the debug bridge, the app generates an RSA key inside the Android Keystore.
-The key is marked non-exportable, so it cannot be read out of the device's hardware-backed
-keystore by the app or by anything else, and it is used for nothing but this local connection.
+To authenticate to the debug bridge, that build generates an RSA key inside the Android
+Keystore. The key is marked non-exportable, so it cannot be read out of the device's
+hardware-backed keystore by the app or by anything else, and it is used for nothing but this
+local connection.
 
 ## Per-app battery attribution
 

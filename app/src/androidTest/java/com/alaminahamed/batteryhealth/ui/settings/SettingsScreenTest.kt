@@ -263,4 +263,35 @@ class SettingsScreenTest {
         compose.onNodeWithTag(SettingsAdbPortTags.DIALOG).assertDoesNotExist()
         assertEquals(5037, runBlocking { settings.adbPort.first() })
     }
+
+    // ---- staleness that reached the screen ----------------------------------------------
+
+    /**
+     * The Play build compiles in no transport, so this card offered a port for a
+     * connection that build cannot make and named a command ("adb tcpip") that would
+     * achieve nothing on it. A setting that cannot affect anything is worse than a missing
+     * one: it invites the user to go and try.
+     */
+    @Test
+    fun theAdbPortSettingIsHiddenWhereNoTransportExists() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(privilegedTierSupported = false), Modifier)
+            }
+        }
+
+        compose.onNodeWithText("ADB port").assertDoesNotExist()
+        compose.onNodeWithText("Privileged tier").assertDoesNotExist()
+    }
+
+    @Test
+    fun theAdbPortSettingIsShownWhereATransportExists() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(privilegedTierSupported = true), Modifier)
+            }
+        }
+
+        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performScrollTo().assertIsDisplayed()
+    }
 }

@@ -83,8 +83,10 @@ Metrics that need the privileged tier report "needs privileged access" rather th
 - **Root transport** via `su` where available, preferred over ADB when both are ready
 - **Fixed allowlist**: exactly two commands (`dumpsys battery`, `dumpsys batterystats --checkin`)
   are `const val`. No method takes a command string — the restriction is structural, not a filter
-- `INTERNET` is declared for loopback only, and a unit test fails the build if any production
-  source constructs a socket that could reach anywhere else
+- **The Play build declares no `INTERNET` permission at all** and compiles in no network code:
+  `play` has zero transport references in its dex against `full`'s 151. The `full` flavour
+  declares it for loopback only, and a unit test fails the build if any production source
+  constructs a socket outside `AdbConnection`, or constructs one with a named host
 
 **Honesty by construction**
 - Every metric reaches the UI wrapped in `Reading<T>` — either a value plus its provenance, or a
@@ -199,9 +201,11 @@ adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STA
 That unlocks state of health, first-use date and manufacturing date, read straight from
 `BatteryManager` with no shell, no socket and no prompt.
 
-**The shell tier (per reboot).** Samsung's cycle count and the enforced charge limit have
-no `BATTERY_PROPERTY` id, so they still come from `dumpsys` over the in-app adb client.
-That needs `adbd` listening on TCP, which most devices forget on restart:
+**The shell tier — `full` flavour only, per reboot.** The Play build has no transport
+compiled in, so this does not apply to it at all. In `full`, two values still come from
+`dumpsys` over the in-app adb client, because neither has a `BATTERY_PROPERTY` id: the
+manufacturer's own accumulated cycle count and its second health figure (BSOH). That needs
+`adbd` listening on TCP, which most devices forget on restart:
 
 ```bash
 adb tcpip 5555
@@ -210,8 +214,9 @@ adb tcpip 5555
 The app then raises Android's own "Allow USB debugging?" prompt and remembers the grant. A
 rooted device skips both routes and uses `su`.
 
-Neither is required. Without them the app measures health from the charge counter and
-reports the restricted values as unavailable.
+Neither route is required. Without them the app measures health from the charge counter,
+counts cycles from the charge it records, and reports the rest as unavailable. Battery
+Protect and its charge limit need nothing at all — they come from `Settings.Global`.
 
 ## Development
 
