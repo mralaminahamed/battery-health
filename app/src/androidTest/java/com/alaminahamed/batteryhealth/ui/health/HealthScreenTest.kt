@@ -236,4 +236,103 @@ class HealthScreenTest {
             .performScrollTo()
             .assertTextContains("couldn", substring = true)
     }
+
+    // ---- cycles and BSOH ---------------------------------------------------------------
+
+    /**
+     * The distinction that matters most about this app's own cycle count: Samsung's counts
+     * from the day the battery was made, this counts charge the app actually watched go
+     * in. Without saying so, a low number on a year-old phone reads as a healthy battery
+     * rather than as a young measurement.
+     */
+    @Test
+    fun anAppMeasuredCycleCountSaysItCountsFromWhenRecordingStarted() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.Available(3, Source.Measured)),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("not the battery's whole life", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /** Samsung's own figure keeps its own, different caveat. */
+    @Test
+    fun aVendorCycleCountKeepsThePartialChargeCaveat() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.Available(412, Source.Privileged)),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("Counts every partial charge", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /**
+     * A build with no shell has no source for BSOH at any price, and the headline already
+     * answers the same question -- so the row would be a permanent "not available" sitting
+     * under a number that supersedes it.
+     */
+    @Test
+    fun bsohIsHiddenEntirelyInABuildWithNoPrivilegedTier() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.NotYetMeasured,
+            privilegedTierSupported = false,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("BSOH").assertDoesNotExist()
+    }
+
+    @Test
+    fun bsohIsShownWhereATierCouldSupplyIt() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.NotYetMeasured,
+            privilegedTierSupported = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("BSOH").performScrollTo().assertIsDisplayed()
+    }
+
+    /**
+     * "Measuring" alone says nothing about what would end the wait, and with recording off
+     * it would say it forever -- the same defect the headline's own subtitle was fixed
+     * for earlier.
+     */
+    @Test
+    fun aCycleCountWaitingOnRecordingSaysHowToStartIt() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.NotYetMeasured),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = false,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("start counting", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun aCycleCountAlreadyRecordingSaysWhatItIsWaitingFor() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.NotYetMeasured),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("Counting charge as it goes in", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
 }

@@ -267,17 +267,46 @@ fun HealthContent(
             // (Source.Privileged): a plain framework EXTRA_CYCLE_COUNT reading, on the
             // rare device that reports one, has no such documented partial-cycle
             // behaviour to disclose.
-            if ((state.snapshot?.cycleCount as? Reading.Available)?.source == Source.Privileged) {
+            // "Measuring" on its own says nothing about what would end the wait. The count
+            // comes from charge sessions this app records, so with recording off it reads
+            // that way forever -- the same defect the headline's own subtitle was fixed for.
+            val cycleCaption = if (state.snapshot?.cycleCount is Reading.NotYetMeasured) {
+                if (state.recorderEnabled) {
+                    "Counting charge as it goes in \u2014 a figure appears after a full " +
+                        "cycle's worth"
+                } else {
+                    "Turn on \u201CRecord charge sessions\u201D below to start counting"
+                }
+            } else when ((state.snapshot?.cycleCount as? Reading.Available)?.source) {
+                Source.Privileged -> "Counts every partial charge, not just full cycles"
+                // The distinction that matters most about this number. Samsung's counts
+                // from the day the battery was made; this one counts charge this app
+                // actually watched go in, so a phone that is already a year old starts
+                // from zero here. Without saying so, a low number reads as a healthy
+                // battery rather than as a young measurement.
+                Source.Measured ->
+                    "Measured by this app, so it counts from when recording started \u2014 " +
+                        "not the battery's whole life"
+                Source.Framework, Source.Vendor, null -> null
+            }
+            if (cycleCaption != null) {
                 Text(
-                    text = "Counts every partial charge, not just full cycles",
+                    text = cycleCaption,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.textSecondary,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
-            KeyValueRow("BSOH") {
-                ReadingSlot(state.snapshot?.bsohPct ?: Reading.NotYetMeasured) { pct, _ ->
-                    Value("$pct%")
+            // BSOH is Samsung's own second health figure, read only from `dumpsys`. A
+            // build with no shell has no source for it at any price, and the headline
+            // above already shows the platform's state of health -- so the row would be a
+            // permanent "not available" sitting under a number that answers the same
+            // question. Hidden rather than shown empty; `full` still has it.
+            if (state.privilegedTierSupported) {
+                KeyValueRow("BSOH") {
+                    ReadingSlot(state.snapshot?.bsohPct ?: Reading.NotYetMeasured) { pct, _ ->
+                        Value("$pct%")
+                    }
                 }
             }
             KeyValueRow("First use") {
