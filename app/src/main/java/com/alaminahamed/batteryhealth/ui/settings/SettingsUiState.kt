@@ -29,4 +29,31 @@ data class SettingsUiState(
      * made.
      */
     val privilegedTierSupported: Boolean = true,
+    /**
+     * Mirrors `SettingsStore.cycleCountBaseline`. Null means the user has never supplied
+     * one, which is not the same as zero -- see `CycleCountResolver`, where a supplied
+     * zero is a real claim about a new battery and null is the absence of any claim.
+     */
+    val cycleBaseline: Int? = null,
+    /**
+     * Mirrors `SettingsStore.unlockCardDismissed`. Surfaced here because dismissal was
+     * otherwise a one-way door: the control that sets it lives on the card being
+     * dismissed, so once it is gone there is nothing left to press.
+     */
+    val unlockCardDismissed: Boolean = false,
+    /**
+     * Whether `BATTERY_STATS` is held right now.
+     *
+     * Read from the platform on each resume rather than stored, because it is granted
+     * from outside this app entirely and nothing tells the process when that happens.
+     */
+    val batteryStatsGranted: Boolean = false,
+    /**
+     * Whether notifications are permitted.
+     *
+     * Always true below API 33, where there is no such runtime permission and posting is
+     * unconditional. Like [batteryStatsGranted] this is re-read on resume: the user can
+     * change it in system settings while this screen is in the background.
+     */
+    val notificationsGranted: Boolean = true,
 )

@@ -1,8 +1,11 @@
 package com.alaminahamed.batteryhealth.ui.settings
 
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -19,6 +22,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -293,5 +297,141 @@ class SettingsScreenTest {
         }
 
         compose.onNodeWithTag(SettingsAdbPortTags.ROW).performScrollTo().assertIsDisplayed()
+    }
+
+    // ---- controls that had no home, or no way back ---------------------------------------
+
+    /**
+     * The baseline was reachable only from Health, though it is a stored preference and
+     * this is where someone looks for one. Both screens open the same dialog and write
+     * through the same store, so neither can drift into asking for a different thing.
+     */
+    @Test
+    fun theCycleBaselineIsReachableFromSettings() {
+        compose.setContent {
+            BatteryHealthTheme { SettingsContent(state().copy(cycleBaseline = 412), Modifier) }
+        }
+
+        compose.onNodeWithTag(SettingsCycleBaselineTags.ROW).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("412").assertIsDisplayed()
+    }
+
+    /**
+     * Absence of a claim, shown as absence. `CycleCountResolver` acts on a supplied zero
+     * as a real statement about a new battery, so rendering "never set" as "0" would make
+     * the two indistinguishable at the one place the user could correct it.
+     */
+    @Test
+    fun anUnsetBaselineReadsAsUnsetRatherThanZero() {
+        compose.setContent {
+            BatteryHealthTheme { SettingsContent(state().copy(cycleBaseline = null), Modifier) }
+        }
+
+        compose.onNodeWithTag(SettingsCycleBaselineTags.ROW).performScrollTo()
+        compose.onNodeWithText("Not set").assertIsDisplayed()
+        compose.onAllNodesWithText("0").assertCountEquals(0)
+    }
+
+    /**
+     * Android stops showing its own prompt after two refusals, at which point the in-app
+     * request is a silent no-op forever. Without this route the app would report
+     * notifications as off while offering nothing that could turn them back on.
+     */
+    @Test
+    fun blockedNotificationsOfferARouteToSystemSettings() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(notificationsGranted = false), Modifier)
+            }
+        }
+
+        compose.onNodeWithTag(SettingsNotificationTags.ACTION).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Blocked").assertIsDisplayed()
+    }
+
+    /** A button that leads somewhere with nothing to do is worse than no button. */
+    @Test
+    fun grantedNotificationsOfferNoButtonToPress() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(notificationsGranted = true), Modifier)
+            }
+        }
+
+        compose.onNodeWithTag(SettingsNotificationTags.ROW).performScrollTo()
+        compose.onNodeWithText("Allowed").assertIsDisplayed()
+        compose.onAllNodesWithTag(SettingsNotificationTags.ACTION).assertCountEquals(0)
+    }
+
+    /**
+     * The permission state, said plainly, with the one command that changes it. Nothing
+     * in the app reported this before: every dependent row read "needs privileged access"
+     * without saying which setup would fix it.
+     */
+    @Test
+    fun anUngrantedPermissionShowsTheCommandThatGrantsIt() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(batteryStatsGranted = false), Modifier)
+            }
+        }
+
+        compose.onNodeWithTag(SettingsPrivilegedReadingsTags.COMMAND).performScrollTo()
+            .assertIsDisplayed()
+        // Scrolled to in its own right. Scrolling the command into view leaves the row
+        // beneath it below the fold, and assertIsDisplayed fails on a node that exists
+        // but is off-screen -- which reads as "the value is wrong" rather than "you did
+        // not scroll to it".
+        compose.onNodeWithTag(SettingsPrivilegedReadingsTags.ROW).performScrollTo()
+        compose.onNodeWithText("Not granted").assertIsDisplayed()
+    }
+
+    @Test
+    fun aGrantedPermissionDoesNotKeepShowingTheCommand() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(batteryStatsGranted = true), Modifier)
+            }
+        }
+
+        compose.onNodeWithTag(SettingsPrivilegedReadingsTags.ROW).performScrollTo()
+        compose.onNodeWithText("Granted").assertIsDisplayed()
+        compose.onAllNodesWithTag(SettingsPrivilegedReadingsTags.COMMAND).assertCountEquals(0)
+    }
+
+    /**
+     * Dismissal was a one-way door: the only control that sets the flag lives on the card
+     * being dismissed, so once hidden there was nothing left to press and a reinstall --
+     * which costs every recorded session -- was the only route back.
+     */
+    @Test
+    fun aDismissedUnlockCardCanBeRestoredFromSettings() {
+        var restored = false
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(
+                    state().copy(unlockCardDismissed = true),
+                    Modifier,
+                    onRestoreUnlockCard = { restored = true },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(SettingsPrivilegedReadingsTags.RESTORE).performScrollTo()
+            .assertIsDisplayed().performClick()
+        assertTrue("the restore row must write through", restored)
+    }
+
+    /** Nothing to restore, nothing offered. */
+    @Test
+    fun anUndismissedCardOffersNoRestoreRow() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(unlockCardDismissed = false), Modifier)
+            }
+        }
+
+        compose.onNodeWithTag(SettingsPrivilegedReadingsTags.ROW).performScrollTo()
+        compose.onAllNodesWithTag(SettingsPrivilegedReadingsTags.RESTORE).assertCountEquals(0)
     }
 }
