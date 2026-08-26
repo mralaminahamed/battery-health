@@ -208,6 +208,24 @@ fun HealthContent(
 
                 MeasurementNote.None -> null
             }
+            // A figure above 100% needs saying out loud, or it just looks broken. It is
+            // usually not a remarkable battery -- vendors publish a rated and a typical
+            // capacity a few per cent apart, and measuring a healthy cell against the
+            // rated one lands here routinely. What it reliably means is that the design
+            // capacity this app is comparing against is probably the wrong one, which the
+            // user can fix from Settings. Before this, the number was silently clamped and
+            // they had no way to know.
+            if (report?.exceedsDesign == true) {
+                Text(
+                    text = "Measured above the design capacity being compared against " +
+                        "(${state.designCapacity.mah ?: 0} mAh). That usually means the " +
+                        "design figure is wrong for this device rather than that the " +
+                        "battery gained capacity \u2014 you can set the right one in Settings.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
             if (measurementText != null) {
                 Text(
                     text = measurementText,

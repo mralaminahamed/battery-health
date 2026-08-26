@@ -94,7 +94,27 @@ class HealthEstimator @Inject constructor() {
         val ratio = median.toDouble() / designUah
         if (ratio < MIN_PLAUSIBLE_RATIO || ratio > MAX_PLAUSIBLE_RATIO) return Reading.Unsupported
 
-        val healthPct = (ratio * 100).roundToInt().coerceIn(1, 100)
+        // Not clamped to 100.
+        //
+        // A cell measuring above its design capacity is real and common -- vendors publish
+        // both a rated and a typical figure and they differ by a few per cent -- but it is
+        // also the loudest available signal that the design capacity this app is comparing
+        // against is the wrong one for the device. Clamping turned that signal into a
+        // serene "100%".
+        //
+        // It has already cost this project once. `power_profile.xml` on an SM-S948B
+        // carries battery.capacity 4855 alongside Samsung's own battery.typical.capacity
+        // 5000, and reading the first gave a health of 103.7% -- which the clamp would
+        // have displayed as 100%, with nothing anywhere in the app disagreeing. The bug
+        // was found by comparing spec sheets by hand, not by using the app.
+        //
+        // The plausibility guard above already refuses anything past MAX_PLAUSIBLE_RATIO,
+        // so what survives here is a percentage between 40 and 130 -- a range in which
+        // every value is worth showing, including the ones above 100.
+        //
+        // The old lower bound of 1 was unreachable in any case: MIN_PLAUSIBLE_RATIO of
+        // 0.40 means nothing below 40 ever reached it.
+        val healthPct = (ratio * 100).roundToInt()
         val method =
             if (measurements.count { it.method == CapacityMethod.Counter } * 2 >= measurements.size) {
                 CapacityMethod.Counter
