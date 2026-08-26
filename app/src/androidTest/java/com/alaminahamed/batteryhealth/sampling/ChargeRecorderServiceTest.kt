@@ -4,7 +4,9 @@ import android.app.ActivityManager
 import android.content.ComponentName
 import androidx.test.platform.app.InstrumentationRegistry
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -44,26 +46,26 @@ class ChargeRecorderServiceTest {
     @Before
     fun disableAndAwaitBefore() = runBlocking {
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "@Before cleanup")
     }
 
     @After
     fun disableAndAwaitAfter() = runBlocking {
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "@After cleanup")
     }
 
     @Test
     fun rapidDisableThenEnableEndsRunningAndStaysStoppableAfterwards() = runBlocking {
         store.setRecorderEnabled(true)
-        awaitServiceState(running = true)
+        awaitServiceState(running = true, step = "initial enable")
 
         // The rapid toggle: whether or not it lands in the exact refusal window is not
         // controlled here (see class doc). Either way, ending on enable must leave the
         // service running.
         store.setRecorderEnabled(false)
         store.setRecorderEnabled(true)
-        awaitServiceState(running = true)
+        awaitServiceState(running = true, step = "rapid disable-then-enable")
         assertTrue("service should be running after ending on enable", isServiceRunning())
 
         // The assertion that actually distinguishes the fix from the bug it replaced:
@@ -73,17 +75,17 @@ class ChargeRecorderServiceTest {
         // be noticed -- the service would keep running (and sampling, and showing its
         // notification) indefinitely, regardless of what the flag says.
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "later unambiguous disable")
         assertFalse("a later disable must still be able to stop the service", isServiceRunning())
     }
 
     @Test
     fun endingOnDisableLeavesNoServiceRunning() = runBlocking {
         store.setRecorderEnabled(true)
-        awaitServiceState(running = true)
+        awaitServiceState(running = true, step = "enable")
 
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "disable")
         assertFalse(isServiceRunning())
     }
 
@@ -105,11 +107,32 @@ class ChargeRecorderServiceTest {
      *
      * Do not lower this back to the time a passing run happened to take.
      */
-    private suspend fun awaitServiceState(running: Boolean, timeoutMs: Long = 20_000) {
-        withTimeout(timeoutMs) {
-            while (isServiceRunning() != running) {
-                delay(50)
+    private suspend fun awaitServiceState(
+        running: Boolean,
+        step: String,
+        timeoutMs: Long = 20_000,
+    ) {
+        try {
+            withTimeout(timeoutMs) {
+                while (isServiceRunning() != running) {
+                    delay(50)
+                }
             }
+        } catch (e: TimeoutCancellationException) {
+            // Rethrown as a named failure rather than propagated.
+            //
+            // A bare TimeoutCancellationException names neither the step nor the
+            // expectation, and its stack is the coroutine machinery's, not this file's
+            // -- so a full-suite failure reported only "Timed out waiting for 20000 ms"
+            // with no line number, and there are five distinct waits in this class. Two
+            // separate rounds of diagnosis started by having to guess which one it was.
+            throw AssertionError(
+                "Timed out after ${timeoutMs}ms waiting for the service to be " +
+                    "${if (running) "running" else "stopped"} at step \"$step\"; " +
+                    "recorderEnabled=${store.recorderEnabled.first()}, " +
+                    "isServiceRunning=${isServiceRunning()}",
+                e,
+            )
         }
     }
 
