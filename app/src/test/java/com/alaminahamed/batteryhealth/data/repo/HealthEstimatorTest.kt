@@ -348,4 +348,91 @@ class HealthEstimatorTest {
 
         assertEquals(42, report?.healthPct)
     }
+
+    // ---- temperature ------------------------------------------------------------------
+
+    private fun observationAt(id: Long, tempDeciC: Int?, fullUah: Long = 4_300_000) =
+        CapacityObservation(
+            sessionId = id,
+            deltaLevelPct = 60,
+            counterDeltaUah = fullUah * 60 / 100,
+            coulombUah = null,
+            peakTempDeciC = tempDeciC,
+        )
+
+    /**
+     * Ordinary charging temperatures must not be excluded. Phones routinely pass 40C on a
+     * fast charge; a band tight enough to reject that would starve the estimate of the
+     * sessions it exists to use.
+     */
+    @Test
+    fun anOrdinaryFastChargeTemperatureIsUsable() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = 410) }
+        assertEquals(86, estimator.estimate(observations, 5000).valueOrNull()?.healthPct)
+    }
+
+    /**
+     * Below freezing, lithium-ion charge acceptance collapses and the level reading stops
+     * tracking actual charge. Excluded rather than corrected: correcting would mean
+     * modelling this cell's cold behaviour and showing the result beside real
+     * measurements.
+     */
+    @Test
+    fun aFreezingSessionIsExcludedRatherThanCorrected() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = -50) }
+        assertEquals(Reading.NotYetMeasured, estimator.estimate(observations, 5000))
+    }
+
+    @Test
+    fun anOverheatedSessionIsExcluded() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = 520) }
+        assertEquals(Reading.NotYetMeasured, estimator.estimate(observations, 5000))
+    }
+
+    /**
+     * Absence is not an extreme. Dropping sessions with no recorded temperature would
+     * discard every device that reports none, and every session predating the recording of
+     * it.
+     */
+    @Test
+    fun aSessionWithNoRecordedTemperatureIsKept() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = null) }
+        assertEquals(86, estimator.estimate(observations, 5000).valueOrNull()?.healthPct)
+    }
+
+    @Test
+    fun theBandBoundariesThemselvesAreUsable() {
+        val cold = List(3) { observationAt(it.toLong(), tempDeciC = HealthEstimator.MIN_USABLE_TEMP_DECI_C) }
+        assertEquals(86, estimator.estimate(cold, 5000).valueOrNull()?.healthPct)
+
+        val hot = List(3) { observationAt(it.toLong(), tempDeciC = HealthEstimator.MAX_USABLE_TEMP_DECI_C) }
+        assertEquals(86, estimator.estimate(hot, 5000).valueOrNull()?.healthPct)
+    }
+
+    /**
+     * An excluded session must not merely be ignored in the median -- it must not count
+     * toward the three independent sessions either, or a set of two good readings plus one
+     * frozen one would report as measured on the strength of a session it refused to use.
+     */
+    @Test
+    fun anExcludedSessionDoesNotCountTowardTheMinimum() {
+        val observations = listOf(
+            observationAt(1, tempDeciC = 300),
+            observationAt(2, tempDeciC = 300),
+            observationAt(3, tempDeciC = 900),
+        )
+        assertEquals(Reading.NotYetMeasured, estimator.estimate(observations, 5000))
+    }
+
+    /** A hot outlier among usable sessions is dropped, and the rest still measure. */
+    @Test
+    fun onlyTheUnusableSessionIsDropped() {
+        val observations = listOf(
+            observationAt(1, tempDeciC = 300),
+            observationAt(2, tempDeciC = 300),
+            observationAt(3, tempDeciC = 300),
+            observationAt(4, tempDeciC = 900, fullUah = 9_000_000),
+        )
+        assertEquals(86, estimator.estimate(observations, 5000).valueOrNull()?.healthPct)
+    }
 }
