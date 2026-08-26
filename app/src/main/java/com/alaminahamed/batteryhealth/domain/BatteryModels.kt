@@ -54,15 +54,19 @@ data class BatterySnapshot(
      * deliberately kept apart from [stateOfHealthPct] (Samsung's ASOC). The two can and
      * do disagree on real hardware (86 vs 95 on the device this was verified against);
      * folding one into the other would hide that Samsung itself tracks two numbers.
-     * Defaults to [Reading.NeedsPrivilegedAccess] so every call site written before this field
-     * existed keeps compiling and keeps its honest meaning without being touched.
+     *
+     * `dumpsys battery`, over the now-removed adb/root shell tier, was this field's only
+     * source; no public API exposes it. Defaults to [Reading.Unsupported] -- there is no
+     * transport left to promise, so [Reading.NeedsPrivilegedAccess] would be a claim this
+     * app can no longer make good on.
      */
-    val bsohPct: Reading<Int> = Reading.NeedsPrivilegedAccess,
-    /** Samsung Battery Protect's on/off state, from `mProtectBatteryMode`. */
-    val protectBatteryModeEnabled: Reading<Boolean> = Reading.NeedsPrivilegedAccess,
-    /** The charge percentage Battery Protect caps charging at when enabled, from
-     * `mProtectionThreshold`. */
-    val protectionThresholdPct: Reading<Int> = Reading.NeedsPrivilegedAccess,
+    val bsohPct: Reading<Int> = Reading.Unsupported,
+    /** Samsung Battery Protect's on/off state, from `Settings.Global.protect_battery`
+     * (`VendorSettingsSource`) -- unprivileged and unconditional. */
+    val protectBatteryModeEnabled: Reading<Boolean> = Reading.Unsupported,
+    /** The charge percentage Battery Protect caps charging at when enabled, likewise from
+     * the vendor's own Settings key. */
+    val protectionThresholdPct: Reading<Int> = Reading.Unsupported,
     /**
      * Thermal throttling state from `PowerManager`, 0 (none) to 6 (shutdown). Public API,
      * no permission, every device. Sustained heat is the largest driver of capacity loss
@@ -78,11 +82,10 @@ data class BatterySnapshot(
     /**
      * Instantaneous power in milliwatts, derived from voltage (mV) and current (µA).
      *
-     * Absent inputs propagate their own reason rather than collapsing to Unsupported:
-     * a caller must be able to tell "this device cannot report power" from "connecting
-     * the privileged tier would report it". Provenance is the least direct of the two
-     * inputs, so a derived number never claims to be more directly measured than its
-     * weakest input.
+     * Absent inputs propagate their own reason rather than collapsing to Unsupported: a
+     * caller must be able to tell one input's specific absence from another's.
+     * Provenance is the least direct of the two inputs, so a derived number never claims
+     * to be more directly measured than its weakest input.
      */
     val milliwatts: Reading<Int>
         get() {
@@ -113,6 +116,13 @@ private val Source.directness: Int
         Source.Vendor -> 1
         Source.Privileged -> 2
         Source.Measured -> 3
+        // The least direct claim this app makes. Measured is this app's own direct
+        // counter/level arithmetic on data that genuinely is charge; Inferred multiplies
+        // that same arithmetic by a proxy (foreground screen time) that has no direct
+        // bearing on energy at all. Ranked last so a derived number never claims to be as
+        // direct as even the weakest of the other four just because an Inferred value
+        // happened to be one of its inputs.
+        Source.Inferred -> 4
     }
 
 /**

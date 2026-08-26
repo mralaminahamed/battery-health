@@ -4,7 +4,7 @@
 
 # Battery Health — Developer Guide
 
-**Measure what Android will not tell you — an Android app that derives real battery capacity from charge-counter sampling, and reaches the metrics the platform hides through an ADB client it speaks itself, with no companion app and no third-party dependency.**
+**Measure what Android will not tell you — an Android app that derives real battery capacity from charge-counter sampling, self-sufficient by design: no adb, no root, no shell, no companion app. Every capability comes from a normal Android permission flow or a public API, or it is reported as unavailable rather than faked.**
 
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84.svg?logo=android&logoColor=white)](https://developer.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4.10-7F52FF.svg?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
@@ -26,12 +26,15 @@ This app takes the opposite position. It states plainly which numbers the platfo
 **measures** the ones it can rather than inventing them, and reports a metric as unavailable
 when the measurement is not trustworthy — never as a plausible-looking number.
 
-Where a metric genuinely does sit behind a privileged permission, the app does not give up and
-does not ask you to install a helper app either. It implements the **ADB wire protocol
-directly** — the same `CNXN`/`AUTH` handshake `adb connect` performs, an RSA key held
-non-exportably in the Android Keystore — and talks to your own device's `adbd` over loopback.
-On a rooted device it uses `su` instead. Either way the privileged surface is a fixed
-allowlist of two commands; nothing you type ever reaches a shell.
+Where a metric genuinely does sit behind a permission this app cannot obtain through a normal
+install — `BATTERY_STATS` is `signature|privileged|development`, grantable only by `adb shell
+pm grant` — the app does not pretend otherwise, and it does not ask anyone to connect a
+computer or root their phone to get it either. It reports the absence honestly and moves on.
+An earlier version of this app carried a hand-rolled ADB client and a root shell to reach those
+numbers anyway; both are gone. The owner's decision, stated plainly: this app never instructs
+anyone to run a shell command, on this device or any other. Every capability it has comes from
+a public API or a permission granted the ordinary Android way — a runtime dialog, or a deep
+link to the right system settings screen.
 
 ## What it can and cannot know
 
@@ -42,10 +45,13 @@ whole design.
 **Readable by any app:** charge level, voltage, current, temperature, technology, charge
 counter, and charge-time-remaining.
 
-**Not readable by any unprivileged app, on any device:** state of health, first-use date, and
-manufacturing date. All three sit behind `BATTERY_STATS`, a signature-level permission, and
-two of them are `@SystemApi @hide`, so their constants appear in no public SDK. Verified
-against real hardware, not assumed from API levels.
+**Not readable by any unprivileged app, on any device:** first-use date and manufacturing date.
+Both sit behind `BATTERY_STATS`, a signature-level permission this app can never be granted
+through a normal install, and both are `@SystemApi @hide`, so their constants appear in no
+public SDK. Verified against real hardware, not assumed from API levels. State of health is a
+partial exception: AOSP checks a platform "state of health is public" flag before enforcing
+`BATTERY_STATS` on that one property, so on a build/device where that flag is set, this app
+reads it with no permission at all — see `FrameworkStateOfHealth`.
 
 Consequently the app **measures** health rather than reading it: it samples the charge counter
 across charge sessions and derives full capacity, comparing against a design capacity looked
@@ -55,17 +61,19 @@ sessions is used rather than the latest, a charge counter synthesised from the l
 detected and refused, and an implausible result is reported as unavailable rather than clamped
 into a believable-looking number.
 
-Metrics that need the privileged tier report "needs privileged access" rather than
-"unavailable on this device", because a permission denial is not a hardware limitation.
+First-use date, manufacturing date and Samsung's own BSOH figure report "not available on this
+device" rather than a permission-denied state: this app has no route left to unlock any of
+them, so inviting the user to try would be a promise it cannot keep.
 
 ## Features
 
 **Measurement**
 - **State of health** derived from charge-counter deltas across real charge sessions, not from
   a vendor string
-- Design capacity resolved from `Build.MODEL`, with a user override (Settings) available on any
-  model the table doesn't know; an unknown model with no override degrades to unavailable
-  rather than to a default
+- Design capacity resolved from `Build.MODEL` against a curated table, falling back to the
+  device's own `power_profile.xml` declaration where the table doesn't know the model; a
+  device neither source can answer degrades to unavailable rather than to a default or a
+  typed-in guess — there is no override field left for the user to fill one in
 - Median-of-sessions rather than latest-session, so one bad charge cannot move the headline
 - Synthesised charge counters (level × nominal capacity) detected and refused
 
@@ -75,18 +83,19 @@ Metrics that need the privileged tier report "needs privileged access" rather th
   prohibited, because recorded history is the only data here that cannot be recomputed
 - Background sampling via WorkManager, surviving reboot
 
-**Privileged tier — no companion app, no third-party dependency**
-- A hand-rolled **ADB client**: 24-byte wire framing, `CNXN`/`AUTH` handshake, `OPEN`/`OKAY`/
-  `WRTE`/`CLSE` streams, `ANDROID_PUBKEY` encoding — all over `127.0.0.1`
-- RSA key generated **non-exportably in the AndroidKeystore**; signing uses `NONEwithRSA` over
-  the pre-digested token, so the key never leaves hardware and there is no file fallback
-- **Root transport** via `su` where available, preferred over ADB when both are ready
-- **Fixed allowlist**: exactly two commands (`dumpsys battery`, `dumpsys batterystats --checkin`)
-  are `const val`. No method takes a command string — the restriction is structural, not a filter
-- **The Play build declares no `INTERNET` permission at all** and compiles in no network code:
-  `play` has zero transport references in its dex against `full`'s 151. The `full` flavour
-  declares it for loopback only, and a unit test fails the build if any production source
-  constructs a socket outside `AdbConnection`, or constructs one with a named host
+**Self-sufficient by design — no adb, no root, no shell, no companion app**
+- Every permission this app declares can be granted the normal Android way: `POST_NOTIFICATIONS`
+  through a real runtime dialog, `PACKAGE_USAGE_STATS` through a deep link to the system's own
+  Usage access screen. Everything else is install-time, granted automatically, with nothing for
+  the user to do
+- No permission this app declares is `signature`, `privileged` or `development` protection
+  level — every one of those was removed because a real end user installing from Play could
+  never grant it, only a computer running `adb shell pm grant` could
+- The Settings screen's Permissions section lists every permission the app declares, its live
+  state, and the one action (if any) that advances it — never a shell command
+- An earlier version of this app carried a hand-rolled ADB wire-protocol client and a root
+  shell to reach permission-gated `dumpsys` output. Both, and everything that consumed their
+  output, are gone
 
 **Honesty by construction**
 - Every metric reaches the UI wrapped in `Reading<T>` — either a value plus its provenance, or a
@@ -103,14 +112,8 @@ flowchart TD
   ui["Compose UI — Health · Live · History · Apps · Settings"] --> vm["ViewModels"]
   vm --> repo["BatteryRepository"]
   repo --> fw["framework/ — BatteryManager + broadcast"]
+  repo --> vendor["vendor/ — Settings.Global, power_profile.xml"]
   repo --> room[("Room — sessions, history")]
-  repo --> priv["AdbGateway"]
-  priv --> shell{"PrivilegedShell"}
-  shell -->|"su -c"| root["RootShell"]
-  shell -->|"loopback TCP"| adb["AdbShell"]
-  adb --> conn["AdbConnection — CNXN/AUTH"]
-  conn --> keystore[["AndroidKeystore RSA"]]
-  conn -.->|"127.0.0.1"| adbd(("adbd"))
   work["WorkManager sampler"] --> repo
 ```
 
@@ -124,8 +127,6 @@ app/src/main/java/com/alaminahamed/batteryhealth/
 │   ├── local/               Room entities, DAOs, database
 │   ├── settings/            DataStore preferences, design-capacity table
 │   ├── apps/                Per-app label resolution (flavour-specific)
-│   ├── privileged/          Transport seam, state reducer, dumpsys parsers
-│   │   └── adb/             Wire framing, key encoding, handshake, streams
 │   └── repo/                BatteryRepository, HealthEstimator, CycleCountResolver
 ├── sampling/                WorkManager sampler + boot receiver
 ├── di/                      Hilt modules
@@ -133,7 +134,7 @@ app/src/main/java/com/alaminahamed/batteryhealth/
     ├── nav/                 Destinations and NavHost
     ├── health/  live/  history/  apps/  settings/    Screens and their UI state
     ├── charts/  format/                   Rendering helpers
-    ├── components/          One UI card/row/metric primitives, ReadingSlot, UnlockCard
+    ├── components/          One UI card/row/metric primitives, ReadingSlot
     └── theme/               Tokens, typography, BatteryHealthTheme
 ```
 
@@ -154,8 +155,7 @@ app/src/main/java/com/alaminahamed/batteryhealth/
 | minSdk                 | 26 (Android 8.0)                        |
 
 Dependencies are AndroidX/Google/Kotlin only and track their latest stable versions; see
-`gradle/libs.versions.toml`. There are deliberately **no third-party dependencies** — the
-privileged tier that would normally justify one is implemented in this repo instead.
+`gradle/libs.versions.toml`. There are deliberately **no third-party dependencies**.
 
 ## Installation
 
@@ -178,45 +178,38 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 There are two, so **every Gradle task name is flavour-qualified**:
 
-- **`play`** (default) — omits `QUERY_ALL_PACKAGES`, keeping it out of a Play submission
-- **`full`** — declares it, so per-app battery attribution can resolve app names and icons
+- **`play`** (default) — omits `QUERY_ALL_PACKAGES`, keeping it out of a Play submission; the
+  Apps screen's per-uid CPU-time list falls back to package-visible apps only
+- **`full`** — declares `QUERY_ALL_PACKAGES`, so the Apps screen's CPU-time list can resolve
+  every app's name and icon, not just the ones visible under Play's default package filtering
 
 ```bash
 ./gradlew installFullDebug             # or installPlayDebug for the Play-safe flavour
 ./gradlew assemblePlayDebug            # build without installing
 ```
 
-### Unlocking the restricted readings
+### Permissions
 
-Two routes, and the first is better for almost everyone.
+There is no route to unlock first-use date, manufacturing date or Samsung's BSOH figure —
+none exists any more. `BATTERY_STATS`, the signature-level permission that used to gate a
+`BatteryManager`-direct read of two of those, is not declared: it is `adb`-grant-only, and
+this app never instructs anyone to run a shell command, so declaring a permission it can
+never hold would be asking for nothing.
 
-**Grant the permission (once, ever).** `BATTERY_STATS` is
-`signature|privileged|development`. No user tap can grant it, but the `development` flag
-means adb can, and Android then persists it across reboots and app updates:
+What the app *can* ask for, it asks for the normal way, and the Settings screen's own
+Permissions section shows the live state of every one of them:
 
-```bash
-adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STATS
-```
+- **`POST_NOTIFICATIONS`** — a real runtime dialog
+- **`PACKAGE_USAGE_STATS`** — appop-gated; the app deep-links to the system's Usage access
+  screen, where the user flips it on themselves
+- Everything else the app declares (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`,
+  `RECEIVE_BOOT_COMPLETED`, and `QUERY_ALL_PACKAGES` on `full`) is install-time, granted
+  automatically, with nothing to tap
 
-That unlocks state of health, first-use date and manufacturing date, read straight from
-`BatteryManager` with no shell, no socket and no prompt.
-
-**The shell tier — `full` flavour only, per reboot.** The Play build has no transport
-compiled in, so this does not apply to it at all. In `full`, two values still come from
-`dumpsys` over the in-app adb client, because neither has a `BATTERY_PROPERTY` id: the
-manufacturer's own accumulated cycle count and its second health figure (BSOH). That needs
-`adbd` listening on TCP, which most devices forget on restart:
-
-```bash
-adb tcpip 5555
-```
-
-The app then raises Android's own "Allow USB debugging?" prompt and remembers the grant. A
-rooted device skips both routes and uses `su`.
-
-Neither route is required. Without them the app measures health from the charge counter,
-counts cycles from the charge it records, and reports the rest as unavailable. Battery
-Protect and its charge limit need nothing at all — they come from `Settings.Global`.
+Without state of health, both dates and BSOH, the app still measures health from the charge
+counter, counts cycles from the charge it records (or from the battery broadcast's own
+`EXTRA_CYCLE_COUNT`, where a device reports one), and reads Battery Protect and its charge
+limit from `Settings.Global` — none of which needs anything beyond what is listed above.
 
 ## Development
 
@@ -278,13 +271,11 @@ Google Play needs the bundle, not the APK:
   app is built on: which fields the platform exposes, which are `@SystemApi @hide`, and what
   `dumpsys` actually returns. The captured fixtures under `app/src/test/resources/` come from
   this device.
-- **Samsung Galaxy S26 Ultra (SM-S948B), Android 16 (API 36)** — the privileged tier
-  end to end, both routes. Over the shell tier: cycle count 7, BSOH 100%, first use
-  2026-08-13, Battery Protect on with an 80% limit. Over a granted `BATTERY_STATS`: state
-  of health 100, manufacturing date 2026-03-28, first-use date, charging policy and part
-  status, all previously reporting `SecurityException`. The full instrumented suite runs
-  green here (121 tests), and the discovery sweep's output across all five channels comes
-  from this device.
+- **Samsung Galaxy S26 Ultra (SM-S948B), Android 16 (API 36)** — an earlier version of this
+  app verified the now-removed privileged tier end to end here: cycle count, BSOH, both
+  dates and Battery Protect's fields all read correctly over a granted `BATTERY_STATS` and
+  a connected shell. None of that is reachable any more — see the task history for why —
+  but the discovery sweep's output across all five channels still comes from this device.
 
   Two findings from it are load-bearing elsewhere in the codebase. `power_profile.xml`
   carries **both** `battery.capacity` (4855, the rated figure) and Samsung's own
@@ -293,17 +284,18 @@ Google Play needs the bundle, not the APK:
   mirrors `mMaximumProtectionThreshold`, the Maximum-mode ceiling, not the
   `mProtectionThreshold` (80) actually in force.
 
-`DesignCapacityTable` covers the A34/A35/A36/A54/A55/A56, the S23, S24 and S25 series, and the
-S26 Ultra. Entries are only added when the figure can be sourced with confidence — the S26
-Ultra's 5000 mAh is corroborated by the device's own readings, a 4205 mAh charge counter at
-level 84% implying a full charge near 5006 mAh — because a wrong entry silently corrupts every
-health percentage the app shows, which is worse than reporting unavailable. On a model the
-table doesn't know, the app reports state of health as unavailable rather than guessing a
-design capacity, but the headline metric no longer has to stay blank until the table grows --
-Settings now lets the user supply their own design capacity directly.
+`DesignCapacityTable` covers the A34/A35/A36/A54/A55/A56, the S23, S24 and S25 series, the S26
+Ultra, and the Pixel 9 Pro. Entries are only added when the figure can be sourced with
+confidence — the S26 Ultra's 5000 mAh is corroborated by the device's own readings, a 4205 mAh
+charge counter at level 84% implying a full charge near 5006 mAh — because a wrong entry
+silently corrupts every health percentage the app shows, which is worse than reporting
+unavailable.
 
-Design capacities are looked up per `Build.MODEL`; a model that is not in the table, and has
-no user override set in Settings, reports state of health as unavailable rather than guessing.
+Design capacities are looked up per `Build.MODEL` (or, for a handful of vendors whose model
+strings are unreliable, `Build.DEVICE`) against the table first, then against the device's
+own `power_profile.xml` declaration where the table doesn't know the model. A device neither
+source can answer reports state of health as unavailable — there is no field left for a user
+to type a capacity into; see `DesignCapacityProvider`'s own doc for the cost of that removal.
 
 ## Contributing
 
@@ -314,8 +306,9 @@ Two conventions are load-bearing rather than stylistic:
 
 - **A test must be shown failing before its fix.** A test that cannot be demonstrated to go red
   when the property breaks is not evidence that the property holds
-- **The privileged surface stays an allowlist.** Never add a method that takes a command string,
-  not even in debug builds
+- **The app never instructs anyone to run a shell command.** Every capability comes from a
+  public API or a permission granted the ordinary Android way. Do not reintroduce adb, root,
+  or a field asking the user to type a number the device itself should have supplied
 
 ## License
 

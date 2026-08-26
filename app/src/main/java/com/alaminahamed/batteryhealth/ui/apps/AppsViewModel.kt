@@ -2,82 +2,124 @@ package com.alaminahamed.batteryhealth.ui.apps
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.alaminahamed.batteryhealth.data.apps.AppRowMapper
-import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
-import com.alaminahamed.batteryhealth.data.repo.BatteryRepository
+import com.alaminahamed.batteryhealth.data.apps.AppCpuRowMapper
+import com.alaminahamed.batteryhealth.data.apps.AppLabelResolver
+import com.alaminahamed.batteryhealth.data.apps.EstimatedDrain
+import com.alaminahamed.batteryhealth.data.apps.ForegroundUsageSource
+import com.alaminahamed.batteryhealth.data.apps.UidCpuTimeSource
+import com.alaminahamed.batteryhealth.data.local.SampleDao
+import com.alaminahamed.batteryhealth.data.repo.EstimateWindow
+import com.alaminahamed.batteryhealth.data.repo.EstimatedDrainReading
+import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.settings.UsageAccessState
+import com.alaminahamed.batteryhealth.domain.AppCpuRanking
+import com.alaminahamed.batteryhealth.domain.Reading
 import com.alaminahamed.batteryhealth.domain.map
+import com.alaminahamed.batteryhealth.sampling.NowMs
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
-import com.alaminahamed.batteryhealth.data.apps.AppCpuRowMapper
-import com.alaminahamed.batteryhealth.data.apps.UidCpuTimeSource
-import com.alaminahamed.batteryhealth.domain.AppCpuRanking
 import javax.inject.Inject
-import javax.inject.Named
 
 @HiltViewModel
 class AppsViewModel @Inject constructor(
-    private val repository: BatteryRepository,
-    private val privileged: PrivilegedBatterySource,
-    private val rowMapper: AppRowMapper,
-    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
     private val cpuTimes: UidCpuTimeSource,
     private val cpuRowMapper: AppCpuRowMapper,
+    private val sampleDao: SampleDao,
+    private val designCapacityProvider: DesignCapacityProvider,
+    private val usageAccessState: UsageAccessState,
+    private val foregroundUsageSource: ForegroundUsageSource,
+    private val labelResolver: AppLabelResolver,
+    private val nowMs: NowMs,
 ) : ViewModel() {
 
-    val state: StateFlow<AppsUiState> = combine(
-        repository.appPower(),
-        repository.appPowerFailed,
-        repository.appPowerLoading,
-        privileged.state,
-    ) { entries, failed, loading, availability ->
-        AppsUiState(
-            privilegedAvailability = availability,
-            // Reading.map, the same extension every other screen's Reading transforms
-            // go through -- label resolution happens per row here, not inside
-            // BatteryRepository, because AppRowMapper needs AppLabelResolver
-            // (PackageManager), which the repository layer has no dependency on.
-            rows = entries.map { list -> list.map(rowMapper::toRow) },
-            appPowerFailed = failed,
-            privilegedTierSupported = privilegedTierSupported,
-            cpuRows = cpuTimes.cpuTimes()
-                .map(AppCpuRanking::ranked)
-                .map { ranked -> ranked.map(cpuRowMapper::toRow) },
-            isLoading = loading,
-        )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = AppsUiState(),
-    )
+    /**
+     * [UidCpuTimeSource.cpuTimes] is a plain, synchronous read -- not a `Flow` -- so
+     * unlike a privileged-state-driven `combine`, nothing re-invokes it on its own.
+     * This ticks once on construction (replay 1, so the very first collector still gets
+     * an answer) and again every time [refresh] is called, which is what lets the Apps
+     * screen's own `ON_RESUME` pick up CPU time -- and the per-app drain estimate below --
+     * that changed while the app was backgrounded.
+     */
+    private val refreshRequests = MutableSharedFlow<Unit>(
+        replay = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    ).apply { tryEmit(Unit) }
 
-    /** Same no-op-unless-there-is-something-to-connect contract as
-     * `HealthViewModel.connectPrivilegedTier` -- see `PrivilegedBatterySource.connect`'s
-     * own doc. `connect()` is `suspend`, so this launches it on [viewModelScope]. */
-    fun connectPrivilegedTier() {
-        viewModelScope.launch { privileged.connect() }
+    val state: StateFlow<AppsUiState> = refreshRequests
+        .map {
+            val cpuRows = cpuTimes.cpuTimes()
+                .map(AppCpuRanking::ranked)
+                .map { ranked -> ranked.map(cpuRowMapper::toRow) }
+            AppsUiState(cpuRows = cpuRows, estimatedDrainRows = estimatedDrain())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = AppsUiState(),
+        )
+
+    /**
+     * The per-app drain estimate, recomputed in memory every tick -- nothing here is ever
+     * persisted (see the task report). Reads no sample and makes no `UsageStatsManager`
+     * call at all when usage access is not held: there would be nothing to do with either
+     * result but discard it, and both are real I/O (a Room query, a live Binder call) this
+     * screen does not need to pay for on every resume just to report the same
+     * [Reading.NeedsUsageAccess] it already knows without them.
+     */
+    private suspend fun estimatedDrain(): Reading<EstimatedDrain> {
+        val usageAccessGranted = usageAccessState.isHeld()
+        val result = if (usageAccessGranted) {
+            val nowMillis = nowMs.get()
+            val requestedStartMs = nowMillis - LOOKBACK_MS
+            EstimateWindow.compute(
+                samples = sampleDao.samplesSince(requestedStartMs),
+                requestedStartMs = requestedStartMs,
+                requestedEndMs = nowMillis,
+                designCapacityMah = designCapacityProvider.designCapacityMah.first(),
+                usageAccessGranted = true,
+                queryForegroundMs = foregroundUsageSource::query,
+            )
+        } else {
+            EMPTY_RESULT
+        }
+        return EstimatedDrainReading.from(usageAccessGranted, result, labelResolver)
     }
 
     /**
-     * Called from every `ON_RESUME`, mirroring `HealthViewModel.refreshPrivilegedTier`:
-     * enabling wireless debugging or granting root happens outside this app entirely, so
-     * re-checking on resume is what notices it without needing this screen recreated.
-     * Also retries the privileged read via [BatteryRepository.retryPrivilegedDump] -- the
-     * same shared trigger `BatteryRepository.appPower` and `BatteryRepository.snapshots`
-     * both react to, so this one call refreshes both screens' privileged data, not just
-     * this one's.
+     * Re-reads per-uid CPU time and the per-app drain estimate. Called from the Apps
+     * screen's own `ON_RESUME`: both accumulate while this app is backgrounded, and
+     * neither has a way to push an update on its own.
      */
-    fun refreshPrivilegedTier() {
-        privileged.refresh()
-        repository.retryPrivilegedDump()
+    fun refresh() {
+        refreshRequests.tryEmit(Unit)
     }
 
-    /** The Apps screen's manual "Retry" action on `UnlockCard` once it is `Ready` but the
-     * last checkin attempt failed -- see `BatteryRepository.appPowerFailed`. */
-    fun retryPrivilegedDump() {
-        repository.retryPrivilegedDump()
+    private companion object {
+        /**
+         * How far back the estimate looks for samples to derive a window from.
+         * [EstimateWindow.compute] narrows this down to the samples' own actual span, so
+         * this is only ever the upper bound of what could be considered, never the span
+         * reported to the user -- see that object's own doc.
+         */
+        const val LOOKBACK_MS = 24 * 60 * 60 * 1_000L
+
+        /**
+         * Stands in for [EstimateWindow.Result] when usage access is not held, so
+         * [estimatedDrain] never has to construct one from real (but immediately
+         * discarded) data just to hand it to [EstimatedDrainReading.from], which reads
+         * only [usageAccessGranted] first anyway and ignores this entirely in that case.
+         */
+        val EMPTY_RESULT = EstimateWindow.Result(
+            entries = emptyList(),
+            totalDischargeMah = null,
+            windowStartMs = 0L,
+            windowEndMs = 0L,
+        )
     }
 }

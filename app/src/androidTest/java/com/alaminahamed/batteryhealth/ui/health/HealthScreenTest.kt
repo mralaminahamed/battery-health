@@ -26,6 +26,13 @@ class HealthScreenTest {
 
     @get:Rule val compose = createComposeRule()
 
+    /**
+     * Battery Protect's two fields are pinned to concrete `Available` values here, not
+     * left on their class default, deliberately: a test elsewhere in this suite that
+     * cares about an *absent* reading (design capacity, cycle count, manufacturing date)
+     * must not be silently contaminated by these two also reading absent by coincidence
+     * of whatever `BatterySnapshot`'s own default happens to be today.
+     */
     private fun snapshot() = BatterySnapshot(
         levelPct = Reading.Available(41, Source.Framework),
         chargeState = Reading.Available(ChargeState.Charging, Source.Framework),
@@ -40,6 +47,8 @@ class HealthScreenTest {
         firstUsageDateEpochDay = Reading.Available(19_904, Source.Framework),
         manufacturingDateEpochDay = Reading.Unsupported,
         chargeTimeRemainingMs = Reading.Unsupported,
+        protectBatteryModeEnabled = Reading.Available(true, Source.Vendor),
+        protectionThresholdPct = Reading.Available(85, Source.Vendor),
     )
 
     @Test
@@ -86,18 +95,21 @@ class HealthScreenTest {
         // Three rows are independently Unsupported here: the headline (no design capacity
         // to measure against), the cycle count, and the manufacturing date -- the fixture
         // above sets both of the latter two to Unsupported regardless of this test's own
-        // concern. Each renders the shared reason text on its own; a singular text lookup
-        // would be ambiguous, so the count is asserted exactly rather than just that the
-        // text exists somewhere, the same way LiveScreenTest asserts multiplicity.
+        // concern, and pins Battery Protect's two fields to concrete values so they never
+        // silently add to this count. Each renders the shared reason text on its own; a
+        // singular text lookup would be ambiguous, so the count is asserted exactly rather
+        // than just that the text exists somewhere.
         compose.onAllNodesWithText("Not available on this device").assertCountEquals(3)
     }
 
     /**
-     * The fix for this whole task: a fresh install on a device the model table doesn't
-     * know now says how to fix it, rather than just reporting Unsupported and stopping.
+     * The permanent cost of removing the design-capacity override (see the task report):
+     * a device absent from the model table with an unreadable or untrusted
+     * `power_profile.xml` now has no route to a design capacity at all, and this app has
+     * to say so plainly rather than pointing at a control that no longer exists.
      */
     @Test
-    fun noDesignCapacityPointsTheUserAtTheOverride() {
+    fun noDesignCapacityIsStatedAsAPermanentLimitRatherThanPointingAtARemovedControl() {
         val state = HealthUiState(
             snapshot = snapshot(),
             measured = Reading.Unsupported,
@@ -106,15 +118,15 @@ class HealthScreenTest {
         compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
 
         compose.onNodeWithText(
-            "No design capacity is known for this device. Set one in Settings to " +
-                "start measuring health from your charge counter -- it still takes a " +
-                "few real charge sessions to produce a number, and it won't add BSOH, " +
-                "first-use date or Battery Protect; those need the privileged tier above.",
+            "No design capacity is known for this device -- it is not in the model " +
+                "table, and this device's own declaration could not be read or trusted. " +
+                "This app has no further way to supply one, so the measured health " +
+                "trend cannot be shown here.",
         ).assertIsDisplayed()
     }
 
     @Test
-    fun aKnownDesignCapacityDoesNotShowTheOverrideHint() {
+    fun aKnownDesignCapacityDoesNotShowTheAbsenceExplanation() {
         val state = HealthUiState(
             snapshot = snapshot(),
             measured = Reading.Unsupported,
@@ -122,34 +134,34 @@ class HealthScreenTest {
         )
         compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
 
-        compose.onAllNodesWithText("Set one in Settings", substring = true).assertCountEquals(0)
+        compose.onAllNodesWithText("No design capacity is known", substring = true).assertCountEquals(0)
     }
 
     /**
-     * `headlinePct` can be `Available` from the privileged/ASOC path even while no
-     * design capacity is known at all -- the hint only makes sense while there is
-     * nothing else on this card to show, so a working headline must suppress it too,
-     * not just a known design capacity.
+     * `headlinePct` can be `Available` from the framework's own ASOC exception (see
+     * `FrameworkStateOfHealth`) even while no design capacity is known at all -- the
+     * absence explanation only makes sense while there is nothing else on this card to
+     * show, so a working headline must suppress it too, not just a known design capacity.
      */
     @Test
-    fun aWorkingHeadlineFromThePrivilegedTierAlsoSuppressesTheHint() {
+    fun aWorkingHeadlineFromAnyAvailableSourceAlsoSuppressesTheAbsenceExplanation() {
         val state = HealthUiState(
-            snapshot = snapshot().copy(stateOfHealthPct = Reading.Available(91, Source.Privileged)),
+            snapshot = snapshot().copy(stateOfHealthPct = Reading.Available(91, Source.Framework)),
             measured = Reading.Unsupported,
             designCapacity = EffectiveDesignCapacity.None,
         )
         compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
 
-        compose.onAllNodesWithText("Set one in Settings", substring = true).assertCountEquals(0)
+        compose.onAllNodesWithText("No design capacity is known", substring = true).assertCountEquals(0)
     }
 
     private fun snapshotWithBatteryProtect(modeEnabled: Boolean, thresholdPct: Int) = snapshot().copy(
-        protectBatteryModeEnabled = Reading.Available(modeEnabled, Source.Privileged),
-        protectionThresholdPct = Reading.Available(thresholdPct, Source.Privileged),
+        protectBatteryModeEnabled = Reading.Available(modeEnabled, Source.Vendor),
+        protectionThresholdPct = Reading.Available(thresholdPct, Source.Vendor),
     )
 
     /**
-     * Important 3: `mProtectionThreshold` is a real, known number even while Battery
+     * Important 3: the vendor's threshold key is a real, known number even while Battery
      * Protect's mode is off (Samsung keeps the configured cap around for when it is next
      * turned on) -- rendering it as today's "80%" charge limit would claim something is
      * capping charge when nothing is. Suppressed in the Health screen's own presentation,
@@ -240,10 +252,10 @@ class HealthScreenTest {
     // ---- cycles and BSOH ---------------------------------------------------------------
 
     /**
-     * The distinction that matters most about this app's own cycle count: Samsung's counts
-     * from the day the battery was made, this counts charge the app actually watched go
-     * in. Without saying so, a low number on a year-old phone reads as a healthy battery
-     * rather than as a young measurement.
+     * The distinction that matters most about this app's own cycle count: the broadcast's
+     * own figure (where a device reports one) counts from the day the battery was made,
+     * this counts charge the app actually watched go in. Without saying so, a low number
+     * on a year-old phone reads as a healthy battery rather than as a young measurement.
      */
     @Test
     fun anAppMeasuredCycleCountSaysItCountsFromWhenRecordingStarted() {
@@ -259,48 +271,18 @@ class HealthScreenTest {
             .assertIsDisplayed()
     }
 
-    /** Samsung's own figure keeps its own, different caveat. */
-    @Test
-    fun aVendorCycleCountKeepsThePartialChargeCaveat() {
-        val state = HealthUiState(
-            snapshot = snapshot().copy(cycleCount = Reading.Available(412, Source.Privileged)),
-            measured = Reading.NotYetMeasured,
-            recorderEnabled = true,
-        )
-        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
-
-        compose.onNodeWithText("Counts every partial charge", substring = true)
-            .performScrollTo()
-            .assertIsDisplayed()
-    }
-
     /**
-     * A build with no shell has no source for BSOH at any price, and the headline already
-     * answers the same question -- so the row would be a permanent "not available" sitting
-     * under a number that supersedes it.
+     * BSOH had exactly one source -- `dumpsys battery`, over the now-removed adb/root
+     * shell tier -- and no public API replaces it. The row is hidden entirely rather than
+     * shown as a permanent "not available" underneath a headline that already answers the
+     * same question with the platform's ASOC figure where one exists.
      */
     @Test
-    fun bsohIsHiddenEntirelyInABuildWithNoPrivilegedTier() {
-        val state = HealthUiState(
-            snapshot = snapshot(),
-            measured = Reading.NotYetMeasured,
-            privilegedTierSupported = false,
-        )
+    fun bsohIsAlwaysHiddenNowThatThereIsNoSourceForIt() {
+        val state = HealthUiState(snapshot = snapshot(), measured = Reading.NotYetMeasured)
         compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
 
         compose.onNodeWithText("BSOH").assertDoesNotExist()
-    }
-
-    @Test
-    fun bsohIsShownWhereATierCouldSupplyIt() {
-        val state = HealthUiState(
-            snapshot = snapshot(),
-            measured = Reading.NotYetMeasured,
-            privilegedTierSupported = true,
-        )
-        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
-
-        compose.onNodeWithText("BSOH").performScrollTo().assertIsDisplayed()
     }
 
     /**
@@ -339,8 +321,7 @@ class HealthScreenTest {
     /**
      * A figure above 100% has to explain itself or it just looks broken. It usually means
      * the design capacity being compared against is wrong for the device -- something the
-     * user can fix -- and before the clamp was removed they had no way to know it was even
-     * happening.
+     * user can see stated here, even though there is no longer a control to fix it from.
      */
     @Test
     fun aReadingAboveDesignExplainsItselfRatherThanLookingBroken() {

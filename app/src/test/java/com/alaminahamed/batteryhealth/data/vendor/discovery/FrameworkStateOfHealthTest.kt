@@ -16,9 +16,9 @@ class FrameworkStateOfHealthTest {
 
     /**
      * The case this whole file exists for: on a build where AOSP's `stateOfHealthPublic()`
-     * flag is on, the vendor's own figure arrives with no privileged transport and no
-     * permission. Source is [Source.Framework], not [Source.Privileged] -- it did not come
-     * through the ADB tier and must not claim to have.
+     * flag is on, the vendor's own figure arrives with no permission at all. Source is
+     * [Source.Framework], not [Source.Privileged] -- it did not come through a privileged
+     * shell (this app has none any more) and must not claim to have.
      */
     @Test
     fun aPermittedReadingIsFrameworkSourced() {
@@ -29,9 +29,11 @@ class FrameworkStateOfHealthTest {
     }
 
     /**
-     * A denial is not the same as an absence. The platform has the figure and is
-     * withholding it, and the privileged tier can still fetch the vendor equivalent, so
-     * the user is told it might be unlocked rather than that it does not exist.
+     * A denial is not the same as an absence: the platform has the figure and is
+     * withholding it, which is a different fact from the device simply not having one.
+     * `NeedsPrivilegedAccess` is still the honest label for that distinction even though
+     * this app itself has no remaining route to ever satisfy it -- see the task report for
+     * why `FrameworkStateOfHealth`'s own behaviour was deliberately left unchanged here.
      */
     @Test
     fun aDenialSaysTheTierMightStillHelp() {

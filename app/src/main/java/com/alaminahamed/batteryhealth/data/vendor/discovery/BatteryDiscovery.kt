@@ -1,5 +1,6 @@
 package com.alaminahamed.batteryhealth.data.vendor.discovery
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
@@ -73,6 +74,12 @@ class BatteryDiscovery @Inject constructor(
      * plausible wrong one. The long accessor returns `Long.MIN_VALUE` for unsupported,
      * which is what [ProbeSentinels.UNSUPPORTED] matches.
      */
+    // NewApi: getStringProperty is API 35 and is called deliberately below minSdk.
+    // BatteryPropertyProbe.textOutcome catches Throwable around it, so the NoSuchMethodError
+    // an older build raises becomes ProbeOutcome.Failed -- which is this probe's accurate
+    // answer for "this platform predates the accessor", and distinct from both withheld and
+    // absent. Lint cannot see that the throw is the designed path rather than a bug.
+    @SuppressLint("NewApi")
     private fun properties(): List<ProbeResult> =
         BatteryPropertyProbe(
             readNumeric = { id -> batteryManager.getLongProperty(id) },
@@ -141,6 +148,10 @@ class BatteryDiscovery @Inject constructor(
      * The API-level gate lives in [PowerManagerProbe] and is checked before the accessor
      * runs, so a method that does not exist on this device is never called.
      */
+    // NewApi: PowerManagerProbe.resultsFrom(SDK_INT) decides which readings run before this
+    // lambda is invoked, so an accessor absent on this device is never reached. Lint cannot
+    // follow the gate across that indirection.
+    @SuppressLint("NewApi")
     private fun powerManagerReadings(): List<ProbeResult> =
         PowerManagerProbe.resultsFrom(Build.VERSION.SDK_INT) { reading ->
             when (reading) {

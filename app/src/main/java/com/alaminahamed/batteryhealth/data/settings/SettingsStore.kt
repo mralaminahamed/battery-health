@@ -6,7 +6,6 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.alaminahamed.batteryhealth.data.framework.CurrentScale
@@ -22,12 +21,6 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 @Singleton
 class SettingsStore @Inject constructor(private val context: Context) {
-
-    // distinctUntilChanged because both flows derive from the same underlying
-    // dataStore.data: writing either key would otherwise re-emit an unchanged value on the
-    // other, needlessly re-running the design-capacity lookup downstream.
-    val designCapacityOverrideMah: Flow<Int?> =
-        context.dataStore.data.map { it[DESIGN_CAPACITY_OVERRIDE] }.distinctUntilChanged()
 
     /**
      * The charge recorder is opt-in. A battery app that installs a permanent
@@ -55,25 +48,8 @@ class SettingsStore @Inject constructor(private val context: Context) {
         .distinctUntilChanged()
 
     /**
-     * The TCP port the ADB client dials on loopback. User-overridable because they choose
-     * the port when running `adb tcpip N`; absent devices default to the standard port 5555.
-     */
-    val adbPort: Flow<Int> =
-        context.dataStore.data.map { it[ADB_PORT] ?: 5555 }.distinctUntilChanged()
-
-    /**
-     * Whether the user has previously granted root access to the privileged gateway.
-     * Load-bearing default of false: probing by running su raises Magisk's grant dialog,
-     * and defaulting true here would trigger that dialog on first launch before the user
-     * has asked for anything — hostile in a battery app. The flag exists so the gateway
-     * skips a probe the user has already answered, never triggering one they haven't.
-     */
-    val rootPreviouslyGranted: Flow<Boolean> =
-        context.dataStore.data.map { it[ROOT_PREVIOUSLY_GRANTED] ?: false }.distinctUntilChanged()
-
-    /**
      * Which design language the user asked for. Defaults to
-     * [DesignLanguageChoice.Auto], which resolves from the device — see
+     * [DesignLanguageChoice.Auto], which resolves from the device -- see
      * `resolveDesignLanguageId`.
      *
      * `runCatching` for the same reason `currentScale` uses it: an unrecognised stored
@@ -93,78 +69,8 @@ class SettingsStore @Inject constructor(private val context: Context) {
         context.dataStore.edit { it[CURRENT_SCALE] = scale.name }
     }
 
-    suspend fun setAdbPort(port: Int) {
-        // Reject out-of-range ports silently. InetSocketAddress throws IllegalArgumentException
-        // on construction if port is <0 or >65535, an unchecked exception that would escape the
-        // privileged boundary and crash the caller. Silently ignoring an invalid write is better
-        // than throwing (keeping this setter total like all others here) and better than clamping
-        // (which would have the app quietly dial a port the user never chose). The caller can
-        // check the flow's value afterward if they need confirmation of acceptance.
-        if (port in 1..65535) {
-            context.dataStore.edit { it[ADB_PORT] = port }
-        }
-    }
-
-    suspend fun setRootPreviouslyGranted(granted: Boolean) {
-        context.dataStore.edit { it[ROOT_PREVIOUSLY_GRANTED] = granted }
-    }
-
     suspend fun setDesignLanguageChoice(choice: DesignLanguageChoice) {
         context.dataStore.edit { it[DESIGN_LANGUAGE] = choice.name }
-    }
-
-    /**
-     * Whether the user has dismissed the Health screen's unlock card.
-     *
-     * Persisted rather than held per-session: the point of dismissing an offer is not
-     * being pitched it again, and a dismissal that reset on every launch would be a
-     * button that does nothing lasting. It only silences the card's offer states -- see
-     * `UnlockCardVisibility` for what it deliberately cannot hide.
-     */
-    val unlockCardDismissed: Flow<Boolean> =
-        context.dataStore.data.map { it[UNLOCK_CARD_DISMISSED] ?: false }.distinctUntilChanged()
-
-    /**
-     * Whether the adb transport has ever connected successfully on this install.
-     *
-     * Gates the *unprompted* reconnect on `ON_RESUME`, mirroring [rootPreviouslyGranted].
-     * Without it the app dials adb every time the user opens a screen, and on a device
-     * with `adb tcpip` enabled that raises Android's "Allow USB debugging?" dialog at
-     * someone who never asked for the privileged tier -- observed on real hardware, on a
-     * fresh install, with no interaction beyond launching the app.
-     */
-    val adbPreviouslyConnected: Flow<Boolean> =
-        context.dataStore.data.map { it[ADB_PREVIOUSLY_CONNECTED] ?: false }.distinctUntilChanged()
-
-    /**
-     * A cycle count the user read from their phone's own screen, used as the starting
-     * point for this app's count.
-     *
-     * Null means nobody has said, which is different from a stored zero -- a user
-     * reporting zero is telling this app something true. `remove` rather than writing a
-     * sentinel keeps those two states distinct in DataStore itself.
-     */
-    val cycleCountBaseline: Flow<Int?> =
-        context.dataStore.data.map { it[CYCLE_COUNT_BASELINE] }.distinctUntilChanged()
-
-    suspend fun setCycleCountBaseline(cycles: Int?) {
-        context.dataStore.edit { prefs ->
-            if (cycles == null) prefs.remove(CYCLE_COUNT_BASELINE) else prefs[CYCLE_COUNT_BASELINE] = cycles
-        }
-    }
-
-    suspend fun setAdbPreviouslyConnected(connected: Boolean) {
-        context.dataStore.edit { it[ADB_PREVIOUSLY_CONNECTED] = connected }
-    }
-
-    suspend fun setUnlockCardDismissed(dismissed: Boolean) {
-        context.dataStore.edit { it[UNLOCK_CARD_DISMISSED] = dismissed }
-    }
-
-    suspend fun setDesignCapacityOverride(mah: Int?) {
-        context.dataStore.edit { prefs ->
-            if (mah == null) prefs.remove(DESIGN_CAPACITY_OVERRIDE) else prefs[DESIGN_CAPACITY_OVERRIDE] = mah
-        }
     }
 
     /**
@@ -215,14 +121,8 @@ class SettingsStore @Inject constructor(private val context: Context) {
     }
 
     private companion object {
-        val DESIGN_CAPACITY_OVERRIDE = intPreferencesKey("design_capacity_override_mah")
         val RECORDER_ENABLED = booleanPreferencesKey("recorder_enabled")
         val CURRENT_SCALE = stringPreferencesKey("current_scale")
-        val ADB_PORT = intPreferencesKey("adb_port")
-        val ROOT_PREVIOUSLY_GRANTED = booleanPreferencesKey("root_previously_granted")
-        val UNLOCK_CARD_DISMISSED = booleanPreferencesKey("unlock_card_dismissed")
-        val ADB_PREVIOUSLY_CONNECTED = booleanPreferencesKey("adb_previously_connected")
-        val CYCLE_COUNT_BASELINE = intPreferencesKey("cycle_count_baseline")
         val DESIGN_LANGUAGE = stringPreferencesKey("design_language_choice")
     }
 }

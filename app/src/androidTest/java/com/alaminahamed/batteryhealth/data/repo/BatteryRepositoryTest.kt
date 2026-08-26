@@ -10,37 +10,36 @@ import com.alaminahamed.batteryhealth.data.framework.CapabilityProbe
 import com.alaminahamed.batteryhealth.data.framework.IntPropertyReader
 import com.alaminahamed.batteryhealth.data.local.BatteryDatabase
 import com.alaminahamed.batteryhealth.data.local.SessionEntity
-import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
-import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
-import com.alaminahamed.batteryhealth.data.privileged.Transport
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
-import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
 import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
-import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.CapacityMethod
 import com.alaminahamed.batteryhealth.domain.Reading
-import com.alaminahamed.batteryhealth.domain.Source
-import com.alaminahamed.batteryhealth.domain.UidKind
 import com.alaminahamed.batteryhealth.domain.isAvailable
 import com.alaminahamed.batteryhealth.domain.valueOrNull
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
 /**
  * SettingsStore reaches the app's real DataStore file (a fixed-name Context delegate with
- * no injectable alternative), so this suite clears it before and after to stay hermetic.
+ * no injectable alternative), so this suite clears it before and after to stay hermetic --
+ * `BatteryRepository` itself no longer reads it, but other DataStore-backed classes in the
+ * same process might.
+ *
+ * This suite used to also drive a fake [com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource]
+ * through `appPower()`, `retryPrivilegedDump()` and the dump-derived ASOC/BSOH/Battery
+ * Protect fields. That entire privileged tier -- an on-device adb client and a `su` shell
+ * -- is gone, along with every method and field on `BatteryRepository` that existed only
+ * to front it. What is left below tests the repository this app actually ships now: no
+ * fake transport, because there is no transport to fake.
  */
 class BatteryRepositoryTest {
 
@@ -62,62 +61,16 @@ class BatteryRepositoryTest {
     }
 
     /**
-     * Configurable in every direction the new tests below need: [PrivilegedAvailability]
-     * starts wherever the caller sets it (defaulting to [PrivilegedAvailability.Unavailable]
-     * so the original, not-ready-state test below is unaffected), [dumpBattery] returns
-     * whatever [nextDump] currently holds rather than a fixed value, and [dumpCallCount]
-     * lets a test confirm a retry actually re-invoked the shell call rather than replaying
-     * a cached result. Never touches a real transport, so these assertions hold on their
-     * own logic regardless of whether the physical device running this test happens to
-     * have adb debugging enabled or root granted already. `BatteryRepository` depends on
-     * the [PrivilegedBatterySource] interface for exactly this reason; see its own doc.
+     * @param powerProfileMah stands in for the device's own `power_profile.xml`
+     *   declaration, exactly like `AppModule`'s real `@Named("powerProfileCapacityMah")`
+     *   binding does in production -- `DeviceIdentity.Unknown` keeps the model table out
+     *   of the resolution so this is the only source in play, which is what lets
+     *   [measuredHealthPropagatesTheMappedCoulombChargeThroughToTheEstimator] and
+     *   [measuredHealthFindsQualifyingChargesOutsideARecencyWindowFullOfOtherSessions] pin
+     *   a deterministic design capacity with no `SettingsStore` override left to write one
+     *   through.
      */
-    private class FakePrivilegedBatterySource(
-        initial: PrivilegedAvailability = PrivilegedAvailability.Unavailable,
-    ) : PrivilegedBatterySource {
-        private val stateFlow = MutableStateFlow(initial)
-        override val state: StateFlow<PrivilegedAvailability> = stateFlow
-
-        var nextDump: String? = null
-        var dumpCallCount = 0
-        var nextCheckin: String? = null
-        var checkinCallCount = 0
-
-        override suspend fun dumpBattery(): String? {
-            dumpCallCount++
-            return nextDump
-        }
-
-        override suspend fun dumpBatteryStatsCheckin(): String? {
-            checkinCallCount++
-            return nextCheckin
-        }
-
-        override suspend fun connect() = Unit
-        override fun refresh() = Unit
-
-        fun setAvailability(availability: PrivilegedAvailability) {
-            stateFlow.value = availability
-        }
-    }
-
-    /** Every field this parser recognises, independently overridable so a test only
-     * needs to spell out the one field it actually cares about changing. */
-    private fun sampleDumpText(
-        asoc: Int = 86,
-        bsoh: Int = 95,
-        firstUseDate: Int = 20_240_630,
-        protectMode: Int = 1,
-        protectionThresholdPct: Int = 80,
-    ) = """
-        mSavedBatteryAsoc: [$asoc]
-        mSavedBatteryBsoh: $bsoh
-        battery FirstUseDate: [$firstUseDate]
-        mProtectBatteryMode: $protectMode
-        mProtectionThreshold: $protectionThresholdPct
-    """.trimIndent()
-
-    private fun repository(privileged: PrivilegedBatterySource = FakePrivilegedBatterySource()): BatteryRepository {
+    private fun repository(powerProfileMah: Int? = null): BatteryRepository {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val batteryManager = context.getSystemService(BatteryManager::class.java)
         val capabilities = CapabilityProbe(
@@ -127,46 +80,22 @@ class BatteryRepositoryTest {
             broadcasts = BatteryBroadcastSource(context),
             properties = BatteryManagerSource(batteryManager, capabilities, settings),
             sessionDao = db.sessions(),
-            settings = settings,
             estimator = HealthEstimator(),
-            // The device's own identity is irrelevant here: an explicit override makes the
-            // design capacity deterministic regardless of which device runs this test.
-            // `DeviceIdentity.Unknown` and a null power-profile figure are passed for the
-            // same reason -- both lower-precedence sources are neutralised so nothing about
-            // the host device can influence the result.
             designCapacity = DesignCapacityProvider(
-                settings,
                 identity = DeviceIdentity.Unknown,
-                powerProfileMah = null,
+                powerProfileMah = powerProfileMah,
             ),
-            privileged = privileged,
             // The real source, reading this device's own Settings provider. Not stubbed:
             // on a Samsung host it answers and on any other it reports Unsupported, and
             // both are outcomes these tests must tolerate rather than one being baked in.
-            // Deterministic, for the same reason `granted` below is. The real source
-            // reads this host's own Settings provider, so on a Samsung phone it answers
-            // and the dump-derived assertions below stop describing the repository and
-            // start describing the device.
             vendorSettings = VendorReadings.None,
-            // Deliberately NOT the real source. The real one answers differently
-            // depending on whether this particular phone has had `pm grant
-            // android.permission.BATTERY_STATS` run against it, which made these tests
-            // pass or fail on host state rather than on the repository's behaviour --
-            // observed for real, three of them flipping the moment the grant landed.
-            // These tests assert what the repository does when the granted readings are
-            // absent, and that must hold on any device.
-            granted = GrantedReadings.None,
             power = PowerManagerSource(context.getSystemService(PowerManager::class.java)),
-            // True regardless of which flavour runs this suite. These tests assert the
-            // NeedsPrivilegedAccess-versus-Unsupported distinction, which only exists in a
-            // build that has a tier -- pinning it here keeps them testing that rule rather
-            // than testing which flavour they happen to be compiled into.
-            privilegedTierSupported = true,
+            batteryManager = batteryManager,
         )
     }
 
     @Test
-    fun snapshotCarriesLiveDataAndReportsThePrivilegedFieldsAsNeedingPrivilegedAccess() = runBlocking {
+    fun snapshotCarriesLiveDataAndReportsPermissionGatedFieldsHonestly() = runBlocking {
         val snapshot = withTimeout(5_000) { repository().snapshots().first() }
 
         // Level is always present on real hardware; a present framework value is never
@@ -180,100 +109,39 @@ class BatteryRepositoryTest {
             snapshot.chargeCounterUah.isAvailable || snapshot.chargeCounterUah == Reading.Unsupported
         )
 
-        // StateOfHealth and FirstUsageDate require signature-level BATTERY_STATS and are
-        // unreachable by any unprivileged app on any device. Reporting Unsupported here
-        // would claim the device itself cannot supply the number, which is false -- the
-        // privileged tier can. NeedsPrivilegedAccess is the honest answer.
-        assertEquals(Reading.NeedsPrivilegedAccess, snapshot.stateOfHealthPct)
-        assertEquals(Reading.NeedsPrivilegedAccess, snapshot.firstUsageDateEpochDay)
+        // StateOfHealth is the one property AOSP checks a public "state of health is
+        // public" flag for before enforcing BATTERY_STATS -- see FrameworkStateOfHealth's
+        // own doc. Whether that flag is set is a fact about this specific test device's
+        // build, not something this suite can pin, so both outcomes are honest here.
+        assertTrue(
+            snapshot.stateOfHealthPct is Reading.Available ||
+                snapshot.stateOfHealthPct == Reading.NeedsPrivilegedAccess
+        )
 
-        // Critical 1: manufacturing date is a categorically different case from the two
-        // above -- no dump this parser was built against has ever carried the field, so
-        // "connecting the privileged tier might produce it" is already known false,
-        // unconditionally, even in this not-yet-connected state. See
-        // manufacturingDateIsUnsupportedEvenWhenThePrivilegedTierIsReadyAndDumped below for
-        // the same pin in the connected state, per the task's explicit request for both.
+        // First-use and manufacturing date have no public-exception flag at all -- they
+        // are unconditionally gated behind BATTERY_STATS, which this app can no longer be
+        // granted at any price now that the adb/root shell tier is gone. Unsupported,
+        // deterministically, on every device: there is nothing left to unlock.
+        assertEquals(Reading.Unsupported, snapshot.firstUsageDateEpochDay)
         assertEquals(Reading.Unsupported, snapshot.manufacturingDateEpochDay)
+
+        // Samsung's BSOH figure had exactly one source -- `dumpsys battery`, over the
+        // now-removed shell tier -- and no public API replaces it.
+        assertEquals(Reading.Unsupported, snapshot.bsohPct)
     }
 
     /**
-     * Critical 1's other half: a real dump in hand, not just the not-yet-connected case
-     * above. Regresses against `manufacturingDateEpochDay` ever being routed back through
-     * the general `privilegedAbsence(dumpAvailable)` helper the other privileged fields
-     * use -- if it were, this would read `Unsupported` here too, by coincidence, since
-     * `dumpAvailable` is true; the real regression this guards is the *not-yet-connected*
-     * case in the test above, but pinning both states is what the task asked for
-     * explicitly, and this is the state where "connecting the privileged tier produced no
-     * date" is the actual mechanism being exercised, not merely a fallback default.
+     * `VendorReadings.None` (this suite's deterministic stand-in) reports both Battery
+     * Protect fields as `Unsupported`, and with the privileged dump gone there is no
+     * second source left to fall back to -- unlike before this task, when an absent
+     * vendor key still had a dump-derived fallback to try.
      */
     @Test
-    fun manufacturingDateIsUnsupportedEvenWhenThePrivilegedTierIsReadyAndDumped() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
-        fake.nextDump = sampleDumpText()
+    fun batteryProtectFieldsAreUnsupportedWithNoVendorKeyAndNoFurtherSource() = runBlocking {
+        val snapshot = withTimeout(5_000) { repository().snapshots().first() }
 
-        val snapshot = withTimeout(5_000) { repository(fake).snapshots().first() }
-
-        // Sanity: the dump was actually used (proves this test reached the connected path
-        // at all, not merely repeating the not-yet-connected assertion by accident).
-        assertEquals(Reading.Available(86, Source.Privileged), snapshot.stateOfHealthPct)
-        assertEquals(Reading.Unsupported, snapshot.manufacturingDateEpochDay)
-    }
-
-    /**
-     * Important 1: a dump that fails while the privileged tier is genuinely Ready must not
-     * be terminal. The fake starts Ready with [FakePrivilegedBatterySource.nextDump] left
-     * `null` (a blank/failed shell call), so the first collection pins every privileged
-     * field at `NeedsPrivilegedAccess` and [BatteryRepository.privilegedDumpFailed] to
-     * `true` -- exactly the bug: the privileged tier is demonstrably `Ready`, yet the rows
-     * read as if it never connected. Calling [BatteryRepository.retryPrivilegedDump] and
-     * collecting again (same repository instance, same fake, `dumpBattery` now returning a
-     * real dump) is what `HealthViewModel.refreshPrivilegedTier` does on every `ON_RESUME`
-     * in production; recovering here without ever toggling the availability state itself is
-     * the fix.
-     */
-    @Test
-    fun retryPrivilegedDumpRecoversFromAFailedDumpWhileReady() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
-        fake.nextDump = null
-        val repo = repository(fake)
-
-        val failedSnapshot = withTimeout(5_000) { repo.snapshots().first() }
-        assertEquals(Reading.NeedsPrivilegedAccess, failedSnapshot.stateOfHealthPct)
-        assertTrue(repo.privilegedDumpFailed.value)
-
-        fake.nextDump = sampleDumpText(asoc = 86)
-        repo.retryPrivilegedDump()
-
-        val recoveredSnapshot = withTimeout(5_000) { repo.snapshots().first() }
-        assertEquals(Reading.Available(86, Source.Privileged), recoveredSnapshot.stateOfHealthPct)
-        assertFalse(repo.privilegedDumpFailed.value)
-    }
-
-    /**
-     * Critical 2: Battery Protect's mode and threshold are a live Samsung Settings toggle,
-     * not a firmware-stable figure like ASOC/BSOH/first-use -- the bind-boundary-only
-     * cadence those three correctly use must not also gate these two. Simulates the
-     * task's own reachable flow (bound, then the user changes the setting elsewhere, then
-     * returns) by changing what the fake's next dump reports and calling
-     * [BatteryRepository.retryPrivilegedDump] -- the same call `HealthViewModel` makes
-     * from every `ON_RESUME` -- without the bind state itself ever toggling.
-     */
-    @Test
-    fun retryPrivilegedDumpRefreshesBatteryProtectFieldsOnDemand() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
-        fake.nextDump = sampleDumpText(protectMode = 1, protectionThresholdPct = 80)
-        val repo = repository(fake)
-
-        val before = withTimeout(5_000) { repo.snapshots().first() }
-        assertEquals(Reading.Available(true, Source.Privileged), before.protectBatteryModeEnabled)
-        assertEquals(Reading.Available(80, Source.Privileged), before.protectionThresholdPct)
-
-        // The user turned Battery Protect off in Settings while this app was backgrounded.
-        fake.nextDump = sampleDumpText(protectMode = 0, protectionThresholdPct = 80)
-        repo.retryPrivilegedDump()
-
-        val after = withTimeout(5_000) { repo.snapshots().first() }
-        assertEquals(Reading.Available(false, Source.Privileged), after.protectBatteryModeEnabled)
+        assertEquals(Reading.Unsupported, snapshot.protectBatteryModeEnabled)
+        assertEquals(Reading.Unsupported, snapshot.protectionThresholdPct)
     }
 
     private fun chargeSessionWithoutCounter(id: Long, coulombUah: Long) = SessionEntity(
@@ -293,8 +161,6 @@ class BatteryRepositoryTest {
 
     @Test
     fun measuredHealthPropagatesTheMappedCoulombChargeThroughToTheEstimator() = runBlocking {
-        settings.setDesignCapacityOverride(5_000)
-
         // Three completed charge sessions, deltaLevelPct 60 on every one, with no counter
         // data at all -- only coulombUah is set. The estimator can only reach a report
         // here by reading the coulomb column, so a report proves the mapper carried
@@ -305,7 +171,7 @@ class BatteryRepositoryTest {
         db.sessions().insert(chargeSessionWithoutCounter(2, coulombUah = 2_460_000))
         db.sessions().insert(chargeSessionWithoutCounter(3, coulombUah = 2_460_000))
 
-        val reading = withTimeout(5_000) { repository().measuredHealth().first() }
+        val reading = withTimeout(5_000) { repository(powerProfileMah = 5_000).measuredHealth().first() }
         val report = reading.valueOrNull()
             ?: error("expected a health report, got $reading")
 
@@ -363,8 +229,6 @@ class BatteryRepositoryTest {
 
     @Test
     fun measuredHealthFindsQualifyingChargesOutsideARecencyWindowFullOfOtherSessions() = runBlocking {
-        settings.setDesignCapacityOverride(5_000)
-
         // Fifty more-recent rows: 25 discharges and 25 charges too narrow to qualify
         // (deltaLevelPct 5, under the estimator's 20-point floor) -- someone who only
         // ever top-up charges, e.g. from a car mount or a desk pad. If the recency window
@@ -388,7 +252,7 @@ class BatteryRepositoryTest {
         db.sessions().insert(wideChargeSession(id = 2, startedAtMs = 1_000, endedAtMs = 2_000))
         db.sessions().insert(wideChargeSession(id = 3, startedAtMs = 2_000, endedAtMs = 3_000))
 
-        val reading = withTimeout(5_000) { repository().measuredHealth().first() }
+        val reading = withTimeout(5_000) { repository(powerProfileMah = 5_000).measuredHealth().first() }
         val report = reading.valueOrNull()
             ?: error(
                 "expected a health report: the database holds three qualifying charge " +
@@ -398,92 +262,5 @@ class BatteryRepositoryTest {
         assertEquals(100, report.healthPct)
         assertEquals(CapacityMethod.Counter, report.method)
         assertEquals(3, report.sessionsUsed)
-    }
-
-    private fun sampleCheckinText() = """
-        9,0,i,vers,36,1179864,BP4A.251205.006,BP4A.251205.006
-        9,0,i,uid,1000,com.samsung.android.provider.filterprovider
-        9,0,i,uid,2000,com.android.shell
-        9,0,i,uid,10106,com.sec.android.app.camera
-        9,2000,l,pwi,uid,422,1,0,0
-        9,1000,l,pwi,uid,6.23,1,0,0
-        9,10106,l,pwi,uid,15.6,1,0,0
-        9,0,l,pwi,cpu,17.5,0,0,0
-    """.trimIndent()
-
-    @Test
-    fun appPowerReportsNeedsPrivilegedAccessWhenNotConnected() = runBlocking {
-        val repo = repository(FakePrivilegedBatterySource(initial = PrivilegedAvailability.Unavailable))
-
-        val reading = withTimeout(5_000) { repo.appPower().first() }
-
-        assertEquals(Reading.NeedsPrivilegedAccess, reading)
-        assertFalse(repo.appPowerFailed.value)
-    }
-
-    /**
-     * The real end-to-end path: a connected checkin call, parsed and reduced into rows,
-     * sorted descending, each classified into the right [UidKind] -- the shell uid (2000)
-     * kept apart from the real app (10106) and the system uid (1000), exactly the
-     * distinction the Apps screen's whole design exists to preserve. The system-wide
-     * component breakdown row (uid "0", component "cpu") must not leak into the per-uid
-     * list as a phantom "uid 0" entry.
-     */
-    @Test
-    fun appPowerParsesARealCheckinIntoClassifiedSortedEntries() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
-        fake.nextCheckin = sampleCheckinText()
-        val repo = repository(fake)
-
-        val reading = withTimeout(5_000) { repo.appPower().first() }
-
-        val entries = reading.valueOrNull() ?: error("expected Available, got $reading")
-        assertEquals(listOf(2000, 10106, 1000), entries.map { it.uid })
-        assertEquals(UidKind.Shell, entries.first { it.uid == 2000 }.kind)
-        assertEquals(UidKind.App, entries.first { it.uid == 10106 }.kind)
-        assertEquals(UidKind.System, entries.first { it.uid == 1000 }.kind)
-        assertFalse(repo.appPowerFailed.value)
-    }
-
-    /**
-     * Mirrors [retryPrivilegedDumpRecoversFromAFailedDumpWhileReady] for the checkin call:
-     * a ready tier whose checkin call fails must not be terminal, and must be
-     * distinguishable (via [BatteryRepository.appPowerFailed]) from having never connected
-     * at all.
-     */
-    @Test
-    fun retryPrivilegedDumpRecoversFromAFailedCheckinWhileReady() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
-        fake.nextCheckin = null
-        val repo = repository(fake)
-
-        val failedReading = withTimeout(5_000) { repo.appPower().first() }
-        assertEquals(Reading.NeedsPrivilegedAccess, failedReading)
-        assertTrue(repo.appPowerFailed.value)
-
-        fake.nextCheckin = sampleCheckinText()
-        repo.retryPrivilegedDump()
-
-        val recoveredReading = withTimeout(5_000) { repo.appPower().first() }
-        assertTrue(recoveredReading.isAvailable)
-        assertFalse(repo.appPowerFailed.value)
-    }
-
-    /**
-     * A checkin call that succeeds (a real, non-null string came back) but happens to
-     * contain no "pwi,uid" rows is a real, honest "nothing recorded yet" -- Available with
-     * an empty list -- never NeedsPrivilegedAccess, which would wrongly imply reconnecting
-     * the privileged tier again might change the answer.
-     */
-    @Test
-    fun appPowerIsAvailableWithAnEmptyListWhenTheCheckinHasNoPerUidRows() = runBlocking {
-        val fake = FakePrivilegedBatterySource(initial = PrivilegedAvailability.Ready(Transport.Adb))
-        fake.nextCheckin = "9,0,i,vers,36,1179864,BP4A.251205.006,BP4A.251205.006\n"
-        val repo = repository(fake)
-
-        val reading = withTimeout(5_000) { repo.appPower().first() }
-
-        assertEquals(Reading.Available(emptyList<AppPowerEntry>(), Source.Privileged), reading)
-        assertFalse(repo.appPowerFailed.value)
     }
 }

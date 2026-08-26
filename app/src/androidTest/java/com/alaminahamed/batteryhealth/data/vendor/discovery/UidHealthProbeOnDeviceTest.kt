@@ -13,10 +13,17 @@ import org.junit.Test
  * Probes whether `SystemHealthManager` can attribute power per app on this device.
  *
  * `BatteryStatsManager`, `BatteryUsageStats` and `UidBatteryConsumer` are absent from the
- * public SDK entirely (checked against the API 37 `android.jar`), so the route the Apps
- * screen currently takes through `dumpsys batterystats` has no public equivalent. But
- * `SystemHealthManager` is public, and `takeUidSnapshot(int)` reads an arbitrary uid --
- * gated on `BATTERY_STATS`, which this app can now hold via a one-time `pm grant`.
+ * public SDK entirely (checked against the API 37 `android.jar`), so there is no public
+ * equivalent of the privileged `dumpsys batterystats` route this app used to take (since
+ * removed -- see the task history). `SystemHealthManager` is public, and
+ * `takeUidSnapshot(int)` reads an arbitrary uid -- but gated on `BATTERY_STATS`, which this
+ * app no longer declares at all, having no route to ever hold it. `UidCpuTimeSource` is
+ * where that finding actually lands in production: `cpuTimes()` returns
+ * `Reading.NeedsPrivilegedAccess` for any uid but this app's own, permanently, on every
+ * install. This probe is left here as a manual research tool for a developer who wants to
+ * re-verify that finding on new hardware -- running it meaningfully still requires `adb
+ * shell pm grant` against a debug build that declares the permission for testing, which is
+ * adb used for inspection, not something the shipped app does or asks a user to do.
  *
  * Output, not assertions, is the point. Whether these buckets are populated is a property
  * of the device, and asserting a particular one would encode this phone's answer as every
