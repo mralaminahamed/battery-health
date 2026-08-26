@@ -46,6 +46,60 @@ class PowerProfileReader(private val context: Context) {
     }
 
     /**
+     * Every `battery.*` item in the profile, as raw text.
+     *
+     * Used by the discovery sweep rather than by any reading: the neighbouring fields are
+     * not values this app interprets, but whether a device populated them at all is a
+     * useful signal about how much its `battery.capacity` is worth. A profile left wholly
+     * at AOSP defaults and one an OEM actually filled in look identical if you only ever
+     * read the single field you wanted.
+     *
+     * Same blanket failure handling as [batteryCapacityMah], for the same reason: this
+     * crosses into another package's private resource, and every way that can fail means
+     * the same thing to the caller.
+     */
+    fun batteryItems(): Map<String, String?> = try {
+        val resources = context.createPackageContext(PowerProfileCapacity.RESOURCE_PACKAGE, 0).resources
+        val id = resources.getIdentifier(
+            PowerProfileCapacity.RESOURCE_NAME,
+            PowerProfileCapacity.RESOURCE_TYPE,
+            PowerProfileCapacity.RESOURCE_PACKAGE,
+        )
+        if (id == 0) emptyMap() else resources.getXml(id).use { it.collectBatteryItems() }
+    } catch (t: Throwable) {
+        emptyMap()
+    }
+
+    /**
+     * Collects `<item name="battery.*">` elements and their text.
+     *
+     * Only the `battery.` prefix: a full power profile carries dozens of CPU, radio and
+     * screen coefficients that have nothing to do with this app and would bury the
+     * relevant rows in a report meant to be read.
+     */
+    private fun XmlResourceParser.collectBatteryItems(): Map<String, String?> {
+        val items = mutableMapOf<String, String?>()
+        var openName: String? = null
+        var event = eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                XmlPullParser.START_TAG -> {
+                    val attr = if (name == "item") getAttributeValue(null, "name") else null
+                    openName = attr?.takeIf { it.startsWith("battery.") }
+                    // Recorded on open, so an item with no text still appears as present
+                    // with no value rather than vanishing from the report entirely.
+                    if (openName != null) items.putIfAbsent(openName, null)
+                }
+
+                XmlPullParser.TEXT -> openName?.let { items[it] = text }
+                XmlPullParser.END_TAG -> openName = null
+            }
+            event = next()
+        }
+        return items
+    }
+
+    /**
      * Walks to `<item name="battery.capacity">` and returns the text inside it.
      *
      * The value is the element's *text*, not an attribute, so this has to track whether
