@@ -42,6 +42,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.alaminahamed.batteryhealth.data.settings.CycleBaselineValidation
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacitySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityValidation
 import com.alaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
@@ -71,6 +72,15 @@ object HealthScreenTags {
 
     /** The line under the headline explaining why there is no measured percentage yet. */
     const val MEASUREMENT_NOTE = "health-measurement-note"
+}
+
+object CycleBaselineTags {
+    const val ROW = "cycle-baseline-row"
+    const val DIALOG = "cycle-baseline-dialog"
+    const val INPUT = "cycle-baseline-input"
+    const val SAVE = "cycle-baseline-save"
+    const val CLEAR = "cycle-baseline-clear"
+    const val ERROR = "cycle-baseline-error"
 }
 
 object DesignCapacityTags {
@@ -115,6 +125,7 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         modifier = modifier,
         onConnect = viewModel::connectPrivilegedTier,
         onDismissUnlockCard = viewModel::dismissUnlockCard,
+        onSetCycleBaseline = viewModel::setCycleBaseline,
         onLearnMore = {
             context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
@@ -157,10 +168,12 @@ fun HealthContent(
     onLearnMore: () -> Unit = {},
     onRetryPrivilegedDump: () -> Unit = {},
     onDismissUnlockCard: () -> Unit = {},
+    onSetCycleBaseline: (Int?) -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
     var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
+    var showCycleBaselineDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -255,7 +268,23 @@ fun HealthContent(
 
         OneUiCard {
             SectionHeader("Battery information")
-            KeyValueRow("Cycles") {
+            // Tappable only where this app's own count is what is shown. A vendor figure
+            // is already a lifetime total and a baseline would double-count the very
+            // history it exists to stand in for, so offering the dialog there would invite
+            // a user to break a correct number.
+            val baselineEditable = state.privilegedTierSupported.not() ||
+                (state.snapshot?.cycleCount as? Reading.Available)?.source != Source.Privileged
+            KeyValueRow(
+                "Cycles",
+                modifier = if (baselineEditable) {
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { showCycleBaselineDialog = true }
+                        .testTag(CycleBaselineTags.ROW)
+                } else {
+                    Modifier
+                },
+            ) {
                 ReadingSlot(state.snapshot?.cycleCount ?: Reading.NotYetMeasured) { cycles, _ ->
                     Value(cycles.toString())
                 }
@@ -413,6 +442,21 @@ fun HealthContent(
         }
     }
 
+    if (showCycleBaselineDialog) {
+        CycleBaselineDialog(
+            current = state.cycleBaseline,
+            onSave = { cycles ->
+                onSetCycleBaseline(cycles)
+                showCycleBaselineDialog = false
+            },
+            onClear = {
+                onSetCycleBaseline(null)
+                showCycleBaselineDialog = false
+            },
+            onDismiss = { showCycleBaselineDialog = false },
+        )
+    }
+
     if (showDesignCapacityDialog) {
         DesignCapacityDialog(
             currentOverrideMah = when (state.designCapacity.source) {
@@ -554,5 +598,91 @@ private fun SourceChip(source: Source) {
             .clip(RoundedCornerShape(999.dp))
             .background(colors.divider)
             .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+/**
+ * Lets the user supply a cycle count they read from their phone.
+ *
+ * The dialog names where to find it, because a user who cannot locate the number cannot
+ * use the feature, and a vague "enter your cycle count" would invite a guess -- which is
+ * the one thing this must not collect. A guessed baseline would be indistinguishable, in
+ * the row above, from a measured one.
+ */
+@Composable
+private fun CycleBaselineDialog(
+    current: Int?,
+    onSave: (Int) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(current?.toString() ?: "") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag(CycleBaselineTags.DIALOG),
+        title = { Text("Cycle count so far") },
+        text = {
+            Column {
+                Text(
+                    text = "This app can only count charge it has watched go in, so on a " +
+                        "phone that is not new its count starts at zero. If your phone " +
+                        "reports a real figure \u2014 on Samsung: Settings, Battery, " +
+                        "Battery information \u2014 enter it here and this app will count " +
+                        "on from there.\n\nEnter only a number your phone actually shows. " +
+                        "A guess here would look exactly like a measurement afterwards.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        error = null
+                    },
+                    label = { Text("Cycles") },
+                    singleLine = true,
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .testTag(CycleBaselineTags.INPUT),
+                )
+                val currentError = error
+                if (currentError != null) {
+                    Text(
+                        text = currentError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .testTag(CycleBaselineTags.ERROR),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when (val result = CycleBaselineValidation.validate(text)) {
+                        is CycleBaselineValidation.Result.Valid -> onSave(result.cycles)
+                        is CycleBaselineValidation.Result.Invalid -> error = result.message
+                    }
+                },
+                modifier = Modifier.testTag(CycleBaselineTags.SAVE),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            Row {
+                if (current != null) {
+                    TextButton(
+                        onClick = onClear,
+                        modifier = Modifier.testTag(CycleBaselineTags.CLEAR),
+                    ) { Text("Clear") }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
     )
 }

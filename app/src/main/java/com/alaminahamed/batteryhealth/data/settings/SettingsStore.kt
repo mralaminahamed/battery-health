@@ -136,6 +136,23 @@ class SettingsStore @Inject constructor(private val context: Context) {
     val adbPreviouslyConnected: Flow<Boolean> =
         context.dataStore.data.map { it[ADB_PREVIOUSLY_CONNECTED] ?: false }.distinctUntilChanged()
 
+    /**
+     * A cycle count the user read from their phone's own screen, used as the starting
+     * point for this app's count.
+     *
+     * Null means nobody has said, which is different from a stored zero -- a user
+     * reporting zero is telling this app something true. `remove` rather than writing a
+     * sentinel keeps those two states distinct in DataStore itself.
+     */
+    val cycleCountBaseline: Flow<Int?> =
+        context.dataStore.data.map { it[CYCLE_COUNT_BASELINE] }.distinctUntilChanged()
+
+    suspend fun setCycleCountBaseline(cycles: Int?) {
+        context.dataStore.edit { prefs ->
+            if (cycles == null) prefs.remove(CYCLE_COUNT_BASELINE) else prefs[CYCLE_COUNT_BASELINE] = cycles
+        }
+    }
+
     suspend fun setAdbPreviouslyConnected(connected: Boolean) {
         context.dataStore.edit { it[ADB_PREVIOUSLY_CONNECTED] = connected }
     }
@@ -205,6 +222,7 @@ class SettingsStore @Inject constructor(private val context: Context) {
         val ROOT_PREVIOUSLY_GRANTED = booleanPreferencesKey("root_previously_granted")
         val UNLOCK_CARD_DISMISSED = booleanPreferencesKey("unlock_card_dismissed")
         val ADB_PREVIOUSLY_CONNECTED = booleanPreferencesKey("adb_previously_connected")
+        val CYCLE_COUNT_BASELINE = intPreferencesKey("cycle_count_baseline")
         val DESIGN_LANGUAGE = stringPreferencesKey("design_language_choice")
     }
 }

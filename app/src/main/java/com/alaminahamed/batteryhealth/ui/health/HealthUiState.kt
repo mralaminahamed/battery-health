@@ -101,6 +101,11 @@ data class HealthUiState(
      * to".
      */
     val privilegedTierSupported: Boolean = true,
+    /**
+     * The cycle count the user read from their phone's own screen, or null if they have
+     * not entered one. Null and zero are different: zero is them reporting a real figure.
+     */
+    val cycleBaseline: Int? = null,
 ) {
     /**
      * A value the platform reports directly beats one this app inferred, but beyond

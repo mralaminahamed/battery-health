@@ -127,6 +127,7 @@ class BatteryRepositoryTest {
             broadcasts = BatteryBroadcastSource(context),
             properties = BatteryManagerSource(batteryManager, capabilities, settings),
             sessionDao = db.sessions(),
+            settings = settings,
             estimator = HealthEstimator(),
             // The device's own identity is irrelevant here: an explicit override makes the
             // design capacity deterministic regardless of which device runs this test.

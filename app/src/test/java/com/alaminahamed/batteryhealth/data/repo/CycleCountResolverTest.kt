@@ -163,4 +163,93 @@ class CycleCountResolverTest {
             CycleCountResolver.resolve(null, dumpAvailable = true, broadcastCycles = null, measured = Reading.Unsupported),
         )
     }
+
+    // ---- the user-supplied baseline ----------------------------------------------------
+
+    /**
+     * The feature that makes this app's own count usable on a phone that is not new.
+     *
+     * It can only count charge it watched go in, so on an old battery it starts at zero.
+     * Samsung shows the real figure to the user; adding what they read to what this app
+     * has since counted gives an accurate total without inventing anything.
+     */
+    @Test
+    fun theUsersBaselineIsAddedToWhatThisAppHasCounted() {
+        assertEquals(
+            Reading.Available(10, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.Available(3, Source.Measured),
+                baselineCycles = 7,
+            ),
+        )
+    }
+
+    /**
+     * Their figure is real and already useful before this app has counted a full cycle.
+     * Showing "Measuring" over the top of it would discard something true they entered.
+     */
+    @Test
+    fun aBaselineAloneIsShownBeforeAnythingIsMeasured() {
+        assertEquals(
+            Reading.Available(7, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.NotYetMeasured,
+                baselineCycles = 7,
+            ),
+        )
+    }
+
+    /**
+     * Vendor figures are already lifetime totals. Adding a baseline to one would
+     * double-count the very history the baseline exists to stand in for.
+     */
+    @Test
+    fun aBaselineIsNeverAddedToAVendorFigure() {
+        assertEquals(
+            Reading.Available(412, Source.Privileged),
+            CycleCountResolver.resolve(412, dumpAvailable = true, broadcastCycles = null, baselineCycles = 7),
+        )
+        assertEquals(
+            Reading.Available(97, Source.Framework),
+            CycleCountResolver.resolve(null, dumpAvailable = false, broadcastCycles = 97, baselineCycles = 7),
+        )
+    }
+
+    /**
+     * Zero is a real baseline, not an absent one -- a user reporting it is saying this
+     * app's count and their phone's now agree, which must not be discarded as "unset".
+     */
+    @Test
+    fun aZeroBaselineIsHonouredRatherThanTreatedAsUnset() {
+        assertEquals(
+            Reading.Available(0, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.NotYetMeasured,
+                baselineCycles = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun withNoBaselineNothingChanges() {
+        assertEquals(
+            Reading.Available(3, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.Available(3, Source.Measured),
+                baselineCycles = null,
+            ),
+        )
+    }
 }
