@@ -126,7 +126,6 @@ app/src/main/java/com/alaminahamed/batteryhealth/
 │   ├── framework/           Battery broadcast + BatteryManager sources, capability probe
 │   ├── local/               Room entities, DAOs, database
 │   ├── settings/            DataStore preferences, design-capacity table
-│   ├── apps/                Per-app label resolution (flavour-specific)
 │   └── repo/                BatteryRepository, HealthEstimator, CycleCountResolver
 ├── sampling/                WorkManager sampler + boot receiver
 ├── di/                      Hilt modules
@@ -174,19 +173,20 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
-### Build flavours
+### Building
 
-There are two, so **every Gradle task name is flavour-qualified**:
-
-- **`play`** (default) — omits `QUERY_ALL_PACKAGES`, keeping it out of a Play submission; the
-  Apps screen's per-uid CPU-time list falls back to package-visible apps only
-- **`full`** — declares `QUERY_ALL_PACKAGES`, so the Apps screen's CPU-time list can resolve
-  every app's name and icon, not just the ones visible under Play's default package filtering
+One variant, so Gradle task names are unqualified:
 
 ```bash
-./gradlew installFullDebug             # or installPlayDebug for the Play-safe flavour
-./gradlew assemblePlayDebug            # build without installing
+./gradlew installDebug                 # build and install
+./gradlew assembleDebug                # build without installing
+./gradlew testDebugUnitTest            # host-side unit tests
+./gradlew connectedDebugAndroidTest    # instrumented tests on a connected device
 ```
+
+The app used to ship as two flavours, `play` and `full`, differing only in whether they
+declared `QUERY_ALL_PACKAGES` to resolve app names for the Apps screen. That screen is gone, so
+the split had nothing left to distinguish and was collapsed.
 
 ### Permissions
 
@@ -203,8 +203,7 @@ Permissions section shows the live state of every one of them:
 - **`PACKAGE_USAGE_STATS`** — appop-gated; the app deep-links to the system's Usage access
   screen, where the user flips it on themselves
 - Everything else the app declares (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`,
-  `RECEIVE_BOOT_COMPLETED`, and `QUERY_ALL_PACKAGES` on `full`) is install-time, granted
-  automatically, with nothing to tap
+  `RECEIVE_BOOT_COMPLETED`) is install-time, granted automatically, with nothing to tap
 
 Without state of health, both dates and BSOH, the app still measures health from the charge
 counter, counts cycles from the charge it records (or from the battery broadcast's own
@@ -214,13 +213,13 @@ limit from `Settings.Global` — none of which needs anything beyond what is lis
 ## Development
 
 ```bash
-./gradlew testPlayDebugUnitTest          # host-side unit tests
-./gradlew connectedPlayDebugAndroidTest  # instrumented tests on a connected device
+./gradlew testDebugUnitTest          # host-side unit tests
+./gradlew connectedDebugAndroidTest  # instrumented tests on a connected device
 ```
 
 Two things that will otherwise cost you time:
 
-- `connectedPlayDebugAndroidTest` does **not** accept `--tests`. Filter with
+- `connectedDebugAndroidTest` does **not** accept `--tests`. Filter with
   `-Pandroid.testInstrumentationRunnerArguments.class=<fully.qualified.ClassName>`
 - The device must be awake and unlocked, or Compose tests fail with a misleading
   "No compose hierarchies found". Run
@@ -255,14 +254,14 @@ under the same app identity. The CI equivalents are `RELEASE_STORE_FILE`,
 `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD`.
 
 > **With no credentials configured, release builds are produced unsigned** — `assemblePlayRelease`
-> emits `app-play-release-unsigned.apk`. That is deliberate: the alternative, falling back to
+> emits `app-release-unsigned.apk`. That is deliberate: the alternative, falling back to
 > the debug key, yields an artifact Play rejects at upload and that is easy to ship somewhere
 > by accident. An artifact that cannot be installed is the cheaper mistake.
 
 Google Play needs the bundle, not the APK:
 
 ```bash
-./gradlew :app:bundlePlayRelease   # app/build/outputs/bundle/playRelease/app-play-release.aab
+./gradlew :app:bundleRelease   # app/build/outputs/bundle/release/app-release.aab
 ```
 
 ## Verified on

@@ -21,7 +21,8 @@ data class SettingsUiState(
      * Every permission this app declares, each already carrying its live state -- the
      * Permissions section's whole content. Empty only as the cold-start placeholder before
      * `SettingsViewModel` first reads the platform, the same convention every other field
-     * here uses; the real value always has at least five rows.
+     * here uses; the real value always has exactly six rows -- one requestable
+     * (`POST_NOTIFICATIONS`) plus five install-time.
      */
     val permissions: List<PermissionRow> = emptyList(),
 )

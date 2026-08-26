@@ -63,17 +63,6 @@ android {
         testInstrumentationRunner = "com.alaminahamed.batteryhealth.ScreenAwakeRunner"
     }
 
-    flavorDimensions += "distribution"
-    productFlavors {
-        create("play") {
-            dimension = "distribution"
-            isDefault = true
-        }
-        create("full") {
-            dimension = "distribution"
-        }
-    }
-
     signingConfigs {
         // Only declared when credentials were actually found. Declaring it unconditionally
         // would let a half-configured setup produce an artifact signed with blank or stale

@@ -57,7 +57,7 @@ object SettingsNotificationTags {
 /**
  * Row and action tags are per-permission rather than fixed constants: this section has as
  * many rows as [SettingsUiState.permissions] does, and a test targeting "the
- * PACKAGE_USAGE_STATS row" needs a tag that says which one, the same reason
+ * POST_NOTIFICATIONS row" needs a tag that says which one, the same reason
  * `DiagnosticsCard`'s per-channel rows are found by text rather than a fixed tag.
  */
 object SettingsPermissionsTags {
@@ -96,10 +96,9 @@ fun SettingsScreen(
         ActivityResultContracts.RequestPermission(),
     ) { viewModel.refreshPermissions() }
 
-    // PACKAGE_USAGE_STATS is granted from the system's own Usage access screen, and
-    // notifications from the system's notification settings -- neither tells this
-    // process when it happens. Re-reading on resume is what notices the user coming back
-    // having changed either, without needing the screen recreated.
+    // Notifications are granted from the system's notification settings, which does not
+    // tell this process when it happens. Re-reading on resume is what notices the user
+    // coming back having changed it, without needing the screen recreated.
     val currentViewModel by rememberUpdatedState(viewModel)
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -118,7 +117,6 @@ fun SettingsScreen(
         onRequestNotificationPermission = {
             requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         },
-        onOpenUsageAccessSettings = { openUsageAccessSettings(context) },
         diagnostics = diagnostics,
         onRunDiagnostics = diagnosticsViewModel::run,
     )
@@ -140,9 +138,6 @@ private fun notificationSettingsIntent(context: Context) =
     Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
 
-// openUsageAccessSettings now lives in UsageAccessDeepLink.kt (same package), shared with
-// AppsScreen's own estimate disclosure card -- see that file's doc.
-
 @Composable
 fun SettingsContent(
     state: SettingsUiState,
@@ -150,7 +145,6 @@ fun SettingsContent(
     onDesignLanguageChange: (DesignLanguageChoice) -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
     onRequestNotificationPermission: () -> Unit = {},
-    onOpenUsageAccessSettings: () -> Unit = {},
     /**
      * Diagnostics state and its trigger arrive as parameters rather than being pulled
      * from a `hiltViewModel()` inside this composable. `SettingsContent` is exercised
@@ -274,14 +268,6 @@ fun SettingsContent(
                                     .padding(top = 6.dp, bottom = 10.dp)
                                     .testTag(SettingsPermissionsTags.action(row.shortName)),
                             ) { Text("Request permission") }
-                        }
-                        PermissionKind.AppOp -> if (!row.held) {
-                            Button(
-                                onClick = onOpenUsageAccessSettings,
-                                modifier = Modifier
-                                    .padding(top = 6.dp, bottom = 10.dp)
-                                    .testTag(SettingsPermissionsTags.action(row.shortName)),
-                            ) { Text("Open Usage access settings") }
                         }
                         // Always shown, not just when !row.held: it is true regardless of
                         // this row's state, and saying so plainly is the whole point of

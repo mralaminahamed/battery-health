@@ -6,10 +6,10 @@ import org.junit.Test
 /**
  * `permissionStateLabel` chooses different wording for the *same* `held` value depending
  * on [PermissionKind] -- see its own doc for why "Denied" (a real dialog answered "no")
- * and "Not held" (an appop the system's own Usage access screen controls, with no dialog
- * of its own) are deliberately different words. Every test below pins one (kind, held)
- * combination to its exact word, which is what catches an implementation that collapses
- * two kinds to the same text or returns the held-word for the not-held case.
+ * and "Held" (a row that only exists because the platform already granted it) are
+ * deliberately different words. Every test below pins one (kind, held) combination to its
+ * exact word, which is what catches an implementation that collapses two kinds to the
+ * same text or returns the held-word for the not-held case.
  */
 class PermissionRowTest {
 
@@ -24,16 +24,6 @@ class PermissionRowTest {
     @Test
     fun requestableNotGrantedReadsDenied() {
         assertEquals("Denied", permissionStateLabel(row(PermissionKind.Requestable, held = false)))
-    }
-
-    @Test
-    fun appOpHeldReadsHeld() {
-        assertEquals("Held", permissionStateLabel(row(PermissionKind.AppOp, held = true)))
-    }
-
-    @Test
-    fun appOpNotHeldReadsNotHeld() {
-        assertEquals("Not held", permissionStateLabel(row(PermissionKind.AppOp, held = false)))
     }
 
     @Test

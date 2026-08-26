@@ -8,9 +8,4 @@ class BuildConfigTest {
     fun applicationIdIsCorrect() {
         assertEquals("com.alaminahamed.batteryhealth", BuildConfig.APPLICATION_ID)
     }
-
-    @Test
-    fun flavorIsOneOfTheTwoDeclaredFlavors() {
-        assertEquals(true, BuildConfig.FLAVOR in setOf("full", "play"))
-    }
 }

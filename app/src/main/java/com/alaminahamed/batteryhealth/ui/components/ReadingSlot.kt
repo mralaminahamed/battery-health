@@ -36,7 +36,6 @@ fun <T> ReadingSlot(
 
         Reading.Unsupported -> Reason("Not available on this device", modifier)
         Reading.NeedsPrivilegedAccess -> Reason("Needs privileged access", modifier)
-        Reading.NeedsUsageAccess -> Reason("Needs usage access", modifier)
         Reading.NotYetMeasured -> Reason("Measuring", modifier)
     }
 }

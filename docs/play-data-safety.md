@@ -19,18 +19,18 @@ Battery samples and charge sessions are written to the app's private on-device s
 the device.
 
 **Evidence:** there are no analytics, crash-reporting, advertising, or other third-party SDKs —
-`gradle/libs.versions.toml` contains only AndroidX, Google and Kotlin artifacts. Neither build
-flavour declares `INTERNET`.
+`gradle/libs.versions.toml` contains only AndroidX, Google and Kotlin artifacts. The app does
+not declare `INTERNET`.
 
 ## Permission declarations
 
-### `INTERNET` — **not declared in either flavour**
+### `INTERNET` — **not declared**
 
 An earlier version of this app carried an on-device adb client that opened a loopback socket
-to reach permission-gated `dumpsys` output, and the `full` flavour declared `INTERNET` for
-that one purpose. That client, and every permission-gated shell read it existed to reach, has
-been removed: this app now asks for nothing beyond what a normal Android permission flow or a
-public API can supply. Neither flavour opens a socket, and neither declares `INTERNET`.
+to reach permission-gated `dumpsys` output, and declared `INTERNET` for that one purpose. That
+client, and every permission-gated shell read it existed to reach, has been removed: this app
+now asks for nothing beyond what a normal Android permission flow or a public API can supply.
+It opens no socket and does not declare `INTERNET`.
 
 ### `PACKAGE_USAGE_STATS`
 
@@ -51,15 +51,14 @@ background.
 Re-registers the sampling schedule after a restart, so recorded history is not silently
 interrupted by a reboot.
 
-### `QUERY_ALL_PACKAGES` — **Play build: not declared**
+### `QUERY_ALL_PACKAGES` — **not declared**
 
-The `play` product flavour deliberately omits this. It is declared only in the `full` flavour,
-which is distributed outside Google Play, where it resolves package names to app labels and
-icons for the Apps screen's per-uid CPU-time list.
+This was declared only by a second build flavour distributed outside Google Play, to resolve
+package names to app labels for the Apps screen. That screen has been removed and the flavour
+split collapsed with it, so the permission is gone from the app entirely.
 
-If a Play submission ever needs it, be aware that Play does not accept this as a permitted use
-of `QUERY_ALL_PACKAGES` for a battery tool's declared category. Keep it out of the `play`
-flavour.
+Worth recording for anyone tempted to reach for it later: Play does not accept this as a
+permitted use of `QUERY_ALL_PACKAGES` for a battery tool's declared category.
 
 ## What this app no longer declares, and why
 
@@ -99,4 +98,4 @@ root shell, and no permission declared that only a computer could grant. Every p
 app declares is either install-time (granted automatically) or reachable entirely from within
 the app or the system's own Settings app.
 
-**"Why does a battery app need INTERNET?"** It doesn't, and neither flavour declares it.
+**"Why does a battery app need INTERNET?"** It doesn't, and the app does not declare it.

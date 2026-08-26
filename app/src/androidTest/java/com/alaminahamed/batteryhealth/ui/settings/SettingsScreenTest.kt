@@ -5,7 +5,6 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -126,49 +125,6 @@ class SettingsScreenTest {
         assertTrue("tapping the button must invoke the request callback", requested)
     }
 
-    @Test
-    fun aNotHeldAppOpPermissionReadsNotHeldAndOffersTheUsageAccessDeepLink() {
-        val row = PermissionRow("PACKAGE_USAGE_STATS", PermissionKind.AppOp, held = false)
-        compose.setContent {
-            BatteryHealthTheme { SettingsContent(state(permissions = listOf(row)), Modifier) }
-        }
-
-        compose.onNodeWithTag(SettingsPermissionsTags.row("PACKAGE_USAGE_STATS")).performScrollTo()
-        compose.onNodeWithText("Not held").assertIsDisplayed()
-        compose.onNodeWithText("Open Usage access settings").assertIsDisplayed()
-    }
-
-    @Test
-    fun aHeldAppOpPermissionReadsHeldWithNoButton() {
-        val row = PermissionRow("PACKAGE_USAGE_STATS", PermissionKind.AppOp, held = true)
-        compose.setContent {
-            BatteryHealthTheme { SettingsContent(state(permissions = listOf(row)), Modifier) }
-        }
-
-        compose.onNodeWithTag(SettingsPermissionsTags.row("PACKAGE_USAGE_STATS")).performScrollTo()
-        compose.onNodeWithText("Held").assertIsDisplayed()
-        compose.onAllNodesWithText("Open Usage access settings").assertCountEquals(0)
-    }
-
-    @Test
-    fun tappingTheUsageAccessButtonInvokesTheCallback() {
-        var opened = false
-        val row = PermissionRow("PACKAGE_USAGE_STATS", PermissionKind.AppOp, held = false)
-        compose.setContent {
-            BatteryHealthTheme {
-                SettingsContent(
-                    state(permissions = listOf(row)),
-                    Modifier,
-                    onOpenUsageAccessSettings = { opened = true },
-                )
-            }
-        }
-
-        compose.onNodeWithTag(SettingsPermissionsTags.action("PACKAGE_USAGE_STATS"))
-            .performScrollTo().performClick()
-        assertTrue("tapping the button must invoke the usage-access callback", opened)
-    }
-
     /** An install-time row's action text is always shown, regardless of `held` -- it is
      * true unconditionally, and saying so plainly is the whole point of the row. */
     @Test
@@ -190,8 +146,8 @@ class SettingsScreenTest {
     fun multiplePermissionsEachRenderUnderTheirOwnRow() {
         val rows = listOf(
             PermissionRow("POST_NOTIFICATIONS", PermissionKind.Requestable, held = true),
-            PermissionRow("PACKAGE_USAGE_STATS", PermissionKind.AppOp, held = false),
             PermissionRow("WAKE_LOCK", PermissionKind.InstallTime, held = true),
+            PermissionRow("RECEIVE_BOOT_COMPLETED", PermissionKind.InstallTime, held = true),
         )
         compose.setContent {
             BatteryHealthTheme { SettingsContent(state(permissions = rows), Modifier) }
@@ -199,7 +155,7 @@ class SettingsScreenTest {
 
         compose.onNodeWithTag(SettingsPermissionsTags.SECTION).performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag(SettingsPermissionsTags.row("POST_NOTIFICATIONS")).assertIsDisplayed()
-        compose.onNodeWithTag(SettingsPermissionsTags.row("PACKAGE_USAGE_STATS")).assertIsDisplayed()
         compose.onNodeWithTag(SettingsPermissionsTags.row("WAKE_LOCK")).assertIsDisplayed()
+        compose.onNodeWithTag(SettingsPermissionsTags.row("RECEIVE_BOOT_COMPLETED")).assertIsDisplayed()
     }
 }

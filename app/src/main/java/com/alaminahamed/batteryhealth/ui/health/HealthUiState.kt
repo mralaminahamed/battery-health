@@ -100,12 +100,6 @@ data class HealthUiState(
         is Reading.Available -> 3
         Reading.NotYetMeasured -> 2
         Reading.NeedsPrivilegedAccess -> 1
-        // Never actually reached here: framework is a platform Reading<Int> and measured
-        // comes from HealthEstimator, neither of which ever produces NeedsUsageAccess
-        // (that absence belongs to the Apps screen's estimate, not this card). Ranked
-        // beside NeedsPrivilegedAccess rather than left unhandled: both are an absence
-        // with a specific, actionable remedy this comparison just does not happen to name.
-        Reading.NeedsUsageAccess -> 1
         Reading.Unsupported -> 0
     }
 }

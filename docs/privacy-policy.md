@@ -84,16 +84,6 @@ Nothing this app reads from any Android API leaves your device. The battery's se
 deliberately **not** recorded even into the app's own diagnostic report, because that report
 is meant to be shareable and a serial identifies one physical device.
 
-## Per-app CPU time
-
-The build distributed outside Google Play declares `QUERY_ALL_PACKAGES` in order to display
-names and icons alongside the Apps screen's per-uid CPU-time list. It uses this only to turn a
-package name into something human-readable on screen. The list of your installed applications
-is never recorded, transmitted, or retained.
-
-The Google Play build does not declare this permission, and its own CPU-time list is limited
-to apps Android already makes visible to any app by default.
-
 ## Your data, your control
 
 The app's data lives in its private storage, so uninstalling it deletes everything permanently.
