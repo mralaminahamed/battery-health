@@ -163,11 +163,14 @@ fun UnlockCard(
  */
 private fun explanation(availability: PrivilegedAvailability, dumpFailed: Boolean): String = when (availability) {
     PrivilegedAvailability.Unavailable ->
-        "State of health, first-use date and Battery Protect status sit behind a " +
-            "permission this app cannot request on its own. Run \"adb tcpip 5555\" " +
-            "from a computer with your device connected, and this app takes it from " +
-            "there -- you'll need to repeat that command each time your phone " +
-            "restarts. A rooted device skips this step entirely."
+        "State of health, first-use date and manufacturing date sit behind a permission " +
+            "this app cannot request on its own. From a computer with your device " +
+            "connected, run:\n\n" +
+            "adb shell pm grant com.alaminahamed.batteryhealth " +
+            "android.permission.BATTERY_STATS\n\n" +
+            "That is a one-time step -- it survives restarts. Samsung's cycle count and " +
+            "charge limit need the older route instead (\"adb tcpip 5555\", repeated " +
+            "after every restart). A rooted device skips all of this."
     PrivilegedAvailability.AwaitingAuthorization ->
         "Check your screen -- your device is asking whether to allow this. Approve " +
             "it and the readings appear."

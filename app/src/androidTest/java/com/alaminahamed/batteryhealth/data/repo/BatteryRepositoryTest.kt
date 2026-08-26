@@ -13,6 +13,7 @@ import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.privileged.Transport
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.framework.GrantedBatterySource
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
 import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
@@ -140,6 +141,12 @@ class BatteryRepositoryTest {
             // on a Samsung host it answers and on any other it reports Unsupported, and
             // both are outcomes these tests must tolerate rather than one being baked in.
             vendorSettings = VendorSettingsSource(context),
+            // Real, like vendorSettings above. On a host without BATTERY_STATS granted
+            // every reading reports NeedsPrivilegedAccess and the dump answers instead --
+            // which is the ordinary state these tests assert against. Granting the
+            // permission on the host would legitimately change those assertions, and that
+            // is a fact about the device, not a defect.
+            granted = GrantedBatterySource(context, batteryManager),
         )
     }
 
