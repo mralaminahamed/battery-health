@@ -9,7 +9,8 @@ import com.alaminahamed.batteryhealth.data.privileged.ParsedBatteryDump
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
-import com.alaminahamed.batteryhealth.data.framework.GrantedBatterySource
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
+import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
 import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.BatterySnapshot
@@ -43,7 +44,8 @@ class BatteryRepository @Inject constructor(
     private val designCapacity: DesignCapacityProvider,
     private val privileged: PrivilegedBatterySource,
     private val vendorSettings: VendorSettingsSource,
-    private val granted: GrantedBatterySource,
+    private val granted: GrantedReadings,
+    private val power: PowerManagerSource,
 ) {
     /**
      * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
@@ -191,6 +193,11 @@ class BatteryRepository @Inject constructor(
                 .privilegedReading(dumpAvailable)
                 .orElse { vendorSettings.batteryProtectEnabled() },
             protectionThresholdPct = dump?.protectionThresholdPct.privilegedReading(dumpAvailable),
+            // Public API, no permission, present on every device -- so these are populated
+            // unconditionally rather than behind any tier. Each is API-gated inside
+            // PowerManagerSource and reports Unsupported below its floor.
+            thermalStatus = power.thermalStatus(),
+            dischargePredictionMs = power.dischargePredictionMs(),
         )
     }
 

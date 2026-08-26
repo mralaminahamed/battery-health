@@ -63,6 +63,17 @@ data class BatterySnapshot(
     /** The charge percentage Battery Protect caps charging at when enabled, from
      * `mProtectionThreshold`. */
     val protectionThresholdPct: Reading<Int> = Reading.NeedsPrivilegedAccess,
+    /**
+     * Thermal throttling state from `PowerManager`, 0 (none) to 6 (shutdown). Public API,
+     * no permission, every device. Sustained heat is the largest driver of capacity loss
+     * after time, so this is battery data rather than a curiosity.
+     *
+     * Defaults to [Reading.Unsupported] rather than [Reading.NeedsPrivilegedAccess]: no
+     * privilege can supply it, so inviting the user to unlock something would be a lie.
+     */
+    val thermalStatus: Reading<Int> = Reading.Unsupported,
+    /** The platform's own estimate of time left on this charge, in milliseconds. */
+    val dischargePredictionMs: Reading<Long> = Reading.Unsupported,
 ) {
     /**
      * Instantaneous power in milliwatts, derived from voltage (mV) and current (µA).

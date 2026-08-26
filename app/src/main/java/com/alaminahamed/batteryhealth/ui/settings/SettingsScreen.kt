@@ -84,9 +84,11 @@ object SettingsAdbPortTags {
 fun SettingsScreen(
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = hiltViewModel(),
+    diagnosticsViewModel: DiagnosticsViewModel = hiltViewModel(),
     onDesignLanguageChange: (DesignLanguageChoice) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
+    val diagnostics by diagnosticsViewModel.state.collectAsState()
     SettingsContent(
         state = state,
         modifier = modifier,
@@ -94,6 +96,8 @@ fun SettingsScreen(
         onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
         onSaveAdbPort = viewModel::setAdbPort,
         onDesignLanguageChange = onDesignLanguageChange,
+        diagnostics = diagnostics,
+        onRunDiagnostics = diagnosticsViewModel::run,
     )
 }
 
@@ -105,6 +109,16 @@ fun SettingsContent(
     onClearDesignCapacity: () -> Unit = {},
     onSaveAdbPort: (Int) -> Unit = {},
     onDesignLanguageChange: (DesignLanguageChoice) -> Unit = {},
+    /**
+     * Diagnostics state and its trigger arrive as parameters rather than being pulled
+     * from a `hiltViewModel()` inside this composable. `SettingsContent` is exercised
+     * directly by `SettingsScreenTest` with a plain Compose rule and no Hilt harness --
+     * see this file's own doc -- and a `hiltViewModel()` call anywhere inside it breaks
+     * every one of those tests at once, which is exactly what happened when the
+     * diagnostics card was first added.
+     */
+    diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
+    onRunDiagnostics: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
@@ -146,7 +160,7 @@ fun SettingsContent(
             }
         }
 
-        DiagnosticsCard()
+        DiagnosticsCard(diagnostics, onRunDiagnostics)
 
         OneUiCard {
             SectionHeader("Design capacity")
@@ -409,8 +423,7 @@ private fun AdbPortDialog(
  * platform flag can flip across an OS update.
  */
 @Composable
-private fun DiagnosticsCard(viewModel: DiagnosticsViewModel = hiltViewModel()) {
-    val state by viewModel.state.collectAsState()
+private fun DiagnosticsCard(state: DiagnosticsUiState, onRun: () -> Unit) {
     val colors = LocalOneUiColors.current
 
     OneUiCard {
@@ -423,7 +436,7 @@ private fun DiagnosticsCard(viewModel: DiagnosticsViewModel = hiltViewModel()) {
             color = colors.textSecondary,
         )
         Button(
-            onClick = viewModel::run,
+            onClick = onRun,
             enabled = !state.running,
             modifier = Modifier
                 .padding(top = 10.dp)

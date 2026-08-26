@@ -51,7 +51,7 @@ import javax.inject.Singleton
 class GrantedBatterySource @Inject constructor(
     @ApplicationContext private val context: Context,
     private val batteryManager: BatteryManager,
-) {
+) : GrantedReadings {
     /**
      * Whether the platform has actually granted the permission.
      *
@@ -72,13 +72,13 @@ class GrantedBatterySource @Inject constructor(
      * plausibility bound and the denial-versus-absence distinction already live there and
      * are tested there. A value outside 1..100 is refused rather than clamped.
      */
-    fun stateOfHealthPct(): Reading<Int> =
+    override fun stateOfHealthPct(): Reading<Int> =
         FrameworkStateOfHealth.read { id -> batteryManager.getIntProperty(id) }
 
-    fun manufacturingDateEpochDay(): Reading<Long> =
+    override fun manufacturingDateEpochDay(): Reading<Long> =
         dateProperty(BatteryPropertyId.ManufacturingDate)
 
-    fun firstUsageDateEpochDay(): Reading<Long> = dateProperty(BatteryPropertyId.FirstUsageDate)
+    override fun firstUsageDateEpochDay(): Reading<Long> = dateProperty(BatteryPropertyId.FirstUsageDate)
 
     /**
      * Reads one epoch-second date property and converts it to a calendar day.
