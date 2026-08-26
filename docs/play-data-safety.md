@@ -12,58 +12,39 @@ notes say where.
 | Do you provide a way for users to request that their data is deleted? | N/A — nothing is collected; uninstalling or Clear data removes everything |
 
 "Collect" in Play's definition means transmitting data off the device. This app transmits
-nothing: it makes no outbound network requests, and the only socket it ever opens goes to
-`127.0.0.1`.
+nothing: it makes no outbound network requests and opens no sockets at all.
 
 Battery samples and charge sessions are written to the app's private on-device storage
 (Room + DataStore). Under Play's definitions that is not collection, because it never leaves
 the device.
 
-**Evidence:** `PrivilegedShellLoopbackTest` fails the build if any production source
-constructs a socket outside `AdbConnection`, or constructs one with a named host rather than
-`InetAddress.getLoopbackAddress()`. There are no analytics, crash-reporting, advertising, or
-other third-party SDKs — `gradle/libs.versions.toml` contains only AndroidX, Google and Kotlin
-artifacts.
+**Evidence:** there are no analytics, crash-reporting, advertising, or other third-party SDKs —
+`gradle/libs.versions.toml` contains only AndroidX, Google and Kotlin artifacts. Neither build
+flavour declares `INTERNET`.
 
 ## Permission declarations
 
-### `INTERNET` — **not declared in the Play build**
+### `INTERNET` — **not declared in either flavour**
 
-The Play flavour compiles in no network code at all and ships without this permission. There
-is nothing to justify at review: the shipped package cannot open a socket to any address.
+An earlier version of this app carried an on-device adb client that opened a loopback socket
+to reach permission-gated `dumpsys` output, and the `full` flavour declared `INTERNET` for
+that one purpose. That client, and every permission-gated shell read it existed to reach, has
+been removed: this app now asks for nothing beyond what a normal Android permission flow or a
+public API can supply. Neither flavour opens a socket, and neither declares `INTERNET`.
 
-The `full` flavour, distributed outside Google Play, declares it for one purpose — a socket to
-`127.0.0.1` so the optional privileged tier can reach the device's own `adbd`. Android
-enforces `INTERNET` at socket creation regardless of destination and does not exempt loopback.
+### `PACKAGE_USAGE_STATS`
 
-`PrivilegedShellLoopbackTest` fails the build if any production source constructs a socket
-outside `AdbConnection`, or constructs one with a named host rather than
-`InetAddress.getLoopbackAddress()`.
+Appop-gated, not a runtime-dialog permission. Declaring it grants nothing by itself; the user
+must flip it on from the system's own Settings → Apps → Special access → Usage access screen,
+which this app deep-links to (`Settings.ACTION_USAGE_ACCESS_SETTINGS`). Held or not, the app
+behaves the same way it does for any other permission it lacks: the affected section reports
+its state honestly rather than nagging.
 
-### `BATTERY_STATS`
+### `POST_NOTIFICATIONS`
 
-Declared, and **not held by default**. Its protection level is
-`signature|privileged|development`, so it can never be granted by a user tapping
-something and is never granted on a normal install. The `development` flag means it can be
-granted over adb:
-
-```
-adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STATS
-```
-
-That is an explicit, deliberate action taken by the device's owner from their own computer.
-Ungranted, the declaration is inert: the app behaves exactly as it does without it, and the
-three affected readings (state of health, first-use date, manufacturing date) report as
-unavailable.
-
-Justification if a reviewer asks: the app's stated purpose is reporting battery health
-honestly, and these are the values that make that possible. It does not fail, degrade, or
-nag when the permission is absent — it says the readings are unavailable, which is the same
-thing it does for every other value it cannot obtain.
-
-Nothing read under this permission leaves the device. The battery serial number is
-deliberately **not** recorded even into the app's own diagnostic report — it is a
-per-device identifier, and the report is meant to be shareable.
+A real runtime dialog (API 33+), requested only when the user opts in to the charge-session
+recorder. The notification it shows is the honest signal that recording is running in the
+background.
 
 ### `RECEIVE_BOOT_COMPLETED`
 
@@ -74,10 +55,35 @@ interrupted by a reboot.
 
 The `play` product flavour deliberately omits this. It is declared only in the `full` flavour,
 which is distributed outside Google Play, where it resolves package names to app labels and
-icons for per-app battery attribution.
+icons for the Apps screen's per-uid CPU-time list.
 
-If a Play submission ever needs it, be aware that Play does not accept battery attribution as
-a permitted use of `QUERY_ALL_PACKAGES`. Keep it out of the `play` flavour.
+If a Play submission ever needs it, be aware that Play does not accept this as a permitted use
+of `QUERY_ALL_PACKAGES` for a battery tool's declared category. Keep it out of the `play`
+flavour.
+
+## What this app no longer declares, and why
+
+Two permissions were removed entirely. Both were `signature|privileged|development` protection
+level, meaning the only way any app can ever hold either is `adb shell pm grant` run from a
+computer — never a tap by the user, on any device, at any time.
+
+- **`BATTERY_STATS`** used to unlock state of health, first-use date and manufacturing date,
+  read directly from `BatteryManager` once granted. Declaring a permission that can never be
+  held by a real installed copy of this app was declaring it for nothing, so it is gone. Those
+  three readings now report as unavailable unconditionally (state of health has a narrow,
+  genuinely unprivileged exception — see below).
+- **`DUMP`** was declared to test whether it opened a real per-app battery-attribution path
+  when combined with `PACKAGE_USAGE_STATS`. It did, but the same adb-only ceiling applies, so
+  it is gone too, and nothing in the shipped app depends on it having ever been declared.
+
+Removing both took an on-device adb client and a root shell out of the app entirely — neither
+transport nor anything that consumed their output remains. This is not a degraded state the
+app works around; it is the app's permanent, only state now, for every user.
+
+**State of health's exception:** AOSP checks a platform "state of health is public" flag
+before enforcing `BATTERY_STATS` on that one specific property. On a build/device where that
+flag is set, this app reads it with no permission at all (`FrameworkStateOfHealth`) — a
+genuine, unprivileged public-API read, not a leftover from the removed permission.
 
 ## Sensitive-permission summary
 
@@ -87,14 +93,10 @@ foreground-service notification.
 
 ## Points a reviewer may raise
 
-**"The app instructs users to enable ADB debugging."** The privileged tier is optional. The
-app is fully functional without it and reports the affected metrics as unavailable rather than
-estimating them. When enabled, it acts as a client to the user's own device's `adbd` over
-loopback, authenticating with an RSA key held non-exportably in the Android Keystore.
+**"Does the app instruct users to enable ADB debugging, root their device, or run a shell
+command?"** No, and it never has an active code path that could: there is no adb client, no
+root shell, and no permission declared that only a computer could grant. Every permission this
+app declares is either install-time (granted automatically) or reachable entirely from within
+the app or the system's own Settings app.
 
-The privileged surface is exactly two commands, `dumpsys battery` and
-`dumpsys batterystats --checkin`, compiled in as constants. No method in the codebase accepts
-a command string, so no caller-supplied or data-derived text can reach a shell. This is a
-structural property, not a filter that could be bypassed.
-
-**"Why does a battery app need INTERNET?"** The Play build does not have it. See above.
+**"Why does a battery app need INTERNET?"** It doesn't, and neither flavour declares it.

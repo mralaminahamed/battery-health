@@ -294,12 +294,12 @@
   </div>
 
   <div class="note">
-    <span class="label">Unverified</span>
+    <span class="label">Superseded</span>
     <p>
-      The privileged tier — the ADB handshake, Keystore signing, the authorisation prompt — has
-      never successfully run on real hardware. It is covered by 265 unit tests against a
-      protocol-speaking fake daemon, which is not the same claim. Finishing the on-device pass
-      before you publish is strongly advised.
+      This guide originally carried a note about verifying the privileged tier — an on-device
+      adb client and root shell — on real hardware before publishing. That tier has since been
+      removed entirely: the app now asks for nothing beyond a normal Android permission flow or
+      a public API, and there is no adb/root setup step left to verify.
     </p>
   </div>
 
@@ -522,23 +522,17 @@
   <div class="step">
     <span class="num">12</span>
     <div>
-      <h3>App access — do not skip this one</h3>
+      <h3>App access</h3>
       <p class="where">Policy → App content → App access</p>
       <p>
-        The privileged tier is off until a user runs a setup step. A reviewer who launches the app
-        cold sees most metrics reporting unavailable, and may reasonably conclude it is broken.
+        Nothing in the app is gated behind a setup step any more — there is no privileged tier
+        left to enable. A reviewer who launches the app cold sees every screen render fully:
+        the measured-health trend once a design capacity is known, and an honest "not available
+        on this device" for the handful of fields (first-use date, manufacturing date, BSOH)
+        that no permission this app can hold will ever unlock.
       </p>
-      <p>Choose <strong>All or some functionality is restricted</strong> and give the reviewer instructions:</p>
-<pre>Advanced battery metrics (state of health, first-use date) require a
-one-time setup, because Android restricts them to system apps.
-
-1. Enable Developer options, then USB debugging.
-2. From a computer with adb installed, run:  adb tcpip 5555
-3. Open the app and tap "Unlock more readings".
-4. Approve the "Allow USB debugging?" prompt shown on the device.
-
-No account or credentials are needed. Without this the app still works
-and honestly reports the affected metrics as unavailable.</pre>
+      <p>Choose <strong>All functionality is available without special access</strong>. No
+      reviewer instructions are needed.</p>
     </div>
   </div>
 
@@ -617,8 +611,8 @@ work.</pre>
       <p class="where">Test and release → Testing → Internal testing</p>
       <p>
         Up to 100 testers, available within minutes, and it does not go through full review. Use
-        it to confirm the signed bundle installs and the privileged tier works from a real Play
-        install — not a sideloaded debug build.
+        it to confirm the signed bundle installs and the Permissions section in Settings behaves
+        correctly from a real Play install — not a sideloaded debug build.
       </p>
       <p>
         This also surfaces anything R8 broke in the release build that debug never exercised.
@@ -656,24 +650,17 @@ work.</pre>
 
   <h2>Risks specific to this app</h2>
 
-  <div class="note care">
-    <span class="label">Policy · genuinely uncertain</span>
+  <div class="note">
+    <span class="label">Policy · resolved by removal</span>
     <p>
-      An app that instructs users to enable ADB debugging and then acts as an ADB client against
-      its own device sits in unsettled territory under
-      <strong>Device and Network Abuse</strong>, which covers circumventing the Android permission
-      model. Shizuku-based apps exist on Play, but this shape is different — the app is the client
-      itself.
-    </p>
-    <p>
-      Two facts are worth having ready if it is questioned. The privileged surface is exactly two
-      commands compiled in as constants, with no method anywhere accepting a command string, so it
-      is structurally incapable of running anything else. And the tier is entirely optional — the
-      app works without it and says so rather than estimating.
-    </p>
-    <p>
-      A rejection here is not fatal but costs a review cycle. The internal track lets you learn
-      this cheaply.
+      This section used to flag a genuine, unsettled risk under <strong>Device and Network
+      Abuse</strong>: an app that instructed users to enable ADB debugging and then acted as an
+      ADB client against its own device, which covers circumventing the Android permission
+      model. That entire mechanism — the on-device adb client, the root-shell fallback, and
+      every instruction that told a user to connect a computer or enable USB debugging — has
+      since been removed. The app now asks for nothing beyond a normal runtime-permission
+      dialog or a deep link to a system Settings screen, the same shape as any ordinary Play
+      app, so this risk no longer applies.
     </p>
   </div>
 

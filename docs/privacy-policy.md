@@ -1,6 +1,6 @@
 # Privacy Policy — Battery Health
 
-**Last updated: 25 August 2026**
+**Last updated: 26 August 2026**
 
 Battery Health does not collect, transmit, or share your personal data. Everything the
 app records stays on your device.
@@ -32,11 +32,9 @@ local settings file that no other app can read. None of it is uploaded anywhere.
 
 **Your settings**
 
-- Design-capacity override, if you set one
 - Whether background recording is enabled
 - Preferred current units
-- The ADB port the privileged tier connects to
-- Whether root access was previously granted
+- Your chosen appearance (One UI or Material)
 
 ## What the app does not do
 
@@ -49,60 +47,52 @@ local settings file that no other app can read. None of it is uploaded anywhere.
 
 ## About permissions
 
-The app on Google Play declares **no Internet permission at all**. It cannot open a network
-socket, to any address, even in principle — the code that once did so is not compiled into
-that build.
+**Neither build the app ships declares an Internet permission.** The app cannot open a
+network socket, to any address, even in principle. An earlier version of this app carried an
+optional on-device component that opened a loopback socket to reach data gated behind a
+system-level permission; that component has been removed entirely, along with the permission
+declaration it needed.
 
-A separate build distributed outside Google Play does declare `android.permission.INTERNET`,
-and only for one purpose: opening a socket to `127.0.0.1`, your device talking to itself.
-Android enforces that permission at socket creation regardless of destination, and loopback is
-not exempt, so an app cannot connect to its own device without holding it. No bytes leave the
-handset either way.
+Every permission the app declares today is one you can grant, deny, or leave alone entirely
+from within the app or from Android's own Settings app — never from a computer, and never by
+enabling developer options or USB debugging:
 
-That separation is mechanical rather than promised. An automated test fails the build if any
-production source constructs a network socket that could reach an address other than loopback.
+- **Notifications** (`POST_NOTIFICATIONS`) — asked through a normal system dialog, only if you
+  turn on background charge-session recording. It shows the notification that recording is
+  running; nothing else.
+- **Usage access** (`PACKAGE_USAGE_STATS`) — off by default. You can turn it on from Android
+  Settings → Apps → Special access → Usage access, which the app can open for you, or leave it
+  off; the app works either way.
+- A handful of other permissions (background service, restarting sampling after your phone
+  reboots, and — on the build distributed outside Google Play — reading installed app names to
+  label the per-app CPU-time list) are granted automatically at install and need no action from
+  you.
 
-### `BATTERY_STATS`
+The Settings screen inside the app lists every permission it declares, its current state, and
+the one thing (if anything) that would change it.
 
-The app declares this permission and is **not granted it** on a normal install. Android
-reserves it for system applications, and no user action inside the app can obtain it.
+### State of health, first-use date and manufacturing date
 
-It can be granted deliberately by the device's owner, from their own computer, with a single
-command. Ungranted, the declaration does nothing and the app behaves exactly as it would
-without it, reporting the affected values as unavailable.
+Android reserves these behind a system-level permission (`BATTERY_STATS`) that this app cannot
+be granted through a normal install, on any device, by any action you or the app can take. The
+app does not declare this permission at all — declaring one it can never hold would be
+pointless — so these two dates are simply reported as unavailable. State of health has one
+narrow exception: on some devices, the platform itself makes that one figure available to any
+app with no permission at all, and where that is true, this app reads and shows it.
 
-Where the permission is granted, the app reads state of health, first-use date and
-manufacturing date directly from Android's own `BatteryManager`. Nothing read this way leaves
-the device. The battery's serial number is deliberately **not** recorded even into the app's
-own diagnostic report, because that report is meant to be shareable and a serial identifies
-one physical device.
+Nothing this app reads from any Android API leaves your device. The battery's serial number is
+deliberately **not** recorded even into the app's own diagnostic report, because that report
+is meant to be shareable and a serial identifies one physical device.
 
-## About the privileged tier
+## Per-app CPU time
 
-**The Google Play build has none.** It contains no debug-bridge client, no `su` handling, and
-no network permission. Everything it shows comes from ordinary Android APIs, from settings the
-manufacturer publishes to any app, or from measurements the app takes itself.
+The build distributed outside Google Play declares `QUERY_ALL_PACKAGES` in order to display
+names and icons alongside the Apps screen's per-uid CPU-time list. It uses this only to turn a
+package name into something human-readable on screen. The list of your installed applications
+is never recorded, transmitted, or retained.
 
-A separate build distributed outside Google Play carries an optional tier for two values that
-have no public API at all: the manufacturer's own accumulated cycle count and its second
-health figure. Where a user enables it, that build reads them by running two fixed commands,
-`dumpsys battery` and `dumpsys batterystats --checkin`, through the debug bridge or through
-`su` on a rooted device. Those two commands are the entire privileged surface: they are
-compiled in as constants, and there is no code path by which any other command can be run.
-
-To authenticate to the debug bridge, that build generates an RSA key inside the Android
-Keystore. The key is marked non-exportable, so it cannot be read out of the device's
-hardware-backed keystore by the app or by anything else, and it is used for nothing but this
-local connection.
-
-## Per-app battery attribution
-
-One distribution of the app (the "full" build, published outside Google Play) declares
-`QUERY_ALL_PACKAGES` in order to display names and icons alongside per-app battery usage. It
-uses this only to turn a package name into something human-readable on screen. The list of
-your installed applications is never recorded, transmitted, or retained.
-
-The Google Play build does not declare this permission.
+The Google Play build does not declare this permission, and its own CPU-time list is limited
+to apps Android already makes visible to any app by default.
 
 ## Your data, your control
 
