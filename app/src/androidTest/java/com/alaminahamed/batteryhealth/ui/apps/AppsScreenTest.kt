@@ -8,56 +8,26 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import com.alaminahamed.batteryhealth.data.apps.AppCpuRow
 import com.alaminahamed.batteryhealth.data.apps.AppLabel
 import com.alaminahamed.batteryhealth.data.apps.EstimatedAppRow
 import com.alaminahamed.batteryhealth.data.apps.EstimatedDrain
-import com.alaminahamed.batteryhealth.domain.AppBucket
 import com.alaminahamed.batteryhealth.domain.Reading
 import com.alaminahamed.batteryhealth.domain.Source
-import com.alaminahamed.batteryhealth.domain.UidKind
 import com.alaminahamed.batteryhealth.ui.theme.BatteryHealthTheme
 import org.junit.Rule
 import org.junit.Test
 
 /**
- * This screen has two independent per-app sections -- [CpuTimeSection] (per-uid CPU time,
- * genuinely unreachable through a normal install, since it needs `BATTERY_STATS`) and
- * [EstimatedDrainSection] (a per-app drain *estimate* apportioned by foreground screen
- * time, gated only on `PACKAGE_USAGE_STATS`, an ordinary Settings toggle). Both sections
- * render on the same screen at once, so every fixture below sets both
- * [AppsUiState.cpuRows] and [AppsUiState.estimatedDrainRows] explicitly rather than
- * leaning on either field's default -- two sections that can each say "Measuring" at the
- * same time is exactly the kind of collision an implicit default invites.
+ * This screen has one per-app section, [EstimatedDrainSection]: a per-app drain
+ * *estimate* apportioned by foreground screen time, gated only on `PACKAGE_USAGE_STATS`,
+ * an ordinary Settings toggle. It used to carry a second, independent section,
+ * `CpuTimeSection`, for per-uid CPU time -- deleted along with `UidCpuTimeSource` because
+ * it needed `BATTERY_STATS`, which this app has never declared and can never reach on a
+ * normal install, so it could only ever render its own permanent absence.
  */
 class AppsScreenTest {
 
     @get:Rule val compose = createComposeRule()
-
-    /** A stable cpuRows value for tests that are really about the estimate section, and
-     * vice versa -- distinct text from every state the section under test actually cycles
-     * through, so accidentally reading the *other* section's text could never pass a test
-     * for the wrong reason. */
-    private val stableCpuRows = Reading.NeedsPrivilegedAccess
-    private val stableEstimateRows = Reading.NeedsUsageAccess
-
-    private fun cpuRow(
-        uid: Int,
-        kind: UidKind = UidKind.App,
-        bucket: AppBucket = AppBucket.Visible,
-        label: AppLabel = AppLabel.Resolved("Camera", icon = null),
-        totalCpuMs: Long = 65_000,
-        sharePct: Double = 40.0,
-    ) = AppCpuRow(
-        uid = uid,
-        kind = kind,
-        bucket = bucket,
-        label = label,
-        totalCpuMs = totalCpuMs,
-        userCpuMs = totalCpuMs / 2,
-        systemCpuMs = totalCpuMs / 2,
-        sharePct = sharePct,
-    )
 
     private fun estimatedRow(
         packageName: String,
@@ -74,102 +44,8 @@ class AppsScreenTest {
     )
 
     @Test
-    fun needsPrivilegedAccessShowsTheHonestReason() {
-        val state = AppsUiState(cpuRows = Reading.NeedsPrivilegedAccess, estimatedDrainRows = stableEstimateRows)
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onNodeWithText("Needs the one-time permission").assertIsDisplayed()
-    }
-
-    @Test
-    fun unsupportedShowsNotAvailableOnThisDevice() {
-        val state = AppsUiState(cpuRows = Reading.Unsupported, estimatedDrainRows = stableEstimateRows)
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onNodeWithText("Not available on this device").assertIsDisplayed()
-    }
-
-    @Test
-    fun notYetMeasuredShowsMeasuring() {
-        val state = AppsUiState(cpuRows = Reading.NotYetMeasured, estimatedDrainRows = stableEstimateRows)
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onNodeWithText("Measuring").assertIsDisplayed()
-    }
-
-    @Test
-    fun anEmptyButAvailableListShowsAnHonestEmptyStateNotAnAbsenceReason() {
-        val state = AppsUiState(
-            cpuRows = Reading.Available(emptyList(), Source.Framework),
-            estimatedDrainRows = stableEstimateRows,
-        )
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onNodeWithText("No CPU time recorded yet").assertIsDisplayed()
-    }
-
-    /**
-     * One row rendered by default (the "Visible" tab), with its resolved label and
-     * formatted CPU time -- proves the whole chain from [AppsUiState.cpuRows] through
-     * [AppCpuRow] to the rendered row text.
-     */
-    @Test
-    fun boundStateRendersTheDefaultBucketWithATabCountAndTheRowsText() {
-        val state = AppsUiState(
-            cpuRows = Reading.Available(
-                listOf(
-                    cpuRow(uid = 10106, bucket = AppBucket.Visible, totalCpuMs = 65_000),
-                    cpuRow(
-                        uid = 1000,
-                        kind = UidKind.System,
-                        bucket = AppBucket.System,
-                        label = AppLabel.Unknown,
-                        totalCpuMs = 5_000,
-                    ),
-                ),
-                Source.Framework,
-            ),
-            estimatedDrainRows = stableEstimateRows,
-        )
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        // The default tab is Visible, carrying the one row placed in it.
-        compose.onNodeWithText("Visible 1").assertIsDisplayed()
-        compose.onNodeWithText("System 1").assertIsDisplayed()
-        compose.onNodeWithText("Camera").assertIsDisplayed()
-        compose.onNodeWithText("1 m 5 s").assertIsDisplayed()
-    }
-
-    /** Switching tabs shows a different bucket's rows, and an unresolved uid falls back
-     * to its raw uid rather than an invented name. */
-    @Test
-    fun switchingToTheSystemTabShowsItsOwnRowsWithAnUnresolvedLabelAsUid() {
-        val state = AppsUiState(
-            cpuRows = Reading.Available(
-                listOf(
-                    cpuRow(uid = 10106, bucket = AppBucket.Visible),
-                    cpuRow(
-                        uid = 1000,
-                        kind = UidKind.System,
-                        bucket = AppBucket.System,
-                        label = AppLabel.Unknown,
-                    ),
-                ),
-                Source.Framework,
-            ),
-            estimatedDrainRows = stableEstimateRows,
-        )
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onNodeWithTag("cpu-tab-System").performClick()
-        compose.onNodeWithText("uid 1000").assertIsDisplayed()
-    }
-
-    // -- EstimatedDrainSection -----------------------------------------------------------
-
-    @Test
     fun estimateNeedsUsageAccessShowsTheDisclosureCardBeforeItsOwnButton() {
-        val state = AppsUiState(cpuRows = stableCpuRows, estimatedDrainRows = Reading.NeedsUsageAccess)
+        val state = AppsUiState(estimatedDrainRows = Reading.NeedsUsageAccess)
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
         compose.onNodeWithTag(AppsScreenTags.USAGE_ACCESS_CARD).assertIsDisplayed()
@@ -181,7 +57,7 @@ class AppsScreenTest {
     @Test
     fun clickingTheUsageAccessButtonInvokesTheCallback() {
         var invoked = false
-        val state = AppsUiState(cpuRows = stableCpuRows, estimatedDrainRows = Reading.NeedsUsageAccess)
+        val state = AppsUiState(estimatedDrainRows = Reading.NeedsUsageAccess)
         compose.setContent {
             BatteryHealthTheme { AppsContent(state, onOpenUsageAccessSettings = { invoked = true }) }
         }
@@ -192,7 +68,7 @@ class AppsScreenTest {
 
     @Test
     fun estimateNotYetMeasuredShowsMeasuringWithNoDisclosureCard() {
-        val state = AppsUiState(cpuRows = stableCpuRows, estimatedDrainRows = Reading.NotYetMeasured)
+        val state = AppsUiState(estimatedDrainRows = Reading.NotYetMeasured)
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
         compose.onNodeWithText("Measuring").assertIsDisplayed()
@@ -231,7 +107,6 @@ class AppsScreenTest {
             windowEndMs = 10_620_000L, // 2 h 57 m
         )
         val state = AppsUiState(
-            cpuRows = stableCpuRows,
             estimatedDrainRows = Reading.Available(drain, Source.Inferred),
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
@@ -273,7 +148,6 @@ class AppsScreenTest {
             windowEndMs = 3_600_000L,
         )
         val state = AppsUiState(
-            cpuRows = stableCpuRows,
             estimatedDrainRows = Reading.Available(drain, Source.Inferred),
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
@@ -305,7 +179,6 @@ class AppsScreenTest {
             windowEndMs = 3_600_000L,
         )
         val state = AppsUiState(
-            cpuRows = stableCpuRows,
             estimatedDrainRows = Reading.Available(drain, Source.Inferred),
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }

@@ -2,19 +2,15 @@ package com.alaminahamed.batteryhealth.ui.apps
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.alaminahamed.batteryhealth.data.apps.AppCpuRowMapper
 import com.alaminahamed.batteryhealth.data.apps.AppLabelResolver
 import com.alaminahamed.batteryhealth.data.apps.EstimatedDrain
 import com.alaminahamed.batteryhealth.data.apps.ForegroundUsageSource
-import com.alaminahamed.batteryhealth.data.apps.UidCpuTimeSource
 import com.alaminahamed.batteryhealth.data.local.SampleDao
 import com.alaminahamed.batteryhealth.data.repo.EstimateWindow
 import com.alaminahamed.batteryhealth.data.repo.EstimatedDrainReading
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.alaminahamed.batteryhealth.data.settings.UsageAccessState
-import com.alaminahamed.batteryhealth.domain.AppCpuRanking
 import com.alaminahamed.batteryhealth.domain.Reading
-import com.alaminahamed.batteryhealth.domain.map
 import com.alaminahamed.batteryhealth.sampling.NowMs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.BufferOverflow
@@ -28,8 +24,6 @@ import javax.inject.Inject
 
 @HiltViewModel
 class AppsViewModel @Inject constructor(
-    private val cpuTimes: UidCpuTimeSource,
-    private val cpuRowMapper: AppCpuRowMapper,
     private val sampleDao: SampleDao,
     private val designCapacityProvider: DesignCapacityProvider,
     private val usageAccessState: UsageAccessState,
@@ -39,12 +33,11 @@ class AppsViewModel @Inject constructor(
 ) : ViewModel() {
 
     /**
-     * [UidCpuTimeSource.cpuTimes] is a plain, synchronous read -- not a `Flow` -- so
-     * unlike a privileged-state-driven `combine`, nothing re-invokes it on its own.
-     * This ticks once on construction (replay 1, so the very first collector still gets
-     * an answer) and again every time [refresh] is called, which is what lets the Apps
-     * screen's own `ON_RESUME` pick up CPU time -- and the per-app drain estimate below --
-     * that changed while the app was backgrounded.
+     * Nothing here is a `Flow` -- [estimatedDrain] does a plain, synchronous-per-call read
+     * each time it runs. This ticks once on construction (replay 1, so the very first
+     * collector still gets an answer) and again every time [refresh] is called, which is
+     * what lets the Apps screen's own `ON_RESUME` pick up the per-app drain estimate that
+     * changed while the app was backgrounded.
      */
     private val refreshRequests = MutableSharedFlow<Unit>(
         replay = 1,
@@ -52,12 +45,7 @@ class AppsViewModel @Inject constructor(
     ).apply { tryEmit(Unit) }
 
     val state: StateFlow<AppsUiState> = refreshRequests
-        .map {
-            val cpuRows = cpuTimes.cpuTimes()
-                .map(AppCpuRanking::ranked)
-                .map { ranked -> ranked.map(cpuRowMapper::toRow) }
-            AppsUiState(cpuRows = cpuRows, estimatedDrainRows = estimatedDrain())
-        }
+        .map { AppsUiState(estimatedDrainRows = estimatedDrain()) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -92,9 +80,9 @@ class AppsViewModel @Inject constructor(
     }
 
     /**
-     * Re-reads per-uid CPU time and the per-app drain estimate. Called from the Apps
-     * screen's own `ON_RESUME`: both accumulate while this app is backgrounded, and
-     * neither has a way to push an update on its own.
+     * Re-reads the per-app drain estimate. Called from the Apps screen's own `ON_RESUME`:
+     * it accumulates while this app is backgrounded and has no way to push an update on
+     * its own.
      */
     fun refresh() {
         refreshRequests.tryEmit(Unit)

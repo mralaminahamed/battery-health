@@ -2,7 +2,6 @@ package com.alaminahamed.batteryhealth.ui.apps
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,12 +40,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.Icon
 import androidx.compose.ui.res.painterResource
 import com.alaminahamed.batteryhealth.R
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.saveable.rememberSaveable
-import com.alaminahamed.batteryhealth.domain.AppBucket
-import com.alaminahamed.batteryhealth.data.apps.AppCpuRow
 import com.alaminahamed.batteryhealth.data.apps.AppLabel
 import com.alaminahamed.batteryhealth.data.apps.EstimatedAppRow
 import com.alaminahamed.batteryhealth.data.apps.EstimatedDrain
@@ -55,14 +48,11 @@ import com.alaminahamed.batteryhealth.domain.Source
 import com.alaminahamed.batteryhealth.ui.components.KeyValueRow
 import com.alaminahamed.batteryhealth.ui.components.OneUiCard
 import com.alaminahamed.batteryhealth.ui.components.SectionHeader
-import com.alaminahamed.batteryhealth.domain.UidKind
 import com.alaminahamed.batteryhealth.ui.components.Value
 import com.alaminahamed.batteryhealth.ui.format.Formatters
 import com.alaminahamed.batteryhealth.ui.health.SourceChip
 import com.alaminahamed.batteryhealth.ui.settings.openUsageAccessSettings
 import com.alaminahamed.batteryhealth.ui.theme.LocalDesignLanguage
-import java.util.Locale
-import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 
 object AppsScreenTags {
     const val ROOT = "apps-root"
@@ -72,23 +62,26 @@ object AppsScreenTags {
 }
 
 /**
- * The fourth navigation destination: two independent per-app views.
+ * The fourth navigation destination: a per-app view built entirely on permissions an
+ * ordinary install can actually grant.
  *
  * This screen used to lead with per-uid battery power from `dumpsys batterystats
  * --checkin`, reached through a privileged adb or root shell. That shell tier is gone --
  * this app now asks for nothing beyond a normal Android permission flow, and neither adb
  * nor root is either -- so that mAh figure has no source left at any price and the rows
- * that rendered it ([com.alaminahamed.batteryhealth.data.apps.AppRow]`,
- * `AppRowMapper`, `AppPowerAggregator`) were deleted along with it. [CpuTimeSection] is
- * what remains from that removal: per-uid CPU time still needs `BATTERY_STATS`, which is
- * just as unreachable through a normal install, so it reads "Needs the one-time
- * permission" for the same reason the old power rows would have.
+ * that rendered it (`AppRow`, `AppRowMapper`, `AppPowerAggregator`) were deleted along
+ * with it. A later per-uid CPU-time section ([EstimatedDrainSection]'s own predecessor,
+ * `CpuTimeSection`) filled the same slot from `SystemHealthManager.takeUidSnapshot`, but
+ * that needs `BATTERY_STATS` for any uid but this app's own -- grantable only by `adb
+ * shell pm grant`, which this app has never declared and will never ask anyone to run --
+ * so it was permanently stuck reading "Needs the one-time permission" on every real
+ * install and was deleted along with the shell tier it depended on in spirit.
  *
- * [EstimatedDrainSection] is this app's actual answer to the same question `CpuTimeSection`
- * can no longer give one for: a per-app battery-drain *estimate*, apportioned from this
- * app's own measured discharge by how long each package held the foreground.
- * `PACKAGE_USAGE_STATS` is appop-gated behind an ordinary Settings toggle -- no adb, no
- * root, no companion app -- and is the only route left to per-app data at all.
+ * [EstimatedDrainSection] is this app's actual answer to the same per-app question: a
+ * per-app battery-drain *estimate*, apportioned from this app's own measured discharge by
+ * how long each package held the foreground. `PACKAGE_USAGE_STATS` is appop-gated behind
+ * an ordinary Settings toggle -- no adb, no root, no companion app -- and is the only
+ * route left to per-app data at all.
  */
 @Composable
 fun AppsScreen(modifier: Modifier = Modifier, viewModel: AppsViewModel = hiltViewModel()) {
@@ -126,182 +119,17 @@ fun AppsContent(
             .testTag(AppsScreenTags.ROOT)
             .verticalScroll(rememberScrollState()),
     ) {
-        CpuTimeSection(state.cpuRows)
         EstimatedDrainSection(state.estimatedDrainRows, onOpenUsageAccessSettings)
-    }
-}
-
-@Composable
-private fun AppRowIcon(kind: UidKind, label: AppLabel?) {
-    val colors = LocalOneUiColors.current
-    val drawable = (label as? AppLabel.Resolved)?.icon
-    if (drawable != null) {
-        val bitmap = remember(drawable) { drawable.toBitmap(width = 128, height = 128).asImageBitmap() }
-        Image(
-            bitmap = bitmap,
-            contentDescription = null,
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(8.dp)),
-        )
-    } else {
-        // A drawn icon, not a text glyph.
-        //
-        // A letter in a box reads as a different *kind* of row from one with a real
-        // launcher icon, even at identical dimensions -- text sits inside its own line
-        // box and never fills the slot the way an icon does. These vectors occupy the
-        // full 32dp square, so a row the app could not identify looks like a row, not
-        // like a smaller or lesser one.
-        //
-        // Each says what it actually is rather than standing in generically: a chip for
-        // part of the phone, a terminal for the shell uid, a broken ring for something
-        // this build could not identify at all. Nothing here is a plausible-looking app
-        // icon, which would be the one genuinely misleading option.
-        val isApp = kind == UidKind.App
-        val icon = when (kind) {
-            UidKind.System -> R.drawable.ic_row_system
-            UidKind.Shell -> R.drawable.ic_row_shell
-            UidKind.App -> R.drawable.ic_row_unidentified
-        }
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (isApp) colors.accent.copy(alpha = 0.18f) else colors.divider),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(icon),
-                contentDescription = null,
-                tint = if (isApp) colors.accent else colors.textSecondary,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-    }
-}
-
-/**
- * Per-app CPU time.
- *
- * Headed "CPU time" and never "battery use". `SystemHealthManager` is the only public
- * per-uid source, and on real hardware its power buckets are empty while its CPU time
- * buckets are populated and differentiated. Android's own per-app mAh figure is these
- * same times multiplied by `power_profile.xml` coefficients -- a model, computed behind a
- * permission wall. This app can do that arithmetic and does not, because a modelled number
- * shown beside measured ones, in the same list, is indistinguishable from a measurement.
- */
-@Composable
-private fun CpuTimeSection(rows: Reading<List<AppCpuRow>>) {
-    val colors = LocalOneUiColors.current
-    OneUiCard {
-        SectionHeader("CPU time by app")
-        Text(
-            text = "How long each app has held the CPU since the last full charge. This " +
-                "is time, not power — Android reports no per-app power figure to " +
-                "ordinary apps, and estimating one from CPU time would be a guess dressed " +
-                "as a measurement.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = colors.textSecondary,
-        )
-    }
-
-    val ranked = (rows as? Reading.Available)?.value
-    if (ranked != null && ranked.isNotEmpty()) {
-        // Tab state is remembered per composition rather than hoisted into AppsUiState:
-        // it is a view preference with no bearing on any reading, and putting it in the
-        // state flow would make every CPU refresh a reason to re-emit it.
-        var selected by rememberSaveable { mutableStateOf(AppBucket.Visible) }
-        val byBucket = remember(ranked) { ranked.groupBy { it.bucket } }
-
-        OneUiCard {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                AppBucket.entries.forEach { bucket ->
-                    val count = byBucket[bucket]?.size ?: 0
-                    TextButton(
-                        onClick = { selected = bucket },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("cpu-tab-${bucket.name}"),
-                    ) {
-                        Text(
-                            // The count is part of the label, not a badge: an empty tab
-                            // should be visibly empty before it is tapped, so nobody hunts
-                            // through three lists looking for rows that are not there.
-                            text = "${bucket.tabLabel()} $count",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (bucket == selected) colors.accent else colors.textSecondary,
-                        )
-                    }
-                }
-            }
-        }
-
-        val shown = byBucket[selected].orEmpty()
-        if (shown.isEmpty()) {
-            OneUiCard {
-                KeyValueRow(selected.emptyText(), showDivider = false) {}
-            }
-            return
-        }
-
-        OneUiCard {
-            shown.forEachIndexed { index, row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    AppRowIcon(row.kind, row.label)
-                    Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                        Text(
-                            text = cpuRowTitle(row),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = colors.textPrimary,
-                        )
-                        // Share stays relative to every visible row, not to the selected
-                        // tab: a percentage that changed when you switched tabs would be
-                        // describing the tab rather than the device.
-                        Text(
-                            text = String.format(Locale.US, "%.1f%% of visible CPU time", row.sharePct),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colors.textSecondary,
-                        )
-                    }
-                    Value(Formatters.cpuTime(row.totalCpuMs))
-                }
-                if (index != shown.lastIndex) HorizontalDivider(color = colors.divider)
-            }
-        }
-        return
-    }
-
-    // Every remaining case is an absence, and they are not interchangeable: a missing
-    // permission names what would unlock it, a device that has nothing is not
-    // actionable, and "measuring" says a figure is coming. Exhaustive so a fourth
-    // Reading case has to be answered here rather than falling into whichever branch is
-    // last.
-    val text = when (rows) {
-        Reading.NeedsPrivilegedAccess -> "Needs the one-time permission"
-        // Unreachable for cpuRows by construction -- UidCpuTimeSource never returns this
-        // absence, only EstimatedDrainSection's own Reading does -- but this stays
-        // exhaustive rather than an `else`, the same discipline every Reading `when` in
-        // this app is held to.
-        Reading.NeedsUsageAccess -> "Needs usage access"
-        Reading.NotYetMeasured -> "Measuring"
-        Reading.Unsupported -> "Not available on this device"
-        is Reading.Available -> "No CPU time recorded yet"
-    }
-    OneUiCard {
-        KeyValueRow("CPU time", showDivider = false) { Value(text) }
     }
 }
 
 /**
  * Per-app battery drain, *estimated* by apportioning this app's own measured discharge
- * across packages by how long each held the foreground -- the one per-app route left that
- * needs nothing beyond a normal Android permission flow, now that the privileged tier
- * behind [CpuTimeSection] is unreachable on every real install. See `EstimateWindow`,
- * `EstimatedAppDrain` and `EstimatedDrainReading` (`data.repo`) for the arithmetic and the
- * absence rules this section's own `when` mirrors.
+ * across packages by how long each held the foreground -- the only per-app route this app
+ * has, now that per-uid CPU time's privileged tier (`BATTERY_STATS`, unreachable on every
+ * real install) has been deleted along with the section that rendered it. See
+ * `EstimateWindow`, `EstimatedAppDrain` and `EstimatedDrainReading` (`data.repo`) for the
+ * arithmetic and the absence rules this section's own `when` mirrors.
  */
 @Composable
 private fun EstimatedDrainSection(
@@ -395,10 +223,10 @@ private fun UsageAccessCard(onOpenSettings: () -> Unit) {
 }
 
 /**
- * [EstimatedAppRow]'s own row rendering -- distinct from [CpuTimeSection]'s CPU rows, and
- * carrying its own [SourceChip] labelled "Estimated": an estimate must never borrow the
- * same styling a measured figure would use, so the mAh figure is rendered in the
- * secondary text colour with a leading `~`, never through [Value].
+ * [EstimatedAppRow]'s own row rendering, carrying its own [SourceChip] labelled
+ * "Estimated": an estimate must never borrow the same styling a measured figure would
+ * use, so the mAh figure is rendered in the secondary text colour with a leading `~`,
+ * never through [Value].
  *
  * The left side (icon, name, chip, caption) is weighted and the name/caption truncate
  * with an ellipsis; the trailing value column is not weighted, so it is measured at its
@@ -461,9 +289,9 @@ private fun EstimatedAppPowerRow(row: EstimatedAppRow, showDivider: Boolean) {
 }
 
 /** [EstimatedAppRow] has no system/shell equivalent -- every row it produces is, by
- * construction, one package usage stats reported foreground time for -- so this needs
- * only the single unresolved-icon shape [AppRowIcon] uses for an app row, never its
- * System/Shell branches. */
+ * construction, one package usage stats reported foreground time for -- so this only ever
+ * needs the resolved-icon-or-unidentified-glyph shape below, never a System/Shell
+ * branch. */
 @Composable
 private fun EstimatedAppRowIcon(row: EstimatedAppRow) {
     val colors = LocalDesignLanguage.current.colors
@@ -495,10 +323,10 @@ private fun EstimatedAppRowIcon(row: EstimatedAppRow) {
     }
 }
 
-/** Mirrors [cpuRowTitle]'s per-[AppLabel] cases, but [EstimatedAppRow] always has a real
- * [EstimatedAppRow.packageName] to fall back to (usage stats reports package names, never
- * an unnamed uid), so the [AppLabel.Unknown] case here shows the package name rather than
- * a uid -- there is no uid in this row's own data to name instead. */
+/** [EstimatedAppRow] always has a real [EstimatedAppRow.packageName] to fall back to
+ * (usage stats reports package names, never an unnamed uid), so the [AppLabel.Unknown]
+ * case here shows the package name rather than a uid -- there is no uid in this row's own
+ * data to name instead. */
 private fun estimatedPrimaryText(row: EstimatedAppRow): String = when (val label = row.label) {
     is AppLabel.Resolved -> label.label
     is AppLabel.PackageNameOnly -> label.packageName
@@ -528,30 +356,3 @@ private fun estimatedSecondaryText(row: EstimatedAppRow): String {
     }
 }
 
-/**
- * A CPU row's heading: the resolved app name where one was confirmed, otherwise the raw
- * package identifier, never something in between. An unresolved row shows what is
- * actually known about it rather than a guess.
- */
-private fun cpuRowTitle(row: AppCpuRow): String = when (val label = row.label) {
-    is AppLabel.Resolved -> label.label
-    is AppLabel.PackageNameOnly -> label.packageName
-    AppLabel.Unknown -> "uid ${row.uid}"
-}
-
-/** Tab titles. Short, because three have to fit across a phone's width. */
-private fun AppBucket.tabLabel(): String = when (this) {
-    AppBucket.Visible -> "Visible"
-    AppBucket.Hidden -> "Hidden"
-    AppBucket.System -> "System"
-}
-
-/**
- * What an empty tab says. Each explains why it is empty rather than sharing one blank
- * message -- "nothing here" invites the reader to assume the app failed to look.
- */
-private fun AppBucket.emptyText(): String = when (this) {
-    AppBucket.Visible -> "No launchable app has used the CPU yet"
-    AppBucket.Hidden -> "No background-only app has used the CPU yet"
-    AppBucket.System -> "No platform uid has used the CPU yet"
-}

@@ -51,34 +51,4 @@ class FormattersTest {
         assertEquals("94.7%", Formatters.percentShare(94.7271543693461))
         assertEquals("0.0%", Formatters.percentShare(0.0))
     }
-
-    // ---- CPU time ---------------------------------------------------------------------
-
-    /**
-     * The case this formatter exists for. `duration` floors to whole minutes, and the
-     * Apps ranking already drops uids with no CPU time -- so every row shown is non-zero,
-     * and "0 m" would make the list contradict itself.
-     */
-    @Test
-    fun subMinuteCpuTimeIsNotRenderedAsZeroMinutes() {
-        assertEquals("5 s", Formatters.cpuTime(5_000))
-        assertEquals("59 s", Formatters.cpuTime(59_999))
-    }
-
-    @Test
-    fun nonZeroButSubSecondSaysSoRatherThanZero() {
-        assertEquals("<1 s", Formatters.cpuTime(400))
-        assertEquals("<1 s", Formatters.cpuTime(1))
-    }
-
-    @Test
-    fun minutesKeepTheirSeconds() {
-        assertEquals("1 m 30 s", Formatters.cpuTime(90_000))
-    }
-
-    @Test
-    fun hoursDropToMinutesForReadability() {
-        // 1h 3m, the largest row observed on a real device.
-        assertEquals("1 h 3 m", Formatters.cpuTime(3_780_000))
-    }
 }

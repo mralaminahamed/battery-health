@@ -13,8 +13,9 @@ import javax.inject.Named
  * Same fully-qualified class name as `full`'s own `di/AppsModule.kt`; only one of the two
  * is ever on the compile path for a given build variant, so nothing outside this file --
  * not even Hilt's own generated code -- has to know which one was chosen. Everything
- * that depends on [AppLabelResolver] (`AppCpuRowMapper`, `AppsViewModel`) asks Hilt for
- * the interface and receives whichever concrete type this flavour bound.
+ * that depends on [AppLabelResolver] (`AppsViewModel`, and through it
+ * `EstimatedDrainReading`) asks Hilt for the interface and receives whichever concrete
+ * type this flavour bound.
  */
 @Module
 @InstallIn(SingletonComponent::class)
