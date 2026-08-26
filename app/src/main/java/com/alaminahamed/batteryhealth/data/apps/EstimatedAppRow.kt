@@ -1,13 +1,13 @@
 package com.alaminahamed.batteryhealth.data.apps
 
 /**
- * One row of the screen-time-derived drain estimate. A separate type from [AppCpuRow], not
- * a variant of it, because the two are keyed on genuinely different things: [AppCpuRow] is
- * keyed on a uid (from `PackageManager`'s own uid grouping, where a uid can own several
- * packages), and usage stats report package names with no uid at all. [label] is resolved
- * through the existing [AppLabelResolver], unchanged, so `play`'s reduced package
- * visibility degrades exactly as it already does for [AppCpuRow]. There is deliberately no
- * second label mechanism.
+ * One row of the screen-time-derived drain estimate. Keyed on a package name, not a uid --
+ * usage stats report package names with no uid at all, unlike the now-deleted per-uid
+ * CPU-time feature this screen used to also carry (`AppCpuRow`, keyed on a uid from
+ * `PackageManager`'s own uid grouping, where a uid can own several packages). [label] is
+ * resolved through the existing [AppLabelResolver], so `play`'s reduced package visibility
+ * degrades it the same way it degrades every other label this app resolves. There is
+ * deliberately no second label mechanism.
  */
 data class EstimatedAppRow(
     val packageName: String,
