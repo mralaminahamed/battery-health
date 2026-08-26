@@ -359,15 +359,24 @@ class BatteryRepository @Inject constructor(
     }
 
     fun measuredHealth(): Flow<Reading<HealthReport>> = combine(
-        // Filtered to charge sessions in SQL, not after the LIMIT: the window must be
-        // spent on rows that can actually qualify. A recency window across both session
-        // types burns half its rows on discharges before Kotlin ever sees them, which can
-        // push genuinely qualifying charges outside the window forever for a user whose
-        // recent charges are frequent top-ups.
+        // Each direction gets its own window rather than the two sharing one.
+        //
+        // A single recency window across both types burns rows on whichever direction
+        // happened more recently, which for a user who tops up often means charges could
+        // push every discharge out of view (or the reverse on a phone left off the
+        // charger for days). Separate windows mean neither direction can starve the other,
+        // and both are still filtered in SQL rather than after the LIMIT, so a window is
+        // never spent on rows that cannot qualify.
         sessionDao.observeCompletedSessionsOfType(SESSION_TYPE_CHARGE, limit = SESSION_WINDOW),
+        sessionDao.observeCompletedSessionsOfType(SESSION_TYPE_DISCHARGE, limit = SESSION_WINDOW),
         designCapacity.designCapacityMah,
-    ) { sessions, designMah ->
-        val observations = sessions
+    ) { charges, discharges, designMah ->
+        // Both directions measure the same quantity -- see `toObservation`, which is where
+        // they are made comparable -- so the estimator sees one pooled list and its
+        // MIN_SESSIONS requirement is satisfied by independent sessions of either kind.
+        // That roughly halves the wait for a first reading on a phone that is charged
+        // infrequently.
+        val observations = (charges + discharges)
             .mapNotNull { it.toDomain() }
             .map { it.toObservation() }
         estimator.estimate(observations, designMah)
