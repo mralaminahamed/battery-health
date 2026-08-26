@@ -11,8 +11,6 @@ import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
 import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.data.vendor.PowerProfileReader
 import com.alaminahamed.batteryhealth.data.framework.CapabilityProbe
-import com.alaminahamed.batteryhealth.data.framework.GrantedBatterySource
-import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import com.alaminahamed.batteryhealth.data.framework.IntPropertyReader
 import com.alaminahamed.batteryhealth.sampling.NowMs
 import dagger.Module
@@ -88,11 +86,6 @@ object AppModule {
     @Provides
     @Singleton
     fun provideVendorReadings(source: VendorSettingsSource): VendorReadings = source
-
-    /** Binds the real, permission-aware implementation for production. */
-    @Provides
-    @Singleton
-    fun provideGrantedReadings(source: GrantedBatterySource): GrantedReadings = source
 
     @Provides
     @Singleton

@@ -1,180 +1,133 @@
 package com.alaminahamed.batteryhealth.ui.apps
 
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import com.alaminahamed.batteryhealth.data.apps.AppCpuRow
 import com.alaminahamed.batteryhealth.data.apps.AppLabel
-import com.alaminahamed.batteryhealth.data.apps.AppRow
-import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
-import com.alaminahamed.batteryhealth.data.privileged.Transport
+import com.alaminahamed.batteryhealth.domain.AppBucket
 import com.alaminahamed.batteryhealth.domain.Reading
 import com.alaminahamed.batteryhealth.domain.Source
-import com.alaminahamed.batteryhealth.ui.components.UnlockCardTags
+import com.alaminahamed.batteryhealth.domain.UidKind
 import com.alaminahamed.batteryhealth.ui.theme.BatteryHealthTheme
 import org.junit.Rule
 import org.junit.Test
 
+/**
+ * This screen used to lead with per-uid battery power from a privileged adb/root shell,
+ * behind `UnlockCard`. That whole feature is gone -- see the task report -- and what
+ * remains is [CpuTimeSection] alone, which every build already rendered on its own for a
+ * device with no shell. These tests replace the old `AppRow`-based coverage with coverage
+ * of the [AppsUiState.cpuRows] rendering that is now this screen's entire content.
+ */
 class AppsScreenTest {
 
     @get:Rule val compose = createComposeRule()
 
+    private fun cpuRow(
+        uid: Int,
+        kind: UidKind = UidKind.App,
+        bucket: AppBucket = AppBucket.Visible,
+        label: AppLabel = AppLabel.Resolved("Camera", icon = null),
+        totalCpuMs: Long = 65_000,
+        sharePct: Double = 40.0,
+    ) = AppCpuRow(
+        uid = uid,
+        kind = kind,
+        bucket = bucket,
+        label = label,
+        totalCpuMs = totalCpuMs,
+        userCpuMs = totalCpuMs / 2,
+        systemCpuMs = totalCpuMs / 2,
+        sharePct = sharePct,
+    )
+
     @Test
-    fun needsPrivilegedAccessShowsUnlockCardAndTheSharedReasonText() {
-        val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Unavailable,
-            rows = Reading.NeedsPrivilegedAccess,
-        )
+    fun needsPrivilegedAccessShowsTheHonestReason() {
+        val state = AppsUiState(cpuRows = Reading.NeedsPrivilegedAccess)
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
-        compose.onNodeWithTag(UnlockCardTags.ROOT).assertIsDisplayed()
-        compose.onNodeWithText("Needs privileged access").assertIsDisplayed()
+        compose.onNodeWithText("Needs the one-time permission").assertIsDisplayed()
     }
 
-    /**
-     * One row per [AppRow] kind, sorted descending as `BatteryRepository`/`AppRowMapper`
-     * already guarantee -- this test only has to prove each kind renders its own distinct
-     * text, not re-derive the sort itself.
-     */
     @Test
-    fun boundStateRendersEachRowKindWithItsOwnDistinctText() {
-        val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.Available(
-                listOf(
-                    AppRow.Shell(uid = 2000, mAh = 422.0, sharePct = 94.7),
-                    AppRow.System(uid = 1000, mAh = 6.23, sharePct = 1.4, packageCount = 82),
-                    AppRow.App(
-                        uid = 10106,
-                        mAh = 15.6,
-                        sharePct = 3.5,
-                        label = AppLabel.Resolved("Camera", icon = null),
-                    ),
-                ),
-                Source.Privileged,
-            ),
-        )
+    fun unsupportedShowsNotAvailableOnThisDevice() {
+        val state = AppsUiState(cpuRows = Reading.Unsupported)
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
-        compose.onAllNodesWithTag(UnlockCardTags.ROOT).assertCountEquals(0)
-        compose.onNodeWithText("USB debugging (adb)").assertIsDisplayed()
-        compose.onNodeWithText("Development / testing, not normal use").assertIsDisplayed()
-        compose.onNodeWithText("422.00 mAh").assertIsDisplayed()
-        compose.onNodeWithText("System (uid 1000)").assertIsDisplayed()
-        compose.onNodeWithText("82 packages, not an app").assertIsDisplayed()
-        compose.onNodeWithText("Camera").assertIsDisplayed()
-        compose.onNodeWithText("15.60 mAh").assertIsDisplayed()
+        compose.onNodeWithText("Not available on this device").assertIsDisplayed()
+    }
+
+    @Test
+    fun notYetMeasuredShowsMeasuring() {
+        val state = AppsUiState(cpuRows = Reading.NotYetMeasured)
+        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
+
+        compose.onNodeWithText("Measuring").assertIsDisplayed()
     }
 
     @Test
     fun anEmptyButAvailableListShowsAnHonestEmptyStateNotAnAbsenceReason() {
-        val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.Available(emptyList(), Source.Privileged),
-        )
+        val state = AppsUiState(cpuRows = Reading.Available(emptyList(), Source.Framework))
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
-        compose.onNodeWithText("No power data recorded yet").assertIsDisplayed()
+        compose.onNodeWithText("No CPU time recorded yet").assertIsDisplayed()
     }
 
     /**
-     * The distinction [AppLabel] exists for, all the way to the screen: a package name
-     * this build could not resolve a label for must show the raw identifier plus an
-     * explicit caption, never a bare name that could pass for a confirmed one.
+     * One row rendered by default (the "Visible" tab), with its resolved label and
+     * formatted CPU time -- proves the whole chain from [AppsUiState.cpuRows] through
+     * [AppCpuRow] to the rendered row text.
      */
     @Test
-    fun packageNameOnlyShowsTheRawIdentifierAndAnExplicitCaption() {
+    fun boundStateRendersTheDefaultBucketWithATabCountAndTheRowsText() {
         val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.Available(
+            cpuRows = Reading.Available(
                 listOf(
-                    AppRow.App(
-                        uid = 10501,
-                        mAh = 1.2,
-                        sharePct = 0.5,
-                        label = AppLabel.PackageNameOnly("com.example.unresolved"),
+                    cpuRow(uid = 10106, bucket = AppBucket.Visible, totalCpuMs = 65_000),
+                    cpuRow(
+                        uid = 1000,
+                        kind = UidKind.System,
+                        bucket = AppBucket.System,
+                        label = AppLabel.Unknown,
+                        totalCpuMs = 5_000,
                     ),
                 ),
-                Source.Privileged,
+                Source.Framework,
             ),
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
-        compose.onNodeWithText("com.example.unresolved").assertIsDisplayed()
-        compose.onNodeWithText("Package name only, label unavailable").assertIsDisplayed()
+        // The default tab is Visible, carrying the one row placed in it.
+        compose.onNodeWithText("Visible 1").assertIsDisplayed()
+        compose.onNodeWithText("System 1").assertIsDisplayed()
+        compose.onNodeWithText("Camera").assertIsDisplayed()
+        compose.onNodeWithText("1 m 5 s").assertIsDisplayed()
     }
 
+    /** Switching tabs shows a different bucket's rows, and an unresolved uid falls back
+     * to its raw uid rather than an invented name. */
     @Test
-    fun unknownLabelShowsTheUidAndNoInventedName() {
+    fun switchingToTheSystemTabShowsItsOwnRowsWithAnUnresolvedLabelAsUid() {
         val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.Available(
-                listOf(AppRow.App(uid = 10999, mAh = 0.8, sharePct = 0.2, label = AppLabel.Unknown)),
-                Source.Privileged,
+            cpuRows = Reading.Available(
+                listOf(
+                    cpuRow(uid = 10106, bucket = AppBucket.Visible),
+                    cpuRow(
+                        uid = 1000,
+                        kind = UidKind.System,
+                        bucket = AppBucket.System,
+                        label = AppLabel.Unknown,
+                    ),
+                ),
+                Source.Framework,
             ),
         )
         compose.setContent { BatteryHealthTheme { AppsContent(state) } }
 
-        compose.onNodeWithText("Uid 10999").assertIsDisplayed()
-        compose.onNodeWithText("No app name available").assertIsDisplayed()
-    }
-
-    /** This screen's own failure signal, independent of Health's `privilegedDumpFailed` --
-     * see `BatteryRepository.appPowerFailed`'s own doc. */
-    @Test
-    fun appPowerFailedShowsTheSharedRetryCard() {
-        val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.NeedsPrivilegedAccess,
-            appPowerFailed = true,
-        )
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onNodeWithTag(UnlockCardTags.ROOT).assertIsDisplayed()
-        compose.onNodeWithText("PRIVILEGED READ FAILED").assertIsDisplayed()
-        compose.onNodeWithTag(UnlockCardTags.ACTION).assertIsDisplayed()
-
-        // Same shared-card honesty claims UnlockCardTest pins for this state: a dropped
-        // shell call, not a permission denial, and a retry that costs nothing.
-        compose.onNodeWithText("most likely a dropped shell call", substring = true)
-            .assertIsDisplayed()
-        compose.onNodeWithText("Retrying costs nothing", substring = true).assertIsDisplayed()
-    }
-
-    /**
-     * The skeleton only ever replaces `ReadingSlot`'s own rendering while there is
-     * genuinely nothing to show yet -- see `AppsContent`'s own doc. Once a real list is
-     * already in hand, `isLoading` going true again (a background resume-triggered
-     * refresh) must not blank the screen back to a skeleton.
-     */
-    @Test
-    fun loadingWithNothingToShowYetRendersTheSkeletonNotNeedsPrivilegedAccess() {
-        val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.NeedsPrivilegedAccess,
-            isLoading = true,
-        )
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onNodeWithTag(AppsScreenTags.SKELETON).assertIsDisplayed()
-        compose.onAllNodesWithTag(UnlockCardTags.ROOT).assertCountEquals(0)
-    }
-
-    @Test
-    fun loadingWithARealListAlreadyInHandKeepsShowingItInsteadOfASkeleton() {
-        val state = AppsUiState(
-            privilegedAvailability = PrivilegedAvailability.Ready(Transport.Adb),
-            rows = Reading.Available(
-                listOf(AppRow.Shell(uid = 2000, mAh = 422.0, sharePct = 94.7)),
-                Source.Privileged,
-            ),
-            isLoading = true,
-        )
-        compose.setContent { BatteryHealthTheme { AppsContent(state) } }
-
-        compose.onAllNodesWithTag(AppsScreenTags.SKELETON).assertCountEquals(0)
-        compose.onNodeWithText("USB debugging (adb)").assertIsDisplayed()
+        compose.onNodeWithTag("cpu-tab-System").performClick()
+        compose.onNodeWithText("uid 1000").assertIsDisplayed()
     }
 }

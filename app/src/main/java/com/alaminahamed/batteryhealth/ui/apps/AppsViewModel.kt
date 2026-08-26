@@ -2,82 +2,57 @@ package com.alaminahamed.batteryhealth.ui.apps
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.alaminahamed.batteryhealth.data.apps.AppRowMapper
-import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
-import com.alaminahamed.batteryhealth.data.repo.BatteryRepository
-import com.alaminahamed.batteryhealth.domain.map
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import com.alaminahamed.batteryhealth.data.apps.AppCpuRowMapper
 import com.alaminahamed.batteryhealth.data.apps.UidCpuTimeSource
 import com.alaminahamed.batteryhealth.domain.AppCpuRanking
+import com.alaminahamed.batteryhealth.domain.map
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
-import javax.inject.Named
 
 @HiltViewModel
 class AppsViewModel @Inject constructor(
-    private val repository: BatteryRepository,
-    private val privileged: PrivilegedBatterySource,
-    private val rowMapper: AppRowMapper,
-    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
     private val cpuTimes: UidCpuTimeSource,
     private val cpuRowMapper: AppCpuRowMapper,
 ) : ViewModel() {
 
-    val state: StateFlow<AppsUiState> = combine(
-        repository.appPower(),
-        repository.appPowerFailed,
-        repository.appPowerLoading,
-        privileged.state,
-    ) { entries, failed, loading, availability ->
-        AppsUiState(
-            privilegedAvailability = availability,
-            // Reading.map, the same extension every other screen's Reading transforms
-            // go through -- label resolution happens per row here, not inside
-            // BatteryRepository, because AppRowMapper needs AppLabelResolver
-            // (PackageManager), which the repository layer has no dependency on.
-            rows = entries.map { list -> list.map(rowMapper::toRow) },
-            appPowerFailed = failed,
-            privilegedTierSupported = privilegedTierSupported,
-            cpuRows = cpuTimes.cpuTimes()
-                .map(AppCpuRanking::ranked)
-                .map { ranked -> ranked.map(cpuRowMapper::toRow) },
-            isLoading = loading,
-        )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = AppsUiState(),
-    )
+    /**
+     * [UidCpuTimeSource.cpuTimes] is a plain, synchronous read -- not a `Flow` -- so
+     * unlike the old privileged-state-driven `combine`, nothing re-invokes it on its own.
+     * This ticks once on construction (replay 1, so the very first collector still gets
+     * an answer) and again every time [refresh] is called, which is what lets the Apps
+     * screen's own `ON_RESUME` pick up CPU time that accumulated while the app was
+     * backgrounded.
+     */
+    private val refreshRequests = MutableSharedFlow<Unit>(
+        replay = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    ).apply { tryEmit(Unit) }
 
-    /** Same no-op-unless-there-is-something-to-connect contract as
-     * `HealthViewModel.connectPrivilegedTier` -- see `PrivilegedBatterySource.connect`'s
-     * own doc. `connect()` is `suspend`, so this launches it on [viewModelScope]. */
-    fun connectPrivilegedTier() {
-        viewModelScope.launch { privileged.connect() }
-    }
+    val state: StateFlow<AppsUiState> = refreshRequests
+        .map {
+            cpuTimes.cpuTimes()
+                .map(AppCpuRanking::ranked)
+                .map { ranked -> ranked.map(cpuRowMapper::toRow) }
+        }
+        .map { cpuRows -> AppsUiState(cpuRows = cpuRows) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = AppsUiState(),
+        )
 
     /**
-     * Called from every `ON_RESUME`, mirroring `HealthViewModel.refreshPrivilegedTier`:
-     * enabling wireless debugging or granting root happens outside this app entirely, so
-     * re-checking on resume is what notices it without needing this screen recreated.
-     * Also retries the privileged read via [BatteryRepository.retryPrivilegedDump] -- the
-     * same shared trigger `BatteryRepository.appPower` and `BatteryRepository.snapshots`
-     * both react to, so this one call refreshes both screens' privileged data, not just
-     * this one's.
+     * Re-reads per-uid CPU time. Called from the Apps screen's own `ON_RESUME`: CPU time
+     * accumulates while this app is backgrounded, and [UidCpuTimeSource.cpuTimes] has no
+     * way to push an update on its own.
      */
-    fun refreshPrivilegedTier() {
-        privileged.refresh()
-        repository.retryPrivilegedDump()
-    }
-
-    /** The Apps screen's manual "Retry" action on `UnlockCard` once it is `Ready` but the
-     * last checkin attempt failed -- see `BatteryRepository.appPowerFailed`. */
-    fun retryPrivilegedDump() {
-        repository.retryPrivilegedDump()
+    fun refresh() {
+        refreshRequests.tryEmit(Unit)
     }
 }

@@ -11,13 +11,13 @@ import javax.inject.Singleton
  * Vendor battery facts published in the `Settings` provider, readable with no permission.
  *
  * This is the only source in the app that yields a vendor's own value with nothing asked
- * of the user at all -- no runtime permission, no privileged shell, no per-boot command.
- * Where a vendor publishes something here, it is strictly better than the same value
- * obtained through the privileged tier, because the user gets it for free.
+ * of the user at all -- no runtime permission, no shell, no per-boot command. It is also,
+ * for Battery Protect specifically, the *only* source left: the privileged dumpsys tier
+ * that used to supply a fallback value is gone.
  *
- * Reads go through the app's own `ContentResolver`. That distinction matters: `adb shell
- * settings list` runs as the `shell` user and sees keys an ordinary app cannot, so shell
- * visibility is not evidence the app can read something.
+ * Reads go through the app's own `ContentResolver`. That distinction matters: a shell
+ * process (`settings list`, run interactively over adb) sees keys an ordinary app cannot,
+ * so shell visibility was never evidence the app itself could read something.
  */
 @Singleton
 class VendorSettingsSource @Inject constructor(
@@ -41,11 +41,8 @@ class VendorSettingsSource @Inject constructor(
     }
 
     /**
-     * The charge percentage Battery Protect stops at.
-     *
-     * Preferred over the privileged tier's `mProtectionThreshold`, which is the Maximum
-     * slider's floor rather than the value selected -- see [VendorBatteryProtectThreshold].
-     * This one matches what Samsung's own Battery protection screen tells the user.
+     * The charge percentage Battery Protect stops at, matching what Samsung's own Battery
+     * protection screen tells the user -- see [VendorBatteryProtectThreshold].
      */
     override fun batteryProtectThresholdPct(): Reading<Int> = try {
         VendorBatteryProtectThreshold.interpretThreshold(

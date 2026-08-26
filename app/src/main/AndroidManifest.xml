@@ -1,40 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
-    <!-- Loopback only: the privileged tier reaches the on-device adb daemon on 127.0.0.1.
-         Android enforces INTERNET at socket creation via the inet group, and loopback is
-         not exempt, so staying on-device does not avoid it. The app makes no outbound
-         network requests; PrivilegedShellLoopbackTest asserts that mechanically. -->
-    <!--
-      Signature|privileged|development. A normal app can never be granted this by a user
-      tap, but the "development" flag means adb can grant it directly:
-
-          adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STATS
-
-      Declared so that grant has something to attach to. Ungranted it does nothing at all
-      and the app behaves exactly as before, so this is inert on every device that has not
-      run the command.
-    -->
-    <uses-permission android:name="android.permission.BATTERY_STATS" />
-
-    <!--
-      Signature|privileged|development, same tier as BATTERY_STATS above and grantable the
-      same way:
-
-          adb shell pm grant com.alaminahamed.batteryhealth android.permission.DUMP
-
-      Declared to test one specific question: whether it opens a real per-app battery
-      attribution path via a "dumpsys batterystats" checkin dump, which BATTERY_STATS alone
-      does not reach. See the permissions-visibility report for the verdict; this permission
-      stays declared only because that experiment came back positive.
-    -->
-    <uses-permission android:name="android.permission.DUMP" />
 
     <!--
       Appop-gated: declaring this grants nothing by itself. The user must flip it on from

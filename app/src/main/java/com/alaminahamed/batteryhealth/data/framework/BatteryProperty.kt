@@ -15,13 +15,14 @@ fun interface IntPropertyReader {
  * they are @SystemApi/@hide in AOSP (frameworks/base/core/java/android/os/BatteryManager.java)
  * and gated behind BATTERY_STATS, so they throw SecurityException for an ordinary install.
  *
- * "Regardless of API level" is what this comment used to say next, and that was wrong.
- * BATTERY_STATS is signature|privileged|**development**, and the development flag means
- * adb can grant it directly -- after which all three read normally, verified on real
- * hardware. `GrantedBatterySource` is where that route lives. They stay out of this enum
- * because this one describes what an app can read with nothing granted at all — a later task wires them to
- * Reading.NeedsPrivilegedAccess on BatterySnapshot. Every property remaining here is API 21, well
- * below this app's minSdk 26, so there is no API-floor filtering left to do.
+ * BATTERY_STATS is signature|privileged|development, and this app declares no route that
+ * could ever hold it -- the development flag only ever meant `adb shell pm grant`, and the
+ * owner's decision for this app rules that out categorically. So, unlike when this comment
+ * was written, these three are not merely absent from this enum's *unprivileged* view; they
+ * have no privileged view left either. ManufacturingDate and FirstUsageDate are permanently
+ * `Reading.Unsupported` on `BatterySnapshot`; StateOfHealth has one narrow, genuinely
+ * unprivileged exception -- see `FrameworkStateOfHealth`. Every property remaining here is
+ * API 21, well below this app's minSdk 26, so there is no API-floor filtering left to do.
  */
 enum class BatteryProperty(val id: Int) {
     ChargeCounter(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER),
