@@ -12,10 +12,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.inject.Named
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settings: SettingsStore,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
     designCapacity: DesignCapacityProvider,
 ) : ViewModel() {
 
@@ -24,7 +26,12 @@ class SettingsViewModel @Inject constructor(
         settings.adbPort,
         settings.designLanguageChoice,
     ) { capacity, port, language ->
-        SettingsUiState(designCapacity = capacity, adbPort = port, designLanguage = language)
+        SettingsUiState(
+            designCapacity = capacity,
+            adbPort = port,
+            designLanguage = language,
+            privilegedTierSupported = privilegedTierSupported,
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),

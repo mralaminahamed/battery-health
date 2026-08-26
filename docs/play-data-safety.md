@@ -27,28 +27,18 @@ artifacts.
 
 ## Permission declarations
 
-### `INTERNET`
+### `INTERNET` — **not declared in the Play build**
 
-Required to open a socket to the on-device Android Debug Bridge daemon at `127.0.0.1`. Android
-enforces `INTERNET` at socket creation regardless of destination and does not exempt loopback,
-so an app cannot connect to its own device without it.
+The Play flavour compiles in no network code at all and ships without this permission. There
+is nothing to justify at review: the shipped package cannot open a socket to any address.
 
-No outbound network requests are made. This is enforced by an automated test, not merely
-asserted.
+The `full` flavour, distributed outside Google Play, declares it for one purpose — a socket to
+`127.0.0.1` so the optional privileged tier can reach the device's own `adbd`. Android
+enforces `INTERNET` at socket creation regardless of destination and does not exempt loopback.
 
-### `FOREGROUND_SERVICE_SPECIAL_USE`
-
-Declared with a matching `<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE">`
-in the manifest. Justification, which should be pasted into the Play Console declaration
-verbatim:
-
-> Samples battery charge counters every five seconds while charging to measure full capacity,
-> which cannot be derived from 15-minute periodic work.
-
-The measurement this app exists to perform requires charge-counter deltas sampled densely
-across a charge session. `WorkManager`'s minimum periodic interval is 15 minutes, which is far
-too coarse: at that cadence the counter deltas are dominated by noise and the derived capacity
-is not trustworthy. No other foreground service type describes this use.
+`PrivilegedShellLoopbackTest` fails the build if any production source constructs a socket
+outside `AdbConnection`, or constructs one with a named host rather than
+`InetAddress.getLoopbackAddress()`.
 
 ### `BATTERY_STATS`
 
@@ -107,4 +97,4 @@ The privileged surface is exactly two commands, `dumpsys battery` and
 a command string, so no caller-supplied or data-derived text can reach a shell. This is a
 structural property, not a filter that could be bypassed.
 
-**"Why does a battery app need INTERNET?"** See above — loopback only, enforced by test.
+**"Why does a battery app need INTERNET?"** The Play build does not have it. See above.

@@ -23,4 +23,10 @@ data class SettingsUiState(
      * first emits, the same convention the other fields here use.
      */
     val designLanguage: DesignLanguageChoice = DesignLanguageChoice.Auto,
+    /**
+     * Whether this build has a privileged transport compiled in. False in the Play
+     * flavour, where the ADB-port setting would configure a connection that cannot be
+     * made.
+     */
+    val privilegedTierSupported: Boolean = true,
 )

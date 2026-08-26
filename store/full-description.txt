@@ -32,7 +32,7 @@ Per-app battery use
 See which apps are consuming power, based on the system's own accounting.
 
 Advanced metrics (optional)
-Some values are restricted to system apps. If you want them, the app can read them through Android's own debug bridge — running on your own phone, over a local connection that never leaves the device. This takes a one-time setup step from a computer, and is entirely optional. Without it the app works normally and simply reports those metrics as unavailable.
+A few values are restricted to system apps. If you want them, one command run once from a computer grants permission to read them directly, and it survives restarts. Entirely optional: without it the app works normally and reports those values as unavailable. This app requests no internet permission at all.
 
 Privacy
 
