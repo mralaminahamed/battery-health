@@ -9,6 +9,8 @@ import com.alaminahamed.batteryhealth.data.privileged.ParsedBatteryDump
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
+import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
 import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.BatterySnapshot
@@ -42,6 +44,8 @@ class BatteryRepository @Inject constructor(
     private val designCapacity: DesignCapacityProvider,
     private val privileged: PrivilegedBatterySource,
     private val vendorSettings: VendorSettingsSource,
+    private val granted: GrantedReadings,
+    private val power: PowerManagerSource,
 ) {
     /**
      * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
@@ -137,8 +141,21 @@ class BatteryRepository @Inject constructor(
                 dumpAvailable = dumpAvailable,
                 broadcastCycles = broadcast.cycleCount,
             ),
-            stateOfHealthPct = dump?.asocPct.privilegedReading(dumpAvailable),
-            firstUsageDateEpochDay = dump?.firstUseDateEpochDay.privilegedReading(dumpAvailable),
+            // The granted-permission route first, the adb shell second.
+            //
+            // Both are the same underlying figure, so this is not about which is more
+            // truthful -- it is about what each costs the user. A granted BATTERY_STATS
+            // is one adb command ever and survives reboots; the shell tier needs
+            // `adb tcpip 5555` re-run after every restart plus an RSA handshake over a
+            // loopback socket. Preferring the cheaper route means a user who ran the
+            // grant never has to think about the shell tier at all.
+            //
+            // Falls through on anything but a real value, so a device with the permission
+            // granted but no state-of-health property still gets the dump's answer.
+            stateOfHealthPct = granted.stateOfHealthPct()
+                .orElse { dump?.asocPct.privilegedReading(dumpAvailable) },
+            firstUsageDateEpochDay = granted.firstUsageDateEpochDay()
+                .orElse { dump?.firstUseDateEpochDay.privilegedReading(dumpAvailable) },
             // No key resembling a manufacturing date appears anywhere in the real dump
             // this app was built against (see DumpsysBatteryParser's doc) -- the
             // framework tier categorically cannot supply it (BATTERY_STATS,
@@ -154,7 +171,8 @@ class BatteryRepository @Inject constructor(
             // rejected as a substitute: it reads as a bootloader/firmware calibration
             // date, not this physical unit's manufacturing date, and nothing in the dump
             // labels it as the latter.
-            manufacturingDateEpochDay = Reading.Unsupported,
+            manufacturingDateEpochDay = granted.manufacturingDateEpochDay()
+                .orElse { Reading.Unsupported },
             chargeTimeRemainingMs = properties.chargeTimeRemainingMs(),
             bsohPct = dump?.bsohPct.privilegedReading(dumpAvailable),
             // The privileged dump wins when it actually has a value, and the vendor's own
@@ -175,6 +193,11 @@ class BatteryRepository @Inject constructor(
                 .privilegedReading(dumpAvailable)
                 .orElse { vendorSettings.batteryProtectEnabled() },
             protectionThresholdPct = dump?.protectionThresholdPct.privilegedReading(dumpAvailable),
+            // Public API, no permission, present on every device -- so these are populated
+            // unconditionally rather than behind any tier. Each is API-gated inside
+            // PowerManagerSource and reports Unsupported below its floor.
+            thermalStatus = power.thermalStatus(),
+            dischargePredictionMs = power.dischargePredictionMs(),
         )
     }
 

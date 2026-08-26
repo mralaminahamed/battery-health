@@ -47,13 +47,21 @@ object SettingsProbe {
      * privileged tier independently reported Battery Protect as on, which is two sources
      * agreeing rather than one being assumed.
      *
-     * The threshold keys are deliberately *not* given a confident note. `Settings.Global`
-     * reported `battery_protection_threshold=95` at a moment when the privileged
-     * `dumpsys` read said the active charge limit was 80%. Those cannot both describe the
-     * same quantity, so at least one of them means something other than "the limit in
-     * force" — most likely these hold per-mode defaults while One UI's Basic/Adaptive/
-     * Maximum selection lives elsewhere. Until that is settled by watching the keys change
-     * as the mode changes, this app must not render either as a charge limit.
+     * `battery_protection_threshold` is NOT the limit in force, and that is now settled
+     * rather than suspected. A privileged `dumpsys battery` on the same device, at the
+     * same moment `Settings.Global` reported 95, showed:
+     *
+     * ```
+     * mProtectBatteryMode:         1
+     * mProtectionThreshold:        80   <- the limit actually being enforced
+     * mMaximumProtectionThreshold: 95   <- Maximum mode's ceiling
+     * ```
+     *
+     * So the settings key mirrors `mMaximumProtectionThreshold`, the ceiling belonging to
+     * One UI's Maximum mode, and not the threshold currently in force. Rendering it as
+     * "your charge limit" would have shown 95% to a user whose phone was actually
+     * stopping at 80% -- a confident, plausible, wrong number, and one nothing in the app
+     * would have contradicted.
      */
     val keys: List<Key> = listOf(
         Key(
@@ -62,7 +70,12 @@ object SettingsProbe {
             "Battery Protect on/off. Read 1 while the privileged tier independently " +
                 "reported it on.",
         ),
-        Key("battery_protection_threshold", Namespace.Global),
+        Key(
+            "battery_protection_threshold",
+            Namespace.Global,
+            "Maximum mode's ceiling, mirroring dumpsys mMaximumProtectionThreshold. " +
+                "NOT the limit in force -- read 95 while the enforced limit was 80.",
+        ),
         Key("battery_protection_recharge_level", Namespace.Global),
         Key("battery_protection_default_value", Namespace.Global),
         Key("adaptive_protection_current_switch_value", Namespace.Global),

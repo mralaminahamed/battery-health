@@ -36,6 +36,13 @@ class LiveScreenTest {
         firstUsageDateEpochDay = Reading.Unsupported,
         manufacturingDateEpochDay = Reading.Unsupported,
         chargeTimeRemainingMs = Reading.Available(3_600_000, Source.Framework),
+        // Given real values so they stay out of the "not available" counts below. These
+        // rows have nothing to do with what this suite tests, and leaving them at their
+        // Unsupported defaults would make every exact-count assertion here depend on how
+        // many unrelated rows the Live screen happens to carry -- which is how a sharp
+        // assertion decays into an arbitrary number nobody dares change.
+        thermalStatus = Reading.Available(0, Source.Framework),
+        dischargePredictionMs = Reading.Available(48_240_000, Source.Framework),
     )
 
     @Test

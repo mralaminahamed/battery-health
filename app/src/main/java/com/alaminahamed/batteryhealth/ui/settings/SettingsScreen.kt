@@ -14,6 +14,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import com.alaminahamed.batteryhealth.data.vendor.discovery.ProbeChannel
+import com.alaminahamed.batteryhealth.data.vendor.discovery.ProbeOutcome
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,6 +42,12 @@ import com.alaminahamed.batteryhealth.ui.components.SectionHeader
 import com.alaminahamed.batteryhealth.ui.components.Value
 import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
+
+object DiagnosticsTags {
+    const val RUN = "diagnostics-run"
+    const val RESULTS = "diagnostics-results"
+    const val EMPTY = "diagnostics-empty"
+}
 
 object SettingsScreenTags {
     const val ROOT = "settings-root"
@@ -75,9 +84,11 @@ object SettingsAdbPortTags {
 fun SettingsScreen(
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = hiltViewModel(),
+    diagnosticsViewModel: DiagnosticsViewModel = hiltViewModel(),
     onDesignLanguageChange: (DesignLanguageChoice) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
+    val diagnostics by diagnosticsViewModel.state.collectAsState()
     SettingsContent(
         state = state,
         modifier = modifier,
@@ -85,6 +96,8 @@ fun SettingsScreen(
         onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
         onSaveAdbPort = viewModel::setAdbPort,
         onDesignLanguageChange = onDesignLanguageChange,
+        diagnostics = diagnostics,
+        onRunDiagnostics = diagnosticsViewModel::run,
     )
 }
 
@@ -96,6 +109,16 @@ fun SettingsContent(
     onClearDesignCapacity: () -> Unit = {},
     onSaveAdbPort: (Int) -> Unit = {},
     onDesignLanguageChange: (DesignLanguageChoice) -> Unit = {},
+    /**
+     * Diagnostics state and its trigger arrive as parameters rather than being pulled
+     * from a `hiltViewModel()` inside this composable. `SettingsContent` is exercised
+     * directly by `SettingsScreenTest` with a plain Compose rule and no Hilt harness --
+     * see this file's own doc -- and a `hiltViewModel()` call anywhere inside it breaks
+     * every one of those tests at once, which is exactly what happened when the
+     * diagnostics card was first added.
+     */
+    diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
+    onRunDiagnostics: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
@@ -136,6 +159,8 @@ fun SettingsContent(
                 }
             }
         }
+
+        DiagnosticsCard(diagnostics, onRunDiagnostics)
 
         OneUiCard {
             SectionHeader("Design capacity")
@@ -382,4 +407,79 @@ private fun AdbPortDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+/**
+ * What this device actually offered, channel by channel.
+ *
+ * The sweep is the only way to see what a given phone exposes, and until now it was
+ * reachable only from an instrumented test -- which meant the app could not answer the
+ * question on anyone's hardware but the developer's. Everything the app knows about
+ * devices it was not built on has to start here.
+ *
+ * Deliberately behind a button rather than run on entry. It is cheap but not free, most
+ * people opening Settings do not want it, and the result must describe the device now
+ * rather than at process start: a permission can be granted between launches and a
+ * platform flag can flip across an OS update.
+ */
+@Composable
+private fun DiagnosticsCard(state: DiagnosticsUiState, onRun: () -> Unit) {
+    val colors = LocalOneUiColors.current
+
+    OneUiCard {
+        SectionHeader("Device diagnostics")
+        Text(
+            text = "Asks this device for every battery value it might expose and reports " +
+                "exactly what came back \u2014 including what it has but will not share. " +
+                "Nothing leaves your phone.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.textSecondary,
+        )
+        Button(
+            onClick = onRun,
+            enabled = !state.running,
+            modifier = Modifier
+                .padding(top = 10.dp)
+                .testTag(DiagnosticsTags.RUN),
+        ) { Text(if (state.running) "Reading\u2026" else "Run") }
+
+        val report = state.report
+        if (report != null) {
+            state.identity?.let { identity ->
+                KeyValueRow("Device") { Value("${identity.manufacturer} ${identity.model}") }
+            }
+            // Counted rather than just listed: "6 withheld" is the line that tells a user
+            // there is something to unlock, and it is the single most actionable number
+            // the sweep produces.
+            KeyValueRow("Readable") { Value("${report.values.size}") }
+            KeyValueRow("Withheld", showDivider = false) { Value("${report.denied.size}") }
+
+            Column(modifier = Modifier.testTag(DiagnosticsTags.RESULTS)) {
+                ProbeChannel.entries.forEach { channel ->
+                    val rows = report.of(channel)
+                    if (rows.isEmpty()) return@forEach
+                    SectionHeader(channel.name)
+                    rows.forEachIndexed { index, row ->
+                        KeyValueRow(row.key, showDivider = index != rows.lastIndex) {
+                            Value(describe(row.outcome))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Renders an outcome as something a person can act on.
+ *
+ * "Withheld" rather than the exception's name: a `SecurityException` is not an error the
+ * user caused and framing it as one would be misleading. It is the platform confirming the
+ * value exists, which is the one outcome worth telling them about.
+ */
+private fun describe(outcome: ProbeOutcome): String = when (outcome) {
+    is ProbeOutcome.Value -> outcome.raw
+    ProbeOutcome.Absent -> "not available"
+    ProbeOutcome.Denied -> "withheld"
+    is ProbeOutcome.Failed -> "failed"
 }

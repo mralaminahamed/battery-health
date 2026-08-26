@@ -1,6 +1,7 @@
 package com.alaminahamed.batteryhealth.data.repo
 
 import android.os.BatteryManager
+import android.os.PowerManager
 import androidx.room.Room
 import androidx.test.platform.app.InstrumentationRegistry
 import com.alaminahamed.batteryhealth.data.framework.BatteryBroadcastSource
@@ -13,6 +14,8 @@ import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.privileged.Transport
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
+import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
 import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
@@ -140,6 +143,15 @@ class BatteryRepositoryTest {
             // on a Samsung host it answers and on any other it reports Unsupported, and
             // both are outcomes these tests must tolerate rather than one being baked in.
             vendorSettings = VendorSettingsSource(context),
+            // Deliberately NOT the real source. The real one answers differently
+            // depending on whether this particular phone has had `pm grant
+            // android.permission.BATTERY_STATS` run against it, which made these tests
+            // pass or fail on host state rather than on the repository's behaviour --
+            // observed for real, three of them flipping the moment the grant landed.
+            // These tests assert what the repository does when the granted readings are
+            // absent, and that must hold on any device.
+            granted = GrantedReadings.None,
+            power = PowerManagerSource(context.getSystemService(PowerManager::class.java)),
         )
     }
 

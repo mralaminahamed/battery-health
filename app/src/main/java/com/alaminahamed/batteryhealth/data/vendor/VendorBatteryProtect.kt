@@ -17,14 +17,15 @@ import com.alaminahamed.batteryhealth.domain.Source
  *
  * ## What this deliberately does not read
  *
- * The neighbouring `battery_protection_threshold` is *not* used as a charge limit. It read
- * `95` on the same device at the same moment that the privileged `dumpsys` reported the
- * active limit as 80%. Those two cannot both describe the limit in force, so at least one
- * means something else -- most plausibly these hold per-mode defaults while One UI's
- * Basic/Adaptive/Maximum selection lives elsewhere. Rendering 95% as "your charge limit"
- * would be a confident, plausible, wrong number, which is the specific failure this app
- * exists not to produce. The threshold stays a privileged-tier reading until someone
- * establishes the mapping by watching the keys change as the mode changes.
+ * The neighbouring `battery_protection_threshold` is *not* used as a charge limit, and
+ * that is now established rather than merely suspected. A privileged `dumpsys battery` on
+ * the same device, at the same moment the settings key read 95, showed
+ * `mProtectionThreshold: 80` alongside `mMaximumProtectionThreshold: 95`. The settings key
+ * mirrors the second -- Maximum mode's ceiling -- not the limit being enforced.
+ *
+ * Rendering it would have shown a 95% charge limit to a user whose phone was stopping at
+ * 80%, with nothing in the app to contradict it. The enforced threshold has no
+ * unprivileged source and stays a privileged-tier reading.
  */
 object VendorBatteryProtect {
 

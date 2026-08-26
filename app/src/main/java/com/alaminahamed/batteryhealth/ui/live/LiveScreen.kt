@@ -1,5 +1,6 @@
 package com.alaminahamed.batteryhealth.ui.live
 
+import android.os.PowerManager
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -95,6 +96,13 @@ fun LiveContent(snapshot: BatterySnapshot?, modifier: Modifier = Modifier) {
                     Value(Formatters.temperature(deciC))
                 }
             }
+            // Thermal state sits with the instantaneous readings rather than in its own
+            // card: it is a condition of the battery right now, like temperature directly
+            // above it, and sustained throttling is the clearest public signal that heat
+            // is doing long-term damage.
+            KeyValueRow("Thermal state") {
+                ReadingSlot(snapshot.thermalStatus) { status, _ -> Value(thermalLabel(status)) }
+            }
             KeyValueRow("Charge counter", showDivider = false) {
                 ReadingSlot(snapshot.chargeCounterUah) { uah, _ -> Value("${uah / 1000} mAh") }
             }
@@ -118,6 +126,12 @@ fun LiveContent(snapshot: BatterySnapshot?, modifier: Modifier = Modifier) {
                     )
                 }
             }
+            // The platform's own estimate, and named as such. "Time left" would imply
+            // this app worked it out; it did not, and the two would deserve different
+            // trust.
+            KeyValueRow("Time left (system estimate)") {
+                ReadingSlot(snapshot.dischargePredictionMs) { ms, _ -> Value(Formatters.duration(ms)) }
+            }
             KeyValueRow("Time to full", showDivider = false) {
                 ReadingSlot(snapshot.chargeTimeRemainingMs) { ms, _ ->
                     Value(Formatters.duration(ms))
@@ -125,4 +139,22 @@ fun LiveContent(snapshot: BatterySnapshot?, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/**
+ * `PowerManager`'s thermal constants as words.
+ *
+ * Exhaustive over the documented range with an explicit fallback: the platform could add a
+ * level, and showing a bare integer is better than mislabelling it as one of the levels
+ * this app does know.
+ */
+private fun thermalLabel(status: Int): String = when (status) {
+    PowerManager.THERMAL_STATUS_NONE -> "Normal"
+    PowerManager.THERMAL_STATUS_LIGHT -> "Light"
+    PowerManager.THERMAL_STATUS_MODERATE -> "Moderate"
+    PowerManager.THERMAL_STATUS_SEVERE -> "Severe"
+    PowerManager.THERMAL_STATUS_CRITICAL -> "Critical"
+    PowerManager.THERMAL_STATUS_EMERGENCY -> "Emergency"
+    PowerManager.THERMAL_STATUS_SHUTDOWN -> "Shutting down"
+    else -> "Level $status"
 }

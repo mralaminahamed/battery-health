@@ -9,6 +9,8 @@ import com.alaminahamed.batteryhealth.data.framework.BatteryProperty
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
 import com.alaminahamed.batteryhealth.data.vendor.PowerProfileReader
 import com.alaminahamed.batteryhealth.data.framework.CapabilityProbe
+import com.alaminahamed.batteryhealth.data.framework.GrantedBatterySource
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import com.alaminahamed.batteryhealth.data.framework.IntPropertyReader
 import com.alaminahamed.batteryhealth.sampling.NowMs
 import dagger.Module
@@ -79,6 +81,11 @@ object AppModule {
     @Named("powerProfileCapacityMah")
     fun providePowerProfileCapacityMah(@ApplicationContext context: Context): Int? =
         PowerProfileReader(context).batteryCapacityMah()
+
+    /** Binds the real, permission-aware implementation for production. */
+    @Provides
+    @Singleton
+    fun provideGrantedReadings(source: GrantedBatterySource): GrantedReadings = source
 
     @Provides
     @Singleton

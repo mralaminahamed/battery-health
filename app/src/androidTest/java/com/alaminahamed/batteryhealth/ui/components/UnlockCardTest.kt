@@ -77,15 +77,17 @@ class UnlockCardTest {
         // whole reason a "How to enable" button exists instead of a "Grant" button.
         compose.onNodeWithText("this app cannot request on its own", substring = true)
             .assertIsDisplayed()
-        // Honesty-critical claim #2: the adb workaround is not a one-time setup step --
-        // it has a real, recurring cost the user is told about up front.
-        compose.onNodeWithText("repeat that command each time your phone restarts", substring = true)
-            .assertIsDisplayed()
-        // Honesty-critical claim #3: root is not just another way to reach the same adb
-        // step -- it is exempt from the recurring cost claim #2 just pinned. Dropping or
-        // inverting this line would misstate `Transport.Root`'s actual behavior.
-        compose.onNodeWithText("A rooted device skips this step entirely", substring = true)
-            .assertIsDisplayed()
+        // Honesty-critical claim #2: the app names the exact command rather than
+        // gesturing at "developer options somewhere". The card is the only place a user
+        // learns what to run, so a vague version of this is a card that cannot be acted
+        // on.
+        compose.onNodeWithText("pm grant", substring = true).assertIsDisplayed()
+        // Honesty-critical claim #3: the grant route really is one-time, and the older
+        // shell route really is not. Both halves matter -- overstating the first would
+        // send a user looking for a setting that never needed re-running, and omitting
+        // the second would leave cycle count and charge limit unexplained.
+        compose.onNodeWithText("one-time step", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("after every restart", substring = true).assertIsDisplayed()
     }
 
     @Test
