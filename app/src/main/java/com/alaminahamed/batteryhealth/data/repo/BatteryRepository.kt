@@ -9,6 +9,7 @@ import com.alaminahamed.batteryhealth.data.privileged.ParsedBatteryDump
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.settings.SettingsStore
 import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
 import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
@@ -41,6 +42,7 @@ class BatteryRepository @Inject constructor(
     private val broadcasts: BatteryBroadcastSource,
     private val properties: BatteryManagerSource,
     private val sessionDao: SessionDao,
+    private val settings: SettingsStore,
     private val estimator: HealthEstimator,
     private val designCapacity: DesignCapacityProvider,
     private val privileged: PrivilegedBatterySource,
@@ -132,11 +134,15 @@ class BatteryRepository @Inject constructor(
         MeasuredCycles.fromSessions(chargedUah, designMah)
     }
 
+    /** The user's own starting figure; see `CycleCountResolver` for why it exists. */
+    private fun cycleBaseline(): Flow<Int?> = settings.cycleCountBaseline
+
     fun snapshots(): Flow<BatterySnapshot> = combine(
         broadcasts.broadcasts(),
         privilegedDump(),
         measuredCycleCount(),
-    ) { broadcast, dump, measuredCycles ->
+        cycleBaseline(),
+    ) { broadcast, dump, measuredCycles, baseline ->
         // A dump actually in hand (even one whose fields all came back null) is the
         // difference between "ask the user to connect the privileged tier, it might
         // help" and "this was tried with full shell privilege and the device still does
@@ -158,6 +164,7 @@ class BatteryRepository @Inject constructor(
                 dumpAvailable = dumpAvailable,
                 broadcastCycles = broadcast.cycleCount,
                 measured = measuredCycles,
+                baselineCycles = baseline,
             ),
             // The granted-permission route first, the adb shell second.
             //

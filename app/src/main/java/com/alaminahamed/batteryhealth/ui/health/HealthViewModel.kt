@@ -66,6 +66,8 @@ class HealthViewModel @Inject constructor(
             partial.copy(privilegedAvailability = availability)
         }.combine(repository.privilegedDumpFailed) { partial, dumpFailed ->
             partial.copy(privilegedDumpFailed = dumpFailed)
+        }.combine(settings.cycleCountBaseline) { partial, baseline ->
+            partial.copy(cycleBaseline = baseline)
         }.combine(settings.unlockCardDismissed) { partial, dismissed ->
             partial.copy(unlockCardDismissed = dismissed)
         }.map { state ->
@@ -141,6 +143,16 @@ class HealthViewModel @Inject constructor(
      */
     fun dismissUnlockCard() {
         viewModelScope.launch { settings.setUnlockCardDismissed(true) }
+    }
+
+    /**
+     * Stores a cycle count the user read from their phone.
+     *
+     * Null clears it. Their figure is a real measurement this app could not take itself,
+     * so it is kept apart from anything derived -- see `CycleCountResolver`.
+     */
+    fun setCycleBaseline(cycles: Int?) {
+        viewModelScope.launch { settings.setCycleCountBaseline(cycles) }
     }
 
     fun connectPrivilegedTier() {
