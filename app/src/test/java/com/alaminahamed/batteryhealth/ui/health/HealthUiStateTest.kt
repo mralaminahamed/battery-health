@@ -71,12 +71,12 @@ class HealthUiStateTest {
 
     @Test
     fun needsPrivilegedAccessSurvivesWhenMeasurementIsUnsupported() {
-        // What production actually emits: BatteryRepository sets stateOfHealthPct to
-        // NeedsPrivilegedAccess unconditionally (never Unsupported), and measured is Unsupported
-        // for any model outside the ten-entry design-capacity table with no override --
-        // nearly every Samsung. The headline must not contradict the "Needs privileged access" row
-        // right below it by claiming "not available on this device" about the same
-        // data source.
+        // A real case BatteryRepository can still produce: FrameworkStateOfHealth reads
+        // NeedsPrivilegedAccess on a device/build where the platform's
+        // "state of health is public" flag is off, and measured is Unsupported on a
+        // device with no known design capacity. The headline must not contradict a
+        // "Needs privileged access" reading by claiming "not available on this device"
+        // about the same underlying figure.
         val state = HealthUiState(
             snapshot = snapshot(Reading.NeedsPrivilegedAccess),
             measured = Reading.Unsupported,

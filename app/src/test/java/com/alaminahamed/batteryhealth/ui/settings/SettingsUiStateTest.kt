@@ -1,13 +1,11 @@
 package com.alaminahamed.batteryhealth.ui.settings
 
-import com.alaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
 import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * `SettingsUiState`'s cold-start defaults, and the only part of Task 5's feature this
- * environment can test.
+ * `SettingsUiState`'s cold-start defaults.
  *
  * `SettingsViewModel.setDesignLanguage` writes through `SettingsStore`, which is constructed
  * from a real `Context` -- not available to a plain JVM test in this project. There is no
@@ -27,8 +25,8 @@ class SettingsUiStateTest {
     @Test
     fun defaultsAreTheColdStartPlaceholders() {
         val state = SettingsUiState()
-        assertEquals(EffectiveDesignCapacity.None, state.designCapacity)
-        assertEquals(5555, state.adbPort)
         assertEquals(DesignLanguageChoice.Auto, state.designLanguage)
+        assertEquals(true, state.notificationsGranted)
+        assertEquals(emptyList<PermissionRow>(), state.permissions)
     }
 }
