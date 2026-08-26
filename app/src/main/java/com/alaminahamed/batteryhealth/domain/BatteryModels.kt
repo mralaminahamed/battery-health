@@ -131,6 +131,17 @@ data class HealthReport(
 ) {
     val band: HealthBand get() = HealthBand.of(healthPct)
     val measuredFullMah: Int get() = (measuredFullUah / 1000L).toInt()
+
+    /**
+     * The measured capacity came out above the design figure it was compared against.
+     *
+     * Not an error, and not necessarily a remarkable battery: vendors publish a rated and
+     * a typical capacity that differ by a few per cent, so a healthy new cell measured
+     * against the rated one lands here routinely. It is, however, the clearest signal this
+     * app has that the design capacity it is using is the wrong one for the device -- so
+     * the screen says so rather than presenting an unexplained figure over 100%.
+     */
+    val exceedsDesign: Boolean get() = healthPct > 100
 }
 
 /** A completed charge or discharge session as stored and displayed. */

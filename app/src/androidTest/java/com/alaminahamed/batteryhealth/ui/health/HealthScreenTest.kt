@@ -335,4 +335,56 @@ class HealthScreenTest {
             .performScrollTo()
             .assertIsDisplayed()
     }
+
+    /**
+     * A figure above 100% has to explain itself or it just looks broken. It usually means
+     * the design capacity being compared against is wrong for the device -- something the
+     * user can fix -- and before the clamp was removed they had no way to know it was even
+     * happening.
+     */
+    @Test
+    fun aReadingAboveDesignExplainsItselfRatherThanLookingBroken() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.Available(
+                HealthReport(
+                    healthPct = 104,
+                    measuredFullUah = 5_033_000,
+                    designCapacityMah = 4_855,
+                    method = CapacityMethod.Counter,
+                    sessionsUsed = 3,
+                ),
+                Source.Measured,
+            ),
+            designCapacity = EffectiveDesignCapacity(4_855, DesignCapacitySource.PowerProfile),
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("104").assertIsDisplayed()
+        compose.onNodeWithText("design figure is wrong", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /** An ordinary reading says nothing of the sort. */
+    @Test
+    fun anOrdinaryReadingCarriesNoSuchWarning() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.Available(
+                HealthReport(
+                    healthPct = 86,
+                    measuredFullUah = 4_300_000,
+                    designCapacityMah = 5_000,
+                    method = CapacityMethod.Counter,
+                    sessionsUsed = 3,
+                ),
+                Source.Measured,
+            ),
+            designCapacity = EffectiveDesignCapacity(5_000, DesignCapacitySource.Table),
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("design figure is wrong", substring = true).assertDoesNotExist()
+    }
 }
