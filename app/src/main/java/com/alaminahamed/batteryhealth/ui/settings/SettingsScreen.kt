@@ -1,5 +1,8 @@
 package com.alaminahamed.batteryhealth.ui.settings
 
+import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,19 +26,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.alaminahamed.batteryhealth.data.settings.AdbPortValidation
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacitySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityValidation
 import com.alaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
+import com.alaminahamed.batteryhealth.ui.health.CycleBaselineDialog
 import com.alaminahamed.batteryhealth.ui.components.KeyValueRow
 import com.alaminahamed.batteryhealth.ui.components.OneUiCard
 import com.alaminahamed.batteryhealth.ui.components.SectionHeader
@@ -60,6 +70,21 @@ object SettingsDesignCapacityTags {
     const val SAVE = "settings-design-capacity-save"
     const val CLEAR = "settings-design-capacity-clear"
     const val ERROR = "settings-design-capacity-error"
+}
+
+object SettingsCycleBaselineTags {
+    const val ROW = "settings-cycle-baseline-row"
+}
+
+object SettingsNotificationTags {
+    const val ROW = "settings-notification-row"
+    const val ACTION = "settings-notification-action"
+}
+
+object SettingsPrivilegedReadingsTags {
+    const val ROW = "settings-privileged-readings-row"
+    const val COMMAND = "settings-privileged-readings-command"
+    const val RESTORE = "settings-restore-unlock-card"
 }
 
 object SettingsAdbPortTags {
@@ -89,6 +114,22 @@ fun SettingsScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val diagnostics by diagnosticsViewModel.state.collectAsState()
+    val context = LocalContext.current
+
+    // Both permissions this screen reports are granted from outside the app -- one over
+    // adb from a computer, one from the system's own notification settings -- and
+    // neither tells this process when it happens. Re-reading on resume is what notices
+    // the user coming back having changed either, without needing the screen recreated.
+    val currentViewModel by rememberUpdatedState(viewModel)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) currentViewModel.refreshPermissions()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     SettingsContent(
         state = state,
         modifier = modifier,
@@ -96,10 +137,29 @@ fun SettingsScreen(
         onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
         onSaveAdbPort = viewModel::setAdbPort,
         onDesignLanguageChange = onDesignLanguageChange,
+        onSetCycleBaseline = viewModel::setCycleBaseline,
+        onRestoreUnlockCard = viewModel::restoreUnlockCard,
+        onOpenNotificationSettings = { context.startActivity(notificationSettingsIntent(context)) },
         diagnostics = diagnostics,
         onRunDiagnostics = diagnosticsViewModel::run,
     )
 }
+
+/**
+ * Deep-links to this app's own notification settings.
+ *
+ * The reason this exists at all: once the user denies the runtime permission twice,
+ * Android stops showing the dialog entirely and `launch()` becomes a silent no-op. From
+ * that point the in-app request can never succeed again, and without a route to the
+ * system screen the app would be telling the user notifications are off while offering
+ * nothing that could turn them on.
+ *
+ * `ACTION_APP_NOTIFICATION_SETTINGS` needs API 26, which is this app's minimum, so there
+ * is no older branch to carry.
+ */
+private fun notificationSettingsIntent(context: Context) =
+    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
 
 @Composable
 fun SettingsContent(
@@ -109,6 +169,9 @@ fun SettingsContent(
     onClearDesignCapacity: () -> Unit = {},
     onSaveAdbPort: (Int) -> Unit = {},
     onDesignLanguageChange: (DesignLanguageChoice) -> Unit = {},
+    onSetCycleBaseline: (Int?) -> Unit = {},
+    onRestoreUnlockCard: () -> Unit = {},
+    onOpenNotificationSettings: () -> Unit = {},
     /**
      * Diagnostics state and its trigger arrive as parameters rather than being pulled
      * from a `hiltViewModel()` inside this composable. `SettingsContent` is exercised
@@ -123,6 +186,7 @@ fun SettingsContent(
     val colors = LocalOneUiColors.current
     var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
     var showAdbPortDialog by rememberSaveable { mutableStateOf(false) }
+    var showCycleBaselineDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -186,6 +250,122 @@ fun SettingsContent(
             }
         }
 
+        OneUiCard {
+            SectionHeader("Cycle count")
+            Text(
+                text = "This app can only count charge it has watched go in, so on a phone " +
+                    "that is not new its own count starts at zero. If your phone reports a " +
+                    "real figure, enter it here and counting continues from there instead " +
+                    "of from nothing.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+            KeyValueRow(
+                "Cycles so far",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = { showCycleBaselineDialog = true })
+                    .testTag(SettingsCycleBaselineTags.ROW),
+                showDivider = false,
+            ) {
+                // "Not set" rather than "0": a supplied zero is a real claim about a new
+                // battery, and CycleCountResolver acts on it as one. Showing the absence
+                // of a claim as zero would make the two indistinguishable here.
+                Value(state.cycleBaseline?.toString() ?: "Not set")
+            }
+        }
+
+        OneUiCard {
+            SectionHeader("Notifications")
+            Text(
+                text = if (state.notificationsGranted) {
+                    "Recording shows an ongoing notification while it runs. That notification " +
+                        "is what keeps measurement alive in the background, and it is the " +
+                        "honest signal that this app is doing something."
+                } else {
+                    "Notifications are off, so recording runs without telling you it is " +
+                        "running. Android stops showing its own permission prompt after two " +
+                        "refusals, so this has to be turned back on from system settings."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+            KeyValueRow(
+                "Notifications",
+                modifier = Modifier.testTag(SettingsNotificationTags.ROW),
+                showDivider = !state.notificationsGranted,
+            ) {
+                Value(if (state.notificationsGranted) "Allowed" else "Blocked")
+            }
+            // Offered only where it would change something. A button to "open settings"
+            // on an already-granted permission is a button that leads somewhere with
+            // nothing to do.
+            if (!state.notificationsGranted) {
+                Button(
+                    onClick = onOpenNotificationSettings,
+                    modifier = Modifier
+                        .padding(top = 10.dp)
+                        .testTag(SettingsNotificationTags.ACTION),
+                ) {
+                    Text("Open notification settings")
+                }
+            }
+        }
+
+        OneUiCard {
+            SectionHeader("Privileged readings")
+            Text(
+                text = if (state.batteryStatsGranted) {
+                    "State of health, first-use date and manufacturing date are unlocked on " +
+                        "this device. The grant survives restarts and app updates; " +
+                        "uninstalling drops it."
+                } else {
+                    "State of health, first-use date and manufacturing date sit behind a " +
+                        "permission no app can request from you -- Android offers no dialog " +
+                        "for it. From a computer with this device connected, run this once:"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+            if (!state.batteryStatsGranted) {
+                Text(
+                    text = "adb shell pm grant com.alaminahamed.batteryhealth " +
+                        "android.permission.BATTERY_STATS",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .padding(bottom = 10.dp)
+                        .testTag(SettingsPrivilegedReadingsTags.COMMAND),
+                )
+            }
+            KeyValueRow(
+                "BATTERY_STATS",
+                modifier = Modifier.testTag(SettingsPrivilegedReadingsTags.ROW),
+                showDivider = state.unlockCardDismissed,
+            ) {
+                Value(if (state.batteryStatsGranted) "Granted" else "Not granted")
+            }
+            // Shown only once there is something to restore. This is the only way back:
+            // the control that sets the flag lives on the card being dismissed, so
+            // without this the dismissal is permanent short of a reinstall, which costs
+            // every recorded session.
+            if (state.unlockCardDismissed) {
+                KeyValueRow(
+                    "Unlock card",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onRestoreUnlockCard)
+                        .testTag(SettingsPrivilegedReadingsTags.RESTORE),
+                    showDivider = false,
+                ) {
+                    Value("Show again")
+                }
+            }
+        }
+
         // Hidden where no transport exists. The Play build compiles none in, so this card
         // offered a port for a connection that build cannot make, describing a command
         // ("adb tcpip") that would achieve nothing on it. A setting that cannot affect
@@ -235,6 +415,23 @@ fun SettingsContent(
                 showDesignCapacityDialog = false
             },
             onDismiss = { showDesignCapacityDialog = false },
+        )
+    }
+
+    if (showCycleBaselineDialog) {
+        // The same dialog Health opens, not a second one worded differently -- see
+        // CycleBaselineDialog's own doc.
+        CycleBaselineDialog(
+            current = state.cycleBaseline,
+            onSave = { cycles ->
+                onSetCycleBaseline(cycles)
+                showCycleBaselineDialog = false
+            },
+            onClear = {
+                onSetCycleBaseline(null)
+                showCycleBaselineDialog = false
+            },
+            onDismiss = { showCycleBaselineDialog = false },
         )
     }
 

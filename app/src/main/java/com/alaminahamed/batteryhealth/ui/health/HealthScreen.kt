@@ -625,10 +625,14 @@ private fun SourceChip(source: Source) {
  * The dialog names where to find it, because a user who cannot locate the number cannot
  * use the feature, and a vague "enter your cycle count" would invite a guess -- which is
  * the one thing this must not collect. A guessed baseline would be indistinguishable, in
- * the row above, from a measured one.
+ * the row it is opened from, from a measured one.
+ *
+ * Internal rather than private because Settings opens the same dialog: the baseline is
+ * one stored value and offering two differently-worded editors for it would let the two
+ * screens disagree about what the user is being asked for.
  */
 @Composable
-private fun CycleBaselineDialog(
+internal fun CycleBaselineDialog(
     current: Int?,
     onSave: (Int) -> Unit,
     onClear: () -> Unit,
