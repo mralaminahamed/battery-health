@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.os.Build
+import android.os.PowerManager
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
 import com.alaminahamed.batteryhealth.data.vendor.PowerProfileReader
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,6 +39,7 @@ import javax.inject.Singleton
 class BatteryDiscovery @Inject constructor(
     @ApplicationContext private val context: Context,
     private val batteryManager: BatteryManager,
+    private val powerManager: PowerManager,
     private val identity: DeviceIdentity,
 ) {
 
@@ -54,6 +57,7 @@ class BatteryDiscovery @Inject constructor(
             addAll(properties())
             addAll(broadcastExtras())
             addAll(powerProfile())
+            addAll(powerManagerReadings())
         },
     )
 
@@ -68,7 +72,10 @@ class BatteryDiscovery @Inject constructor(
      * which is what [ProbeSentinels.UNSUPPORTED] matches.
      */
     private fun properties(): List<ProbeResult> =
-        BatteryPropertyProbe { id -> batteryManager.getLongProperty(id) }.probe()
+        BatteryPropertyProbe(
+            readNumeric = { id -> batteryManager.getLongProperty(id) },
+            readText = { id -> batteryManager.getStringProperty(id) },
+        ).probe()
 
     /**
      * Every key the battery-changed broadcast carries, including ones no AOSP constant
@@ -99,6 +106,32 @@ class BatteryDiscovery @Inject constructor(
         }
         return BatteryExtrasProbe.resultsFrom(seen)
     }
+
+    /**
+     * Thermal state, discharge prediction and battery saver -- public, permission-free,
+     * and carried by `PowerManager` rather than `BatteryManager`. The first version of
+     * this sweep looked only at `BatteryManager` and the broadcast, so these went
+     * unrecorded despite being free to read.
+     *
+     * The API-level gate lives in [PowerManagerProbe] and is checked before the accessor
+     * runs, so a method that does not exist on this device is never called.
+     */
+    private fun powerManagerReadings(): List<ProbeResult> =
+        PowerManagerProbe.resultsFrom(Build.VERSION.SDK_INT) { reading ->
+            when (reading) {
+                PowerManagerProbe.Reading.DischargePrediction ->
+                    powerManager.batteryDischargePrediction?.toMillis()?.toString()
+
+                PowerManagerProbe.Reading.DischargePredictionPersonalized ->
+                    powerManager.isBatteryDischargePredictionPersonalized.toString()
+
+                PowerManagerProbe.Reading.ThermalStatus ->
+                    powerManager.currentThermalStatus.toString()
+
+                PowerManagerProbe.Reading.PowerSaveMode ->
+                    powerManager.isPowerSaveMode.toString()
+            }
+        }
 
     /**
      * Every `battery.*` item in the platform's power profile, not just the capacity.

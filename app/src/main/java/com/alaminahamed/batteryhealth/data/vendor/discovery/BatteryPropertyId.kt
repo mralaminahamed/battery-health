@@ -1,6 +1,17 @@
 package com.alaminahamed.batteryhealth.data.vendor.discovery
 
 /**
+ * Which `BatteryManager` accessor returns a property.
+ *
+ * Load-bearing rather than cosmetic. `getLongProperty` on a string-typed id returns the
+ * unsupported sentinel on every device, which reads exactly like the platform not having
+ * the property at all -- so probing all fifteen ids through the numeric accessor would
+ * silently and permanently report the three text ones as absent, including on hardware
+ * where they are merely withheld, or in fact readable.
+ */
+enum class PropertyKind { Numeric, Text }
+
+/**
  * Every `BATTERY_PROPERTY_*` id the platform defines, including the ones absent from the
  * public SDK.
  *
@@ -48,11 +59,18 @@ package com.alaminahamed.batteryhealth.data.vendor.discovery
  * @property permissionGated whether AOSP unconditionally enforces `BATTERY_STATS`. False
  *   for [StateOfHealth] because its gate is conditional, and false for the public six
  *   because they have no gate at all.
+ * @property kind which accessor returns this property. `BatteryManager` has two --
+ *   `getLongProperty` and `getStringProperty` -- and they are not interchangeable. A
+ *   string-typed property read through the numeric accessor returns the unsupported
+ *   sentinel on every device, which is indistinguishable from the platform genuinely
+ *   not having it. Types come from each constant's own AOSP documentation, where the
+ *   three text ones say "as a string" outright.
  */
 enum class BatteryPropertyId(
     val id: Int,
     val publicSdk: Boolean,
     val permissionGated: Boolean,
+    val kind: PropertyKind = PropertyKind.Numeric,
 ) {
     ChargeCounter(1, publicSdk = true, permissionGated = false),
     CurrentNow(2, publicSdk = true, permissionGated = false),
@@ -71,10 +89,10 @@ enum class BatteryPropertyId(
      */
     StateOfHealth(10, publicSdk = false, permissionGated = false),
 
-    SerialNumber(11, publicSdk = false, permissionGated = true),
+    SerialNumber(11, publicSdk = false, permissionGated = true, kind = PropertyKind.Text),
     PartStatus(12, publicSdk = false, permissionGated = true),
-    Manufacturer(13, publicSdk = false, permissionGated = true),
-    ModelName(14, publicSdk = false, permissionGated = true),
+    Manufacturer(13, publicSdk = false, permissionGated = true, kind = PropertyKind.Text),
+    ModelName(14, publicSdk = false, permissionGated = true, kind = PropertyKind.Text),
     VoltageMinDesign(15, publicSdk = false, permissionGated = true),
     ;
 

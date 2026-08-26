@@ -10,7 +10,17 @@ import org.junit.Test
  */
 class BatteryPropertyProbeTest {
 
-    private fun probeWith(read: (Int) -> Long) = BatteryPropertyProbe(read).probe()
+    private fun probeWith(read: (Int) -> Long) =
+        BatteryPropertyProbe(readNumeric = read, readText = { "text" }).probe()
+
+    private fun probeWith(numeric: (Int) -> Long, text: (Int) -> String?) =
+        BatteryPropertyProbe(readNumeric = numeric, readText = text).probe()
+
+    private val textProperties =
+        BatteryPropertyId.entries.filter { it.kind == PropertyKind.Text }
+
+    private val numericProperties =
+        BatteryPropertyId.entries.filter { it.kind == PropertyKind.Numeric }
 
     private fun outcome(results: List<ProbeResult>, property: BatteryPropertyId) =
         results.first { it.key == property.name }.outcome
@@ -18,8 +28,92 @@ class BatteryPropertyProbeTest {
     @Test
     fun everyKnownPropertyIsAsked() {
         val asked = mutableListOf<Int>()
-        probeWith { id -> asked += id; ProbeSentinels.UNSUPPORTED }
+        probeWith(
+            numeric = { id -> asked += id; ProbeSentinels.UNSUPPORTED },
+            text = { id -> asked += id; null },
+        )
         assertEquals(BatteryPropertyId.entries.map { it.id }.sorted(), asked.sorted())
+    }
+
+    /**
+     * Each property must go through the accessor its own type demands. Reading a
+     * string-typed id numerically returns the unsupported sentinel on every device, so
+     * routing all fifteen through `getLongProperty` would report serial number,
+     * manufacturer and model name as permanently absent no matter what the hardware holds
+     * -- which is exactly what the first version of this probe did.
+     */
+    @Test
+    fun textPropertiesGoThroughTheStringAccessorAndNumericOnesDoNot() {
+        val numericAsked = mutableListOf<Int>()
+        val textAsked = mutableListOf<Int>()
+        probeWith(
+            numeric = { id -> numericAsked += id; ProbeSentinels.UNSUPPORTED },
+            text = { id -> textAsked += id; null },
+        )
+        assertEquals(textProperties.map { it.id }.sorted(), textAsked.sorted())
+        assertEquals(numericProperties.map { it.id }.sorted(), numericAsked.sorted())
+    }
+
+    @Test
+    fun serialManufacturerAndModelNameAreTheStringTypedOnes() {
+        // Taken from each constant's own AOSP documentation, which says "as a string"
+        // for exactly these three.
+        assertEquals(
+            listOf(
+                BatteryPropertyId.SerialNumber,
+                BatteryPropertyId.Manufacturer,
+                BatteryPropertyId.ModelName,
+            ),
+            textProperties,
+        )
+    }
+
+    @Test
+    fun aStringPropertyReadsAsAValue() {
+        val results = probeWith(
+            numeric = { ProbeSentinels.UNSUPPORTED },
+            text = { id -> if (id == BatteryPropertyId.Manufacturer.id) "ATL" else null },
+        )
+        assertEquals(ProbeOutcome.Value("ATL"), outcome(results, BatteryPropertyId.Manufacturer))
+    }
+
+    @Test
+    fun aNullStringIsAbsent() {
+        val results = probeWith(numeric = { ProbeSentinels.UNSUPPORTED }, text = { null })
+        assertEquals(ProbeOutcome.Absent, outcome(results, BatteryPropertyId.SerialNumber))
+    }
+
+    /**
+     * A vendor returning "" for an unpopulated field has told us nothing. Recording it as
+     * a value would put an empty row in the report that looks like a successful read.
+     */
+    @Test
+    fun aBlankStringIsAbsentNotAValue() {
+        val results = probeWith(numeric = { ProbeSentinels.UNSUPPORTED }, text = { "   " })
+        assertEquals(ProbeOutcome.Absent, outcome(results, BatteryPropertyId.ModelName))
+    }
+
+    /**
+     * `getStringProperty` is itself behind a platform flag, so on an older build the call
+     * throws `NoSuchMethodError`. That is distinct from both "withheld" and "this battery
+     * has no serial number".
+     */
+    @Test
+    fun aMissingStringAccessorIsAFailureNotAnAbsence() {
+        val results = probeWith(
+            numeric = { ProbeSentinels.UNSUPPORTED },
+            text = { throw NoSuchMethodError("getStringProperty") },
+        )
+        assertTrue(outcome(results, BatteryPropertyId.SerialNumber) is ProbeOutcome.Failed)
+    }
+
+    @Test
+    fun aDeniedStringPropertyIsDeniedNotAbsent() {
+        val results = probeWith(
+            numeric = { ProbeSentinels.UNSUPPORTED },
+            text = { throw SecurityException("BATTERY_STATS") },
+        )
+        assertEquals(ProbeOutcome.Denied, outcome(results, BatteryPropertyId.Manufacturer))
     }
 
     @Test
@@ -39,7 +133,7 @@ class BatteryPropertyProbeTest {
 
     @Test
     fun theUnsupportedSentinelIsRecordedAsAbsentNotAsData() {
-        val results = probeWith { ProbeSentinels.UNSUPPORTED }
+        val results = probeWith(numeric = { ProbeSentinels.UNSUPPORTED }, text = { null })
         assertTrue(results.all { it.outcome is ProbeOutcome.Absent })
     }
 
@@ -49,7 +143,10 @@ class BatteryPropertyProbeTest {
      */
     @Test
     fun aSecurityExceptionIsRecordedAsDeniedNotAbsent() {
-        val results = probeWith { throw SecurityException("BATTERY_STATS") }
+        val results = probeWith(
+            numeric = { throw SecurityException("BATTERY_STATS") },
+            text = { throw SecurityException("BATTERY_STATS") },
+        )
         assertTrue(results.all { it.outcome is ProbeOutcome.Denied })
     }
 
@@ -61,10 +158,13 @@ class BatteryPropertyProbeTest {
      */
     @Test
     fun oneFailingPropertyDoesNotAbortTheRest() {
-        val results = probeWith { id ->
-            if (id == BatteryPropertyId.ChargingPolicy.id) throw NoSuchMethodError("getIntProperty")
-            5000
-        }
+        val results = probeWith(
+            numeric = { id ->
+                if (id == BatteryPropertyId.ChargingPolicy.id) throw NoSuchMethodError("getIntProperty")
+                5000
+            },
+            text = { "text" },
+        )
         assertEquals(BatteryPropertyId.entries.size, results.size)
         val failed = outcome(results, BatteryPropertyId.ChargingPolicy)
         assertTrue(failed is ProbeOutcome.Failed)
@@ -126,9 +226,12 @@ class BatteryPropertyProbeTest {
      */
     @Test
     fun stateOfHealthIsReadWhenThePlatformAllowsIt() {
-        val results = probeWith { id ->
-            if (id == BatteryPropertyId.StateOfHealth.id) 94 else throw SecurityException()
-        }
+        val results = probeWith(
+            numeric = { id ->
+                if (id == BatteryPropertyId.StateOfHealth.id) 94 else throw SecurityException()
+            },
+            text = { throw SecurityException() },
+        )
         assertEquals(ProbeOutcome.Value("94"), outcome(results, BatteryPropertyId.StateOfHealth))
         // ...while its unconditionally-gated neighbours still report the denial.
         assertEquals(ProbeOutcome.Denied, outcome(results, BatteryPropertyId.ManufacturingDate))

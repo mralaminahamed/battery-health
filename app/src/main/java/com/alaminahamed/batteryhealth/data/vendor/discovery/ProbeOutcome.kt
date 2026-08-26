@@ -14,6 +14,13 @@ enum class ProbeChannel {
 
     /** An `<item>` in the platform's `power_profile.xml`. */
     PowerProfile,
+
+    /**
+     * A battery-adjacent reading from `PowerManager` -- thermal state, the platform's own
+     * discharge prediction, battery saver. Public SDK, no permission, and absent from
+     * `BatteryManager` entirely.
+     */
+    PowerManager,
 }
 
 /**

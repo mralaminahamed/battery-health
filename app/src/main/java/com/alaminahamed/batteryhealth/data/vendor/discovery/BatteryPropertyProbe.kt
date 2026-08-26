@@ -25,10 +25,23 @@ package com.alaminahamed.batteryhealth.data.vendor.discovery
  */
 class BatteryPropertyProbe(
     /**
-     * Reads one property id, or throws. Expected to throw `SecurityException` when the
-     * platform refuses, and to return [ProbeSentinels.UNSUPPORTED] when it has no value.
+     * Reads one numeric property id, or throws. Expected to throw `SecurityException`
+     * when the platform refuses, and to return [ProbeSentinels.UNSUPPORTED] when it has
+     * no value.
      */
-    private val read: (Int) -> Long,
+    private val readNumeric: (Int) -> Long,
+    /**
+     * Reads one string property id, or throws. `BatteryManager.getStringProperty` returns
+     * null for a property the platform does not provide.
+     *
+     * Separate from [readNumeric] because the two accessors are not interchangeable: a
+     * text property read numerically comes back as the unsupported sentinel on every
+     * device, so the three string-typed ids would be reported permanently absent no
+     * matter what the hardware actually holds. Defaulted so a caller that only cares
+     * about numbers is not forced to supply one -- it then reports the text properties as
+     * absent, which is honest for a probe that never asked.
+     */
+    private val readText: (Int) -> String? = { null },
 ) {
 
     fun probe(): List<ProbeResult> = BatteryPropertyId.probeSet.map { property ->
@@ -39,9 +52,14 @@ class BatteryPropertyProbe(
         )
     }
 
-    private fun outcomeFor(property: BatteryPropertyId): ProbeOutcome {
+    private fun outcomeFor(property: BatteryPropertyId): ProbeOutcome = when (property.kind) {
+        PropertyKind.Numeric -> numericOutcome(property)
+        PropertyKind.Text -> textOutcome(property)
+    }
+
+    private fun numericOutcome(property: BatteryPropertyId): ProbeOutcome {
         val raw = try {
-            read(property.id)
+            readNumeric(property.id)
         } catch (e: SecurityException) {
             return ProbeOutcome.Denied
         } catch (t: Throwable) {
@@ -58,6 +76,27 @@ class BatteryPropertyProbe(
         } else {
             ProbeOutcome.Absent
         }
+    }
+
+    /**
+     * `getStringProperty` is itself behind a platform flag, so on a build that predates it
+     * the call throws `NoSuchMethodError` and lands in [ProbeOutcome.Failed] -- which is
+     * the accurate answer there, distinct from both "withheld" and "the battery has no
+     * serial number".
+     *
+     * A blank string is treated as absence rather than a value. A vendor that returns ""
+     * for an unpopulated field has told us nothing, and recording it as data would put an
+     * empty row in the report that looks like a successful read.
+     */
+    private fun textOutcome(property: BatteryPropertyId): ProbeOutcome {
+        val raw = try {
+            readText(property.id)
+        } catch (e: SecurityException) {
+            return ProbeOutcome.Denied
+        } catch (t: Throwable) {
+            return ProbeOutcome.Failed(describe(t))
+        }
+        return raw?.takeIf { it.isNotBlank() }?.let { ProbeOutcome.Value(it) } ?: ProbeOutcome.Absent
     }
 
     /**
