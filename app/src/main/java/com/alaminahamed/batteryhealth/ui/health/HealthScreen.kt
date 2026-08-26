@@ -68,6 +68,9 @@ private const val PRIVILEGED_TIER_INFO_URL = "https://developer.android.com/tool
 
 object HealthScreenTags {
     const val ROOT = "health-root"
+
+    /** The line under the headline explaining why there is no measured percentage yet. */
+    const val MEASUREMENT_NOTE = "health-measurement-note"
 }
 
 object DesignCapacityTags {
@@ -173,11 +176,29 @@ fun HealthContent(
                 )
                 SourceChip(source)
             }
-            if (state.measured is Reading.NotYetMeasured) {
+            // Exhaustive over MeasurementNote rather than keyed on `measured` alone: the
+            // subtitle used to read "Needs N full charge sessions" whenever nothing had
+            // been measured, including while the recorder switch further down this very
+            // screen was off. That promised progress towards a number that could never
+            // arrive. See HealthUiState.measurementNote.
+            val measurementText = when (state.measurementNote) {
+                MeasurementNote.NeedsSessions ->
+                    "Needs ${HealthEstimator.MIN_SESSIONS} full charge sessions"
+
+                MeasurementNote.NotRecording ->
+                    "Turn on \u201CRecord charge sessions\u201D below to start measuring"
+
+                MeasurementNote.RecordingBlocked ->
+                    "Recording is on but couldn\u2019t start \u2014 battery saver can block it"
+
+                MeasurementNote.None -> null
+            }
+            if (measurementText != null) {
                 Text(
-                    text = "Needs ${HealthEstimator.MIN_SESSIONS} full charge sessions",
+                    text = measurementText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.textSecondary,
+                    modifier = Modifier.testTag(HealthScreenTags.MEASUREMENT_NOTE),
                 )
             }
             // The whole reason a fresh install on an unlisted device is a bad first-run
@@ -361,7 +382,14 @@ fun HealthContent(
         DesignCapacityDialog(
             currentOverrideMah = when (state.designCapacity.source) {
                 DesignCapacitySource.Override -> state.designCapacity.mah
-                DesignCapacitySource.Table, DesignCapacitySource.None -> null
+                // Only the user's own override pre-fills the dialog. A table figure or the
+                // device's own declaration is not the user's claim to edit, and offering
+                // one as the starting value invites them to "confirm" a number they never
+                // supplied, turning a derived figure into a stored override by accident.
+                DesignCapacitySource.Table,
+                DesignCapacitySource.PowerProfile,
+                DesignCapacitySource.None,
+                -> null
             },
             onSave = { mah ->
                 onSaveDesignCapacity(mah)
@@ -378,7 +406,7 @@ fun HealthContent(
 
 /**
  * "None" is included in this `when` only so the compiler can enforce exhaustiveness if a
- * fourth source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
+ * further source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
  * is already `None`, so the early return above is what actually handles that case.
  */
 private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
@@ -386,6 +414,10 @@ private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
     return when (info.source) {
         DesignCapacitySource.Override -> "$mah mAh, your override"
         DesignCapacitySource.Table -> "$mah mAh, model table"
+        // Named for where it came from, not dressed up as a measurement: this is the
+        // figure the manufacturer wrote into the platform image, which is real device
+        // data but still a declaration rather than something this app observed.
+        DesignCapacitySource.PowerProfile -> "$mah mAh, reported by this device"
         DesignCapacitySource.None -> "Not set — tap to add"
     }
 }

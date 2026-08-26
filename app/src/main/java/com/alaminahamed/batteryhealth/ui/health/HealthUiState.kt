@@ -7,6 +7,41 @@ import com.alaminahamed.batteryhealth.domain.HealthReport
 import com.alaminahamed.batteryhealth.domain.Reading
 import com.alaminahamed.batteryhealth.domain.map
 
+/**
+ * What the health card should say underneath the headline while there is no measurement
+ * yet.
+ *
+ * This exists because the screen used to say "Needs 3 full charge sessions" whenever
+ * `measured` was [Reading.NotYetMeasured], regardless of whether anything was actually
+ * recording. Running the app on a real device showed the consequence plainly: the
+ * headline promised progress towards a number while the recorder switch two cards below
+ * it was off, so no session would ever be counted and that line would have stood there
+ * forever.
+ *
+ * The distinction is the same one this codebase draws everywhere else -- an absence has a
+ * reason, and the reasons are not interchangeable. "Waiting for charge sessions" and
+ * "nothing is recording" both mean there is no number, and only one of them is something
+ * the user can act on.
+ */
+enum class MeasurementNote {
+    /** Recording, and simply short of the sessions the estimator needs. */
+    NeedsSessions,
+
+    /** The recorder is switched off, so no session will ever be counted. */
+    NotRecording,
+
+    /**
+     * The recorder is switched on but its service was refused a start. `recorderEnabled`
+     * records intent rather than whether anything runs, so this case reads true while
+     * nothing is being recorded -- battery saver refusing the foreground service is the
+     * way this happens in practice, observed on a real device.
+     */
+    RecordingBlocked,
+
+    /** Nothing to say: there is already a measurement, or one is impossible anyway. */
+    None,
+}
+
 data class HealthUiState(
     val snapshot: BatterySnapshot?,
     val measured: Reading<HealthReport>,
@@ -56,8 +91,12 @@ data class HealthUiState(
      * `Privileged`), and this precedence is what a real device now exercises rather than
      * only a hypothetical one. Before that fix landed, the fallthrough also silently
      * discarded `NeedsPrivilegedAccess` whenever `measured` was `Unsupported` — nearly every
-     * Samsung model, since the design-capacity table has ten entries and no override UI
-     * — and rendered "Not available on this device" one row above a "Needs privileged
+     * device, since at the time the design-capacity table held ten Samsung entries and
+     * there was no override UI. Both of those have since changed (the table covers more
+     * models, reads the device's own `power_profile.xml`, and Settings offers an
+     * override), which narrows how often that path is taken but does not change the
+     * precedence argument below — and rendered "Not available on this device" one row
+     * above a "Needs privileged
      * access" line about the exact same underlying data. Explicit precedence fixes both:
      * Available beats NotYetMeasured beats NeedsPrivilegedAccess beats Unsupported, so a
      * real measurement still wins when one exists, and a `NeedsPrivilegedAccess` is never
@@ -68,6 +107,22 @@ data class HealthUiState(
             val framework = snapshot?.stateOfHealthPct ?: Reading.Unsupported
             val measuredPct = measured.map { it.healthPct }
             return if (framework.precedence() >= measuredPct.precedence()) framework else measuredPct
+        }
+
+    /**
+     * Why there is no measured percentage yet, or [MeasurementNote.None] when that
+     * question does not arise.
+     *
+     * Derived here rather than in the composable so the rule is provable on the JVM, and
+     * so the screen cannot drift back into stating one of these while the state says
+     * another -- which is exactly how the original defect got in.
+     */
+    val measurementNote: MeasurementNote
+        get() = when {
+            measured !is Reading.NotYetMeasured -> MeasurementNote.None
+            recorderStartFailed -> MeasurementNote.RecordingBlocked
+            !recorderEnabled -> MeasurementNote.NotRecording
+            else -> MeasurementNote.NeedsSessions
         }
 
     private fun Reading<*>.precedence(): Int = when (this) {
