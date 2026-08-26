@@ -41,6 +41,11 @@ class UnlockCardTest {
 
     @Test
     fun rendersNothingWhenReadyAndTheLastDumpSucceeded() {
+        // `permissionGranted = true` is load-bearing and was not needed when this was
+        // written, because the shell was then the only route and a working shell meant
+        // nothing was left to offer. It no longer does: a working shell with no permission
+        // still leaves state of health and both dates worth unlocking, so the card stays.
+        // See UnlockNeed.
         compose.setContent {
             BatteryHealthTheme {
                 UnlockCard(
@@ -49,6 +54,7 @@ class UnlockCardTest {
                     onConnect = {},
                     onLearnMore = {},
                     onRetry = {},
+                    permissionGranted = true,
                 )
             }
         }

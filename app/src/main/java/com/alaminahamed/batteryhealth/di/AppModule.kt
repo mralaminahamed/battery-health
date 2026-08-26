@@ -7,6 +7,8 @@ import android.os.PowerManager
 import androidx.work.WorkManager
 import com.alaminahamed.batteryhealth.data.framework.BatteryProperty
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
+import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
+import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.data.vendor.PowerProfileReader
 import com.alaminahamed.batteryhealth.data.framework.CapabilityProbe
 import com.alaminahamed.batteryhealth.data.framework.GrantedBatterySource
@@ -81,6 +83,11 @@ object AppModule {
     @Named("powerProfileCapacityMah")
     fun providePowerProfileCapacityMah(@ApplicationContext context: Context): Int? =
         PowerProfileReader(context).batteryCapacityMah()
+
+    /** Binds the real, device-reading implementation for production. */
+    @Provides
+    @Singleton
+    fun provideVendorReadings(source: VendorSettingsSource): VendorReadings = source
 
     /** Binds the real, permission-aware implementation for production. */
     @Provides

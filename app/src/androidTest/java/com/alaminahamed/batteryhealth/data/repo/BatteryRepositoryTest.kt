@@ -17,7 +17,7 @@ import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
-import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
+import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.CapacityMethod
@@ -142,7 +142,11 @@ class BatteryRepositoryTest {
             // The real source, reading this device's own Settings provider. Not stubbed:
             // on a Samsung host it answers and on any other it reports Unsupported, and
             // both are outcomes these tests must tolerate rather than one being baked in.
-            vendorSettings = VendorSettingsSource(context),
+            // Deterministic, for the same reason `granted` below is. The real source
+            // reads this host's own Settings provider, so on a Samsung phone it answers
+            // and the dump-derived assertions below stop describing the repository and
+            // start describing the device.
+            vendorSettings = VendorReadings.None,
             // Deliberately NOT the real source. The real one answers differently
             // depending on whether this particular phone has had `pm grant
             // android.permission.BATTERY_STATS` run against it, which made these tests

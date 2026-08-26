@@ -77,4 +77,55 @@ class VendorBatteryProtectTest {
     fun surroundingWhitespaceIsTolerated() {
         assertEquals(Reading.Available(true, Source.Vendor), VendorBatteryProtect.interpret(" 1 "))
     }
+
+    // ---- the charge limit ------------------------------------------------------------
+
+    /**
+     * The value Samsung's own Battery protection screen shows. With protection on and
+     * Maximum mode selected, that screen read "Your battery will stop charging when it
+     * reaches 95%" while this key read 95 -- and while the privileged dump reported
+     * `mProtectionThreshold: 80`, which the app was displaying and which was wrong.
+     */
+    @Test
+    fun theSettingsKeyIsTheLimitTheVendorsOwnScreenShows() {
+        assertEquals(
+            Reading.Available(95, Source.Vendor),
+            VendorBatteryProtectThreshold.interpretThreshold("95"),
+        )
+    }
+
+    /** The slider's other stops, all of which a user can select. */
+    @Test
+    fun everySliderStopIsAccepted() {
+        listOf(80, 85, 90, 95).forEach { pct ->
+            assertEquals(
+                "$pct%",
+                Reading.Available(pct, Source.Vendor),
+                VendorBatteryProtectThreshold.interpretThreshold(pct.toString()),
+            )
+        }
+    }
+
+    /**
+     * -1 is this key family's "no value recorded" marker, shown by `prev_protect_battery`
+     * reading it on real hardware. A charge limit of -1% is not a limit.
+     */
+    @Test
+    fun theNoValueMarkerIsNotALimit() {
+        assertEquals(Reading.Unsupported, VendorBatteryProtectThreshold.interpretThreshold("-1"))
+        assertEquals(Reading.Unsupported, VendorBatteryProtectThreshold.interpretThreshold("0"))
+    }
+
+    @Test
+    fun animplausiblePercentageIsRefused() {
+        assertEquals(Reading.Unsupported, VendorBatteryProtectThreshold.interpretThreshold("140"))
+        assertEquals(Reading.Unsupported, VendorBatteryProtectThreshold.interpretThreshold("5"))
+    }
+
+    @Test
+    fun anAbsentKeyIsUnsupported() {
+        assertEquals(Reading.Unsupported, VendorBatteryProtectThreshold.interpretThreshold(null))
+        assertEquals(Reading.Unsupported, VendorBatteryProtectThreshold.interpretThreshold(""))
+        assertEquals(Reading.Unsupported, VendorBatteryProtectThreshold.interpretThreshold("high"))
+    }
 }

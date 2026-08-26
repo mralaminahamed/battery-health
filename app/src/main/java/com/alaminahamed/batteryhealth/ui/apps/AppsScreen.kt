@@ -128,6 +128,11 @@ fun AppsContent(
             onConnect = onConnect,
             onLearnMore = onLearnMore,
             onRetry = onRetry,
+            // Per-app attribution comes only from the shell tier: BATTERY_STATS has no
+            // per-app property, so the permission route cannot help here whatever its
+            // state. Without this the card would appear on a screen whose data a
+            // working shell had already supplied.
+            permissionRelevant = false,
         )
 
         OneUiCard {

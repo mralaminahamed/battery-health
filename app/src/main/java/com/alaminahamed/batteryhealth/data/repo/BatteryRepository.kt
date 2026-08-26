@@ -11,7 +11,7 @@ import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
-import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
+import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.BatterySnapshot
 import com.alaminahamed.batteryhealth.domain.HealthReport
@@ -43,7 +43,7 @@ class BatteryRepository @Inject constructor(
     private val estimator: HealthEstimator,
     private val designCapacity: DesignCapacityProvider,
     private val privileged: PrivilegedBatterySource,
-    private val vendorSettings: VendorSettingsSource,
+    private val vendorSettings: VendorReadings,
     private val granted: GrantedReadings,
     private val power: PowerManagerSource,
 ) {
@@ -192,7 +192,19 @@ class BatteryRepository @Inject constructor(
             protectBatteryModeEnabled = dump?.protectBatteryModeEnabled
                 .privilegedReading(dumpAvailable)
                 .orElse { vendorSettings.batteryProtectEnabled() },
-            protectionThresholdPct = dump?.protectionThresholdPct.privilegedReading(dumpAvailable),
+            // The vendor's settings key, NOT the dump's mProtectionThreshold.
+            //
+            // Those disagree, and the dump is the wrong one: it reports 80 where Samsung's
+            // own Battery protection screen says "stop charging when it reaches 95%".
+            // mProtectionThreshold is the floor of the Maximum-mode slider (80/85/90/95),
+            // not the stop the user selected. The app shipped 80 and it was simply wrong
+            // -- a number the user could contradict by opening their own Settings.
+            //
+            // Falls back to the dump rather than to nothing: on a device that publishes no
+            // settings key there is no evidence the dump is wrong there too, and an
+            // approximate limit beats no limit for a value the user can sanity-check.
+            protectionThresholdPct = vendorSettings.batteryProtectThresholdPct()
+                .orElse { dump?.protectionThresholdPct.privilegedReading(dumpAvailable) },
             // Public API, no permission, present on every device -- so these are populated
             // unconditionally rather than behind any tier. Each is API-gated inside
             // PowerManagerSource and reports Unsupported below its floor.

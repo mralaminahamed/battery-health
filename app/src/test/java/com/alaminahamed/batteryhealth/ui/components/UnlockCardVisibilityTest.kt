@@ -14,17 +14,38 @@ class UnlockCardVisibilityTest {
         availability: PrivilegedAvailability,
         dumpFailed: Boolean = false,
         dismissed: Boolean = false,
-    ) = UnlockCardVisibility.shouldShow(availability, dumpFailed, dismissed)
+        permissionGranted: Boolean = false,
+    ) = UnlockCardVisibility.shouldShow(availability, dumpFailed, dismissed, permissionGranted)
 
     // ---- behaviour that predates dismissal, which must not regress -------------------
 
+    /**
+     * Both routes in place, so there is nothing left to offer.
+     *
+     * `permissionGranted` is load-bearing and this test used to omit it, back when the
+     * shell was the only route and a working shell therefore meant everything was
+     * available. That stopped being true: the shell has no manufacturing date on the
+     * hardware this was verified against, so a working shell alone still leaves the
+     * permission worth offering.
+     */
     @Test
-    fun aWorkingPrivilegedTierNeedsNoCard() {
-        assertFalse(shows(ready))
+    fun bothRoutesInPlaceNeedNoCard() {
+        assertFalse(shows(ready, permissionGranted = true))
+    }
+
+    /**
+     * The other half of the correction. A working shell with no permission is not
+     * "everything is fine" -- state of health, first use and manufacturing date are all
+     * still worth unlocking, so the card stays.
+     */
+    @Test
+    fun aWorkingShellAloneStillHasSomethingToOffer() {
+        assertTrue(shows(ready, permissionGranted = false))
     }
 
     @Test
     fun withoutDismissalEveryOtherStateShowsTheCard() {
+        // permissionGranted defaults to false here, which is the ordinary install.
         assertTrue(shows(PrivilegedAvailability.Unavailable))
         assertTrue(shows(PrivilegedAvailability.Denied))
         assertTrue(shows(PrivilegedAvailability.AwaitingAuthorization))
@@ -72,8 +93,8 @@ class UnlockCardVisibilityTest {
      * say. Ready-and-working stays silent whether or not it was ever dismissed.
      */
     @Test
-    fun dismissalCannotResurrectTheCardOnAWorkingTier() {
-        assertFalse(shows(ready, dismissed = true))
+    fun dismissalCannotResurrectTheCardWhenNothingIsNeeded() {
+        assertFalse(shows(ready, dismissed = true, permissionGranted = true))
     }
 
     // ---- which states offer the control at all ---------------------------------------

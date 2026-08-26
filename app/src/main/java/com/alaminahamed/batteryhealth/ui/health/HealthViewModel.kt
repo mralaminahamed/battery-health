@@ -1,6 +1,7 @@
 package com.alaminahamed.batteryhealth.ui.health
 
 import android.content.Context
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -22,6 +24,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class HealthViewModel @Inject constructor(
+    private val granted: GrantedReadings,
     private val repository: BatteryRepository,
     private val settings: SettingsStore,
     designCapacity: DesignCapacityProvider,
@@ -63,6 +66,12 @@ class HealthViewModel @Inject constructor(
             partial.copy(privilegedDumpFailed = dumpFailed)
         }.combine(settings.unlockCardDismissed) { partial, dismissed ->
             partial.copy(unlockCardDismissed = dismissed)
+        }.map { state ->
+            // Read on every emission rather than once at construction: `pm grant` can run
+            // while the app is open, and a card that kept offering a setup already done
+            // would be the very staleness this field exists to remove. It is a cheap
+            // PackageManager check, not a query.
+            state.copy(batteryStatsGranted = granted.isGranted)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),

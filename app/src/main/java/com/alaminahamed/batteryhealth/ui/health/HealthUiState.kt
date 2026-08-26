@@ -84,6 +84,13 @@ data class HealthUiState(
      * other mirrored fields here use.
      */
     val unlockCardDismissed: Boolean = false,
+    /**
+     * Whether `BATTERY_STATS` is held. Not a battery reading, so it does not belong on the
+     * snapshot -- but the unlock card cannot tell a useful offer from a pointless one
+     * without it. Defaults to false, the state of every install that has not run the
+     * grant.
+     */
+    val batteryStatsGranted: Boolean = false,
 ) {
     /**
      * A value the platform reports directly beats one this app inferred, but beyond
