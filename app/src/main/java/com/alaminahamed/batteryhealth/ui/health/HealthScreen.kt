@@ -222,7 +222,11 @@ fun HealthContent(
                 Source.Measured ->
                     "Measured by this app, so it counts from when recording started — " +
                         "not the battery's whole life"
-                Source.Framework, Source.Privileged, Source.Vendor, null -> null
+                // Cycle count never actually carries Source.Inferred -- it comes from
+                // either the platform broadcast or this app's own measured sessions, never
+                // the screen-time estimate -- but this stays exhaustive rather than an
+                // `else`, the same discipline every Source `when` in this app is held to.
+                Source.Framework, Source.Privileged, Source.Vendor, Source.Inferred, null -> null
             }
             if (cycleCaption != null) {
                 Text(
@@ -352,8 +356,16 @@ private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
     }
 }
 
+/**
+ * `internal`, not `private`: `AppsScreen`'s own estimated-drain rows need this exact chip
+ * for `Source.Inferred` too, and this app used to have two differently-worded chips for
+ * that one value ("Estimated" here, "Observed" on the Apps screen) -- a real defect,
+ * fixed by consolidating to this one chip everywhere `Source` is shown. Understating an
+ * observation costs nothing; overstating an assumption is the failure this app exists to
+ * prevent, so every `Source` gets exactly one label, decided in exactly one place.
+ */
 @Composable
-private fun SourceChip(source: Source) {
+internal fun SourceChip(source: Source) {
     val colors = LocalOneUiColors.current
     Text(
         text = when (source) {
@@ -364,6 +376,8 @@ private fun SourceChip(source: Source) {
             // blur it into an ordinary Android reading, and the distinction is real: this
             // is Samsung's own value, present only on Samsung devices.
             Source.Vendor -> "Vendor"
+            // Never "Observed" -- an estimate must never be presented as a measurement.
+            Source.Inferred -> "Estimated"
         },
         style = MaterialTheme.typography.labelSmall,
         color = colors.accent,
