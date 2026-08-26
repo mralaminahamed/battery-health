@@ -61,7 +61,7 @@ class GrantedBatterySource @Inject constructor(
      * guarded, because being granted the permission does not oblige a device to have any
      * particular property.
      */
-    val isGranted: Boolean
+    override val isGranted: Boolean
         get() = context.checkSelfPermission(Manifest.permission.BATTERY_STATS) ==
             PackageManager.PERMISSION_GRANTED
 

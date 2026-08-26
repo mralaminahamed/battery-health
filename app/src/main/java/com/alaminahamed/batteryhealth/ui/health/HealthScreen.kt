@@ -246,6 +246,8 @@ fun HealthContent(
             dumpFailed = state.privilegedDumpFailed,
             onConnect = onConnect,
             dismissed = state.unlockCardDismissed,
+            permissionGranted = state.batteryStatsGranted,
+            shellSupported = state.privilegedTierSupported,
             onDismiss = onDismissUnlockCard,
             onLearnMore = onLearnMore,
             onRetry = onRetryPrivilegedDump,

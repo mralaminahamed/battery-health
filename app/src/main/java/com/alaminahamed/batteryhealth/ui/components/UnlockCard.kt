@@ -56,15 +56,24 @@ internal object UnlockCardVisibility {
             is PrivilegedAvailability.Ready -> false
         }
 
+    /**
+     * Takes the [need] rather than recomputing it.
+     *
+     * It used to derive its own, and drifted from the copy the card renders with the
+     * moment a fourth input was added: this one kept defaulting `shellSupported` to true
+     * while the card passed false, so it said "show" while the text function said "there
+     * is nothing to say". The result was a card with a heading, a button, and no words at
+     * all -- visible on a real device.
+     *
+     * One derivation, passed in, is the only arrangement where those two cannot disagree.
+     */
     fun shouldShow(
+        need: UnlockNeed,
         availability: PrivilegedAvailability,
         dumpFailed: Boolean,
         dismissed: Boolean,
     ): Boolean {
-        // Predates dismissal and is unaffected by it: once the tier works, the values
-        // this card explained the absence of are already on screen, and a card still
-        // advertising a state that no longer holds is worse than no card.
-        if (availability is PrivilegedAvailability.Ready && !dumpFailed) return false
+        if (need == UnlockNeed.Nothing) return false
         return !(dismissed && isDismissible(availability, dumpFailed))
     }
 }
@@ -104,8 +113,19 @@ fun UnlockCard(
     modifier: Modifier = Modifier,
     dismissed: Boolean = false,
     onDismiss: () -> Unit = {},
+    permissionGranted: Boolean = false,
+    permissionRelevant: Boolean = true,
+    shellSupported: Boolean = true,
 ) {
-    if (!UnlockCardVisibility.shouldShow(availability, dumpFailed, dismissed)) return
+    // A screen where the permission cannot supply anything is a screen where it is
+    // already, effectively, satisfied. The Apps screen is exactly that: per-app
+    // attribution comes only from the shell, and BATTERY_STATS has no per-app property to
+    // offer -- so without this flag, granting the permission would make the card appear on
+    // Apps even with a perfectly working shell, advertising a route that cannot help.
+    val effectivelyGranted = permissionGranted || !permissionRelevant
+    // Derived once, here, and handed to everything that needs it. See shouldShow's doc.
+    val need = UnlockNeed.of(effectivelyGranted, availability, dumpFailed, shellSupported)
+    if (!UnlockCardVisibility.shouldShow(need, availability, dumpFailed, dismissed)) return
 
     val colors = LocalOneUiColors.current
     val readyButFailed = availability is PrivilegedAvailability.Ready && dumpFailed
@@ -137,7 +157,7 @@ fun UnlockCard(
             }
         }
         Text(
-            text = explanation(availability, dumpFailed),
+            text = explanation(availability, dumpFailed, need),
             style = MaterialTheme.typography.bodyMedium,
             color = colors.textSecondary,
         )
@@ -161,16 +181,34 @@ fun UnlockCard(
  * which this app can set up on its own. That real burden is stated plainly rather than
  * papered over with a single friendly button that quietly can't do what it implies.
  */
-private fun explanation(availability: PrivilegedAvailability, dumpFailed: Boolean): String = when (availability) {
-    PrivilegedAvailability.Unavailable ->
-        "State of health, first-use date and manufacturing date sit behind a permission " +
-            "this app cannot request on its own. From a computer with your device " +
-            "connected, run:\n\n" +
-            "adb shell pm grant com.alaminahamed.batteryhealth " +
-            "android.permission.BATTERY_STATS\n\n" +
-            "That is a one-time step -- it survives restarts. Samsung's cycle count and " +
-            "charge limit need the older route instead (\"adb tcpip 5555\", repeated " +
-            "after every restart). A rooted device skips all of this."
+private fun explanation(
+    availability: PrivilegedAvailability,
+    dumpFailed: Boolean,
+    need: UnlockNeed,
+): String = when (availability) {
+    // Named per what is actually still missing. Telling someone to grant a permission
+    // they already hold, for values already on their screen, is the staleness UnlockNeed
+    // exists to remove.
+    PrivilegedAvailability.Unavailable -> when (need) {
+        UnlockNeed.Shell ->
+            "Battery health, first use and manufacturing date are unlocked. Samsung's " +
+                "own cycle count and BSOH need one more step, because neither has a " +
+                "public API: run \"adb tcpip 5555\" from a computer, repeated after " +
+                "every restart. A rooted device skips it."
+
+        UnlockNeed.Permission, UnlockNeed.Both ->
+            "State of health, first-use date and manufacturing date sit behind a " +
+                "permission this app cannot request on its own. From a computer with " +
+                "your device connected, run:\n\n" +
+                "adb shell pm grant com.alaminahamed.batteryhealth " +
+                "android.permission.BATTERY_STATS\n\n" +
+                "That is a one-time step -- it survives restarts. Samsung's cycle count " +
+                "and BSOH need the older route as well (\"adb tcpip 5555\", repeated " +
+                "after every restart). A rooted device skips all of this."
+
+        // Unreachable: shouldShow returns before rendering when nothing is needed.
+        UnlockNeed.Nothing -> ""
+    }
     PrivilegedAvailability.AwaitingAuthorization ->
         "Check your screen -- your device is asking whether to allow this. Approve " +
             "it and the readings appear."

@@ -30,7 +30,22 @@ import org.junit.Test
 class PrivilegedShellLoopbackTest {
 
     /** Source-set directory names that are never shipped and must not be scanned. */
-    private val nonProductionSourceSets = setOf("test", "androidTest")
+    /**
+     * Test source sets are recognised by prefix, not by a fixed list.
+     *
+     * A fixed `setOf("test", "androidTest")` missed `testFull` and `androidTestFull` the
+     * moment the privileged transports moved into the `full` flavour, so this test began
+     * scanning its own source -- which names `HttpURLConnection`, `SocketChannel` and
+     * `Socket(` precisely because it is the thing forbidding them -- and failed on itself.
+     *
+     * Prefix matching covers every per-flavour and per-build-type variant AGP can create
+     * (`testPlay`, `androidTestFullDebug`, ...) without anyone having to remember to add
+     * them here. A source set genuinely named `testimonials` would be excluded wrongly,
+     * which is a trade worth making against silently scanning a test that exists to
+     * contain forbidden strings.
+     */
+    private fun File.isTestSourceSet(): Boolean =
+        name == "test" || name.startsWith("test") || name.startsWith("androidTest")
 
     /**
      * A `Socket(` not immediately preceded by an identifier character, so it matches a bare
@@ -60,14 +75,14 @@ class PrivilegedShellLoopbackTest {
         }
 
         val productionRoots = (srcRoot.listFiles { f -> f.isDirectory } ?: emptyArray())
-            .filter { it.name !in nonProductionSourceSets }
+            .filter { !it.isTestSourceSet() }
             .map { File(it, "java") }
             .filter { it.isDirectory }
 
         if (productionRoots.isEmpty()) {
             fail(
                 "Found zero production source roots under ${srcRoot.absolutePath}/*/java " +
-                    "(excluding $nonProductionSourceSets); the module's source-set layout " +
+                    "(excluding test source sets); the module's source-set layout " +
                     "may have changed",
             )
         }

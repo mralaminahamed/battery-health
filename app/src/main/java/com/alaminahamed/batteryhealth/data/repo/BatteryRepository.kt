@@ -11,7 +11,7 @@ import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
-import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
+import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.BatterySnapshot
 import com.alaminahamed.batteryhealth.domain.HealthReport
@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 /**
@@ -43,9 +44,10 @@ class BatteryRepository @Inject constructor(
     private val estimator: HealthEstimator,
     private val designCapacity: DesignCapacityProvider,
     private val privileged: PrivilegedBatterySource,
-    private val vendorSettings: VendorSettingsSource,
+    private val vendorSettings: VendorReadings,
     private val granted: GrantedReadings,
     private val power: PowerManagerSource,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
 ) {
     /**
      * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
@@ -116,10 +118,25 @@ class BatteryRepository @Inject constructor(
         redumpRequests.tryEmit(Unit)
     }
 
+    /**
+     * This app's own cycle count, from charge it recorded going in.
+     *
+     * Unwindowed on purpose -- see `SessionDao.observeChargeAddedUah`. Combined with the
+     * design capacity because a cycle is meaningless without one, and refused rather than
+     * guessed when that is unknown.
+     */
+    private fun measuredCycleCount(): Flow<Reading<Int>> = combine(
+        sessionDao.observeChargeAddedUah(SESSION_TYPE_CHARGE),
+        designCapacity.designCapacityMah,
+    ) { chargedUah, designMah ->
+        MeasuredCycles.fromSessions(chargedUah, designMah)
+    }
+
     fun snapshots(): Flow<BatterySnapshot> = combine(
         broadcasts.broadcasts(),
         privilegedDump(),
-    ) { broadcast, dump ->
+        measuredCycleCount(),
+    ) { broadcast, dump, measuredCycles ->
         // A dump actually in hand (even one whose fields all came back null) is the
         // difference between "ask the user to connect the privileged tier, it might
         // help" and "this was tried with full shell privilege and the device still does
@@ -140,6 +157,7 @@ class BatteryRepository @Inject constructor(
                 privilegedCycles = dump?.cycleCount,
                 dumpAvailable = dumpAvailable,
                 broadcastCycles = broadcast.cycleCount,
+                measured = measuredCycles,
             ),
             // The granted-permission route first, the adb shell second.
             //
@@ -192,7 +210,19 @@ class BatteryRepository @Inject constructor(
             protectBatteryModeEnabled = dump?.protectBatteryModeEnabled
                 .privilegedReading(dumpAvailable)
                 .orElse { vendorSettings.batteryProtectEnabled() },
-            protectionThresholdPct = dump?.protectionThresholdPct.privilegedReading(dumpAvailable),
+            // The vendor's settings key, NOT the dump's mProtectionThreshold.
+            //
+            // Those disagree, and the dump is the wrong one: it reports 80 where Samsung's
+            // own Battery protection screen says "stop charging when it reaches 95%".
+            // mProtectionThreshold is the floor of the Maximum-mode slider (80/85/90/95),
+            // not the stop the user selected. The app shipped 80 and it was simply wrong
+            // -- a number the user could contradict by opening their own Settings.
+            //
+            // Falls back to the dump rather than to nothing: on a device that publishes no
+            // settings key there is no evidence the dump is wrong there too, and an
+            // approximate limit beats no limit for a value the user can sanity-check.
+            protectionThresholdPct = vendorSettings.batteryProtectThresholdPct()
+                .orElse { dump?.protectionThresholdPct.privilegedReading(dumpAvailable) },
             // Public API, no permission, present on every device -- so these are populated
             // unconditionally rather than behind any tier. Each is API-gated inside
             // PowerManagerSource and reports Unsupported below its floor.
@@ -303,8 +333,23 @@ class BatteryRepository @Inject constructor(
         else -> privilegedAbsence(dumpAvailable)
     }
 
-    private fun privilegedAbsence(dumpAvailable: Boolean): Reading<Nothing> =
-        if (dumpAvailable) Reading.Unsupported else Reading.NeedsPrivilegedAccess
+    /**
+     * Why a privileged-only field has no value.
+     *
+     * [Reading.NeedsPrivilegedAccess] means "connecting the tier might produce this",
+     * which is only ever true in a build that has a tier to connect. The Play flavour
+     * ships none -- no adb, no root, no INTERNET permission -- so there the answer is
+     * [Reading.Unsupported]: nothing the user does will produce it.
+     *
+     * Without this check the Play build told users that BSOH "needs privileged access",
+     * inviting them to unlock something that build cannot unlock at any price. Observed
+     * on a real device.
+     */
+    private fun privilegedAbsence(dumpAvailable: Boolean): Reading<Nothing> = when {
+        !privilegedTierSupported -> Reading.Unsupported
+        dumpAvailable -> Reading.Unsupported
+        else -> Reading.NeedsPrivilegedAccess
+    }
 
     fun measuredHealth(): Flow<Reading<HealthReport>> = combine(
         // Filtered to charge sessions in SQL, not after the LIMIT: the window must be

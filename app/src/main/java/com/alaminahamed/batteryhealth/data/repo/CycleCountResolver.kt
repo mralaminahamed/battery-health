@@ -50,9 +50,20 @@ internal object CycleCountResolver {
         privilegedCycles: Int?,
         dumpAvailable: Boolean,
         broadcastCycles: Int?,
+        measured: Reading<Int> = Reading.Unsupported,
     ): Reading<Int> = when {
         privilegedCycles != null -> Reading.Available(privilegedCycles, Source.Privileged)
         broadcastCycles != null -> Reading.Available(broadcastCycles, Source.Framework)
+        // This app's own count, from charge it watched go in. Ranked below both vendor
+        // figures and never blended with them: they count from the day the battery was
+        // made, this counts from the day the app was installed, and on a phone that is
+        // already a year old those differ enormously. Its Source.Measured provenance is
+        // what lets the UI say so.
+        //
+        // NotYetMeasured is passed through rather than falling to NeedsPrivilegedAccess:
+        // "a count is coming once you charge a few times" is true and actionable, and
+        // telling that user to go and set up adb instead would be advice they do not need.
+        measured is Reading.Available || measured is Reading.NotYetMeasured -> measured
         dumpAvailable -> Reading.Unsupported
         else -> Reading.NeedsPrivilegedAccess
     }

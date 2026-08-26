@@ -13,6 +13,15 @@ import com.alaminahamed.batteryhealth.domain.Reading
  * running on. [None] gives it that.
  */
 interface GrantedReadings {
+    /**
+     * Whether `BATTERY_STATS` is actually held.
+     *
+     * Separate from the readings because the UI needs to know *why* something is missing,
+     * not just that it is. Without this the unlock card can only see the shell tier, so it
+     * goes on advertising a setup for values the permission has already supplied.
+     */
+    val isGranted: Boolean
+
     fun stateOfHealthPct(): Reading<Int>
     fun manufacturingDateEpochDay(): Reading<Long>
     fun firstUsageDateEpochDay(): Reading<Long>
@@ -26,6 +35,7 @@ interface GrantedReadings {
          * one that lacks the properties entirely.
          */
         val None: GrantedReadings = object : GrantedReadings {
+            override val isGranted = false
             override fun stateOfHealthPct() = Reading.NeedsPrivilegedAccess
             override fun manufacturingDateEpochDay() = Reading.NeedsPrivilegedAccess
             override fun firstUsageDateEpochDay() = Reading.NeedsPrivilegedAccess
