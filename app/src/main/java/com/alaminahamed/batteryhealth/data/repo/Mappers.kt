@@ -79,6 +79,7 @@ fun ChargeSession.toObservation(): CapacityObservation = CapacityObservation(
     // whose integrated current came out negative. That is current having flowed backwards
     // over a charge -- a fault, not a measurement -- and the existing test for it is what
     // caught the shortcut.
+    peakTempDeciC = peakTempDeciC,
     coulombUah = run {
         val value = coulombUah ?: return@run null
         when (type) {

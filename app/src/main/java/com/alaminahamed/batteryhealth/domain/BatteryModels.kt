@@ -170,4 +170,13 @@ data class CapacityObservation(
     val deltaLevelPct: Int,
     val counterDeltaUah: Long?,
     val coulombUah: Long?,
+    /**
+     * The hottest the cell got during the session, in tenths of a degree Celsius, or null
+     * where the session recorded no temperature.
+     *
+     * Defaulted so every existing construction stays valid: an observation with no
+     * temperature is not a cold or hot one, it is one this app knows nothing about, and
+     * `HealthEstimator` treats those two cases differently.
+     */
+    val peakTempDeciC: Int? = null,
 )
