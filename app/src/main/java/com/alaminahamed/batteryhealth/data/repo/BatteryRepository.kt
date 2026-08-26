@@ -116,10 +116,25 @@ class BatteryRepository @Inject constructor(
         redumpRequests.tryEmit(Unit)
     }
 
+    /**
+     * This app's own cycle count, from charge it recorded going in.
+     *
+     * Unwindowed on purpose -- see `SessionDao.observeChargeAddedUah`. Combined with the
+     * design capacity because a cycle is meaningless without one, and refused rather than
+     * guessed when that is unknown.
+     */
+    private fun measuredCycleCount(): Flow<Reading<Int>> = combine(
+        sessionDao.observeChargeAddedUah(SESSION_TYPE_CHARGE),
+        designCapacity.designCapacityMah,
+    ) { chargedUah, designMah ->
+        MeasuredCycles.fromSessions(chargedUah, designMah)
+    }
+
     fun snapshots(): Flow<BatterySnapshot> = combine(
         broadcasts.broadcasts(),
         privilegedDump(),
-    ) { broadcast, dump ->
+        measuredCycleCount(),
+    ) { broadcast, dump, measuredCycles ->
         // A dump actually in hand (even one whose fields all came back null) is the
         // difference between "ask the user to connect the privileged tier, it might
         // help" and "this was tried with full shell privilege and the device still does
@@ -140,6 +155,7 @@ class BatteryRepository @Inject constructor(
                 privilegedCycles = dump?.cycleCount,
                 dumpAvailable = dumpAvailable,
                 broadcastCycles = broadcast.cycleCount,
+                measured = measuredCycles,
             ),
             // The granted-permission route first, the adb shell second.
             //

@@ -89,4 +89,78 @@ class CycleCountResolverTest {
 
         assertEquals(Reading.NeedsPrivilegedAccess, reading)
     }
+
+    // ---- this app's own count --------------------------------------------------------
+
+    /**
+     * The reading that took the last privileged-only value off the critical path.
+     * Samsung's cycle count has no BATTERY_PROPERTY id and `EXTRA_CYCLE_COUNT` reads 0 on
+     * the hardware this was verified against, so before this an ordinary user saw "needs
+     * privileged access" on that row forever.
+     */
+    @Test
+    fun thisAppsOwnCountIsUsedWhenNoVendorFigureExists() {
+        val measured = Reading.Available(3, Source.Measured)
+        assertEquals(
+            measured,
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = measured,
+            ),
+        )
+    }
+
+    /**
+     * Never blended with a vendor figure. Samsung counts from the day the battery was
+     * made; this counts from the day the app was installed. On a year-old phone those
+     * differ enormously, so the vendor's wins outright wherever it exists.
+     */
+    @Test
+    fun aVendorFigureAlwaysOutranksOurOwn() {
+        val measured = Reading.Available(3, Source.Measured)
+        assertEquals(
+            Reading.Available(412, Source.Privileged),
+            CycleCountResolver.resolve(412, dumpAvailable = true, broadcastCycles = null, measured = measured),
+        )
+        assertEquals(
+            Reading.Available(97, Source.Framework),
+            CycleCountResolver.resolve(null, dumpAvailable = false, broadcastCycles = 97, measured = measured),
+        )
+    }
+
+    /**
+     * "A count is coming once you charge a few times" is true and actionable. Falling
+     * through to NeedsPrivilegedAccess would instead tell that user to go and set up adb,
+     * which is advice they do not need.
+     */
+    @Test
+    fun stillAccumulatingBeatsTellingTheUserToSetUpAdb() {
+        assertEquals(
+            Reading.NotYetMeasured,
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.NotYetMeasured,
+            ),
+        )
+    }
+
+    /**
+     * With no design capacity our count is Unsupported, and the old behaviour must still
+     * apply: the privileged tier might genuinely help, so say so.
+     */
+    @Test
+    fun withNothingMeasurableTheOriginalAbsenceRuleStillHolds() {
+        assertEquals(
+            Reading.NeedsPrivilegedAccess,
+            CycleCountResolver.resolve(null, dumpAvailable = false, broadcastCycles = null, measured = Reading.Unsupported),
+        )
+        assertEquals(
+            Reading.Unsupported,
+            CycleCountResolver.resolve(null, dumpAvailable = true, broadcastCycles = null, measured = Reading.Unsupported),
+        )
+    }
 }

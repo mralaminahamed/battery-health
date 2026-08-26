@@ -124,6 +124,22 @@ class SettingsStore @Inject constructor(private val context: Context) {
     val unlockCardDismissed: Flow<Boolean> =
         context.dataStore.data.map { it[UNLOCK_CARD_DISMISSED] ?: false }.distinctUntilChanged()
 
+    /**
+     * Whether the adb transport has ever connected successfully on this install.
+     *
+     * Gates the *unprompted* reconnect on `ON_RESUME`, mirroring [rootPreviouslyGranted].
+     * Without it the app dials adb every time the user opens a screen, and on a device
+     * with `adb tcpip` enabled that raises Android's "Allow USB debugging?" dialog at
+     * someone who never asked for the privileged tier -- observed on real hardware, on a
+     * fresh install, with no interaction beyond launching the app.
+     */
+    val adbPreviouslyConnected: Flow<Boolean> =
+        context.dataStore.data.map { it[ADB_PREVIOUSLY_CONNECTED] ?: false }.distinctUntilChanged()
+
+    suspend fun setAdbPreviouslyConnected(connected: Boolean) {
+        context.dataStore.edit { it[ADB_PREVIOUSLY_CONNECTED] = connected }
+    }
+
     suspend fun setUnlockCardDismissed(dismissed: Boolean) {
         context.dataStore.edit { it[UNLOCK_CARD_DISMISSED] = dismissed }
     }
@@ -188,6 +204,7 @@ class SettingsStore @Inject constructor(private val context: Context) {
         val ADB_PORT = intPreferencesKey("adb_port")
         val ROOT_PREVIOUSLY_GRANTED = booleanPreferencesKey("root_previously_granted")
         val UNLOCK_CARD_DISMISSED = booleanPreferencesKey("unlock_card_dismissed")
+        val ADB_PREVIOUSLY_CONNECTED = booleanPreferencesKey("adb_previously_connected")
         val DESIGN_LANGUAGE = stringPreferencesKey("design_language_choice")
     }
 }

@@ -73,6 +73,34 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE endedAtMs IS NOT NULL AND type = :type ORDER BY startedAtMs DESC LIMIT :limit")
     fun observeCompletedSessionsOfType(type: String, limit: Int): Flow<List<SessionEntity>>
 
+    /**
+     * Charge added by every completed charge session, in microamp-hours, newest first.
+     *
+     * Deliberately unwindowed, unlike the queries above. Those feed the health estimate,
+     * which wants recent sessions because an old one describes an older battery. A cycle
+     * count is the opposite: it is cumulative, and dropping the oldest rows would make it
+     * silently shrink over time.
+     *
+     * `coulombUah` is preferred where the sampler measured it, because it integrates
+     * current across the session rather than differencing two counter readings; the
+     * counter delta is the fallback. Sessions with neither yield 0 and are filtered out in
+     * Kotlin, where the rule is testable -- see `MeasuredCycles`.
+     */
+    @Query(
+        """
+        SELECT CASE
+            WHEN coulombUah IS NOT NULL THEN coulombUah
+            WHEN startCounterUah IS NOT NULL AND endCounterUah IS NOT NULL
+                THEN endCounterUah - startCounterUah
+            ELSE 0
+        END
+        FROM sessions
+        WHERE endedAtMs IS NOT NULL AND type = :type
+        ORDER BY startedAtMs DESC
+        """,
+    )
+    fun observeChargeAddedUah(type: String): Flow<List<Long>>
+
     @Query("DELETE FROM sessions WHERE endedAtMs IS NOT NULL AND endedAtMs < :cutoffMs")
     suspend fun deleteOlderThan(cutoffMs: Long): Int
 }

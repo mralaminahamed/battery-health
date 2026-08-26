@@ -5,6 +5,7 @@ import com.alaminahamed.batteryhealth.data.privileged.adb.AdbShell
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
@@ -39,6 +40,14 @@ class AdbGateway(
     // without one (as every test above does) must never probe root on its own, matching
     // connect()'s own never-probe-unprompted contract.
     private val shouldConnectRoot: suspend () -> Boolean = { false },
+    // Same shape and same purpose as shouldConnectRoot, for the transport that turned out
+    // to need it just as much. Defaults to "never": a gateway built without one must not
+    // dial adb on its own.
+    private val shouldReconnectAdb: suspend () -> Boolean = { false },
+    // Called once adb has actually reached Ready, so a later ON_RESUME may reconnect it
+    // without asking again. Recording only on success is the point -- a failed or refused
+    // attempt must not earn the app permission to keep retrying unprompted.
+    private val recordAdbConnected: suspend () -> Unit = {},
     // See scope's own doc below for why this defaults to Dispatchers.Default and why it
     // is a constructor parameter at all rather than that default hardcoded inline.
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
@@ -52,6 +61,8 @@ class AdbGateway(
         root = rootShell,
         adb = adbShell,
         shouldConnectRoot = { settingsStore.rootPreviouslyGranted.first() },
+        shouldReconnectAdb = { settingsStore.adbPreviouslyConnected.first() },
+        recordAdbConnected = { settingsStore.setAdbPreviouslyConnected(true) },
     )
 
     // No natural owner to cancel this for: like the gateway this replaced, this is a
@@ -106,17 +117,40 @@ class AdbGateway(
      */
     override suspend fun connect() {
         adb.connect()
+        // Recorded only on success, and only here: this method is reached from the unlock
+        // card's button, so arriving at Ready means the user asked for this tier and got
+        // it. That is what later entitles refresh() to reconnect without asking again.
+        if (adb.state.value == TransportState.Ready) {
+            recordAdbConnected()
+        }
         if (shouldConnectRoot()) {
             root.connect()
         }
     }
 
-    /** No hot reconnect loop and no scheduled retry -- see this class's own doc for why a
-     * background retry loop is the one failure mode a battery-health app's design has to
-     * guard against hardest. Retrying is the Health screen's job, on every `ON_RESUME`. */
+    /**
+     * Reconnects transports the user has already opted into. No hot reconnect loop and no
+     * scheduled retry -- see this class's own doc for why a background retry loop is the
+     * one failure mode a battery-health app's design has to guard against hardest.
+     * Retrying is the Health screen's job, on every `ON_RESUME`.
+     *
+     * Both transports are gated, and adb was not always. The reasoning for dialling it
+     * unconditionally was that it "has no on-device dialog of its own to raise
+     * unprompted", and that is false: on a device where `adb tcpip` is enabled, connecting
+     * to loopback with a key adbd does not recognise raises Android's own "Allow USB
+     * debugging?" prompt. Observed on real hardware -- a fresh install, launched once,
+     * with no interaction at all, put that dialog in front of a user who had never asked
+     * for the privileged tier.
+     *
+     * So an unprompted reconnect now requires a previous successful connection. A user who
+     * never opts in is never dialled for, which is what "the privileged tier is optional"
+     * has to mean in practice.
+     */
     override fun refresh() {
-        root.refresh()
-        adb.refresh()
+        scope.launch {
+            if (shouldConnectRoot()) root.refresh()
+            if (shouldReconnectAdb()) adb.refresh()
+        }
     }
 
     private fun transportFor(availability: PrivilegedAvailability): PrivilegedShell? =

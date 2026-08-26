@@ -3,6 +3,7 @@ package com.alaminahamed.batteryhealth.data.privileged
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -125,15 +126,78 @@ class AdbGatewayTest {
         assertEquals(0, root.connectCalls)
     }
 
+    /**
+     * `refresh()` runs from every `ON_RESUME`, unprompted, so it must not dial a transport
+     * the user never opted into.
+     *
+     * adb used to be refreshed unconditionally, on the stated reasoning that it "has no
+     * on-device dialog of its own to raise unprompted". That is false: where `adb tcpip` is
+     * enabled, connecting to loopback with a key adbd does not recognise raises Android's
+     * "Allow USB debugging?" prompt. On real hardware, a fresh install launched once and
+     * touched no further put that dialog in front of a user who had never asked for the
+     * privileged tier.
+     */
     @Test
-    fun refreshReChecksBothTransports() = runTest {
+    fun refreshDialsNeitherTransportTheUserNeverOptedInto() = runTest {
         val root = FakeShell()
         val adb = FakeShell()
         val gateway = AdbGateway(root, adb)
 
         gateway.refresh()
+        advanceUntilIdle()
 
-        assertEquals(1, root.refreshCalls)
-        assertEquals(1, adb.refreshCalls)
+        assertEquals(0, root.refreshCalls)
+        assertEquals(0, adb.refreshCalls)
+    }
+
+    @Test
+    fun refreshReconnectsOnlyTheTransportsAlreadyGranted() = runTest {
+        val root = FakeShell()
+        val adb = FakeShell()
+        val gateway = AdbGateway(
+            root = root,
+            adb = adb,
+            shouldConnectRoot = { false },
+            shouldReconnectAdb = { true },
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+        )
+
+        gateway.refresh()
+        advanceUntilIdle()
+
+        assertEquals("adb was granted, so it reconnects", 1, adb.refreshCalls)
+        assertEquals("root was not, so it must not be dialled", 0, root.refreshCalls)
+    }
+
+    /**
+     * The flag is earned by a successful connection, never by an attempt. A refused or
+     * failed connect must not entitle the app to keep retrying unprompted afterwards.
+     */
+    @Test
+    fun onlyASuccessfulConnectionEarnsTheRightToReconnectLater() = runTest {
+        var recorded = false
+        // Stays Unavailable through connect(), which is exactly a refused or failed attempt.
+        val adb = FakeShell(TransportState.Unavailable)
+        AdbGateway(
+            root = FakeShell(),
+            adb = adb,
+            recordAdbConnected = { recorded = true },
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+        ).connect()
+
+        assertEquals(false, recorded)
+    }
+
+    @Test
+    fun aSuccessfulConnectionIsRecordedSoLaterResumesMayReconnect() = runTest {
+        var recorded = false
+        AdbGateway(
+            root = FakeShell(),
+            adb = FakeShell(TransportState.Ready),
+            recordAdbConnected = { recorded = true },
+            dispatcher = UnconfinedTestDispatcher(testScheduler),
+        ).connect()
+
+        assertEquals(true, recorded)
     }
 }
