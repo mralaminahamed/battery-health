@@ -2,6 +2,7 @@ package com.alaminahamed.batteryhealth.data.vendor.discovery
 
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
@@ -58,6 +59,7 @@ class BatteryDiscovery @Inject constructor(
             addAll(broadcastExtras())
             addAll(powerProfile())
             addAll(powerManagerReadings())
+            addAll(settingsKeys())
         },
     )
 
@@ -106,6 +108,29 @@ class BatteryDiscovery @Inject constructor(
         }
         return BatteryExtrasProbe.resultsFrom(seen)
     }
+
+    /**
+     * Battery-related keys in the `Settings` provider.
+     *
+     * Read through the app's own `ContentResolver`, deliberately. `adb shell settings
+     * list` runs as the `shell` user and can see keys an ordinary app cannot, so shell
+     * visibility is no evidence at all that this app can read a key -- and acting on that
+     * assumption is exactly how the app would end up claiming a reading it cannot take on
+     * a user's phone.
+     */
+    private fun settingsKeys(): List<ProbeResult> =
+        SettingsProbe.resultsFrom { key ->
+            when (key.namespace) {
+                SettingsProbe.Namespace.Global ->
+                    Settings.Global.getString(context.contentResolver, key.key)
+
+                SettingsProbe.Namespace.Secure ->
+                    Settings.Secure.getString(context.contentResolver, key.key)
+
+                SettingsProbe.Namespace.System ->
+                    Settings.System.getString(context.contentResolver, key.key)
+            }
+        }
 
     /**
      * Thermal state, discharge prediction and battery saver -- public, permission-free,

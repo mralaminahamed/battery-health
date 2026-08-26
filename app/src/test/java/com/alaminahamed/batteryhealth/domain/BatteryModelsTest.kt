@@ -290,16 +290,25 @@ class BatteryModelsTest {
 
     @Test
     fun milliwattsProvenanceIsTheLeastDirectOfItsTwoInputsForEveryCombination() {
-        // Framework is the most direct claim, then Privileged, then Measured; the least
-        // direct of the two inputs wins, and the rule is symmetric -- hence keying on a
-        // Set. Driven off Source.entries rather than spelled out one case at a time, so a
-        // new provenance value fails here too instead of going quietly untested.
+        // Framework is the most direct claim, then Vendor, then Privileged, then
+        // Measured; the least direct of the two inputs wins, and the rule is symmetric --
+        // hence keying on a Set. Driven off Source.entries rather than spelled out one
+        // case at a time, so a new provenance value fails here too instead of going
+        // quietly untested. Source.Vendor did exactly that when it was added.
+        //
+        // Vendor sits just behind Framework: it is the manufacturer reporting its own
+        // setting, so nothing is derived, but it exists only where that vendor chose to
+        // publish it rather than on every Android device.
         val leastDirect = mapOf(
             setOf(Source.Framework) to Source.Framework,
+            setOf(Source.Vendor) to Source.Vendor,
             setOf(Source.Privileged) to Source.Privileged,
             setOf(Source.Measured) to Source.Measured,
+            setOf(Source.Framework, Source.Vendor) to Source.Vendor,
             setOf(Source.Framework, Source.Privileged) to Source.Privileged,
             setOf(Source.Framework, Source.Measured) to Source.Measured,
+            setOf(Source.Vendor, Source.Privileged) to Source.Privileged,
+            setOf(Source.Vendor, Source.Measured) to Source.Measured,
             setOf(Source.Privileged, Source.Measured) to Source.Measured,
         )
         for (voltage in Source.entries) {

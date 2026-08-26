@@ -14,6 +14,7 @@ import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.privileged.Transport
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
+import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.CapacityMethod
@@ -135,6 +136,10 @@ class BatteryRepositoryTest {
                 powerProfileMah = null,
             ),
             privileged = privileged,
+            // The real source, reading this device's own Settings provider. Not stubbed:
+            // on a Samsung host it answers and on any other it reports Unsupported, and
+            // both are outcomes these tests must tolerate rather than one being baked in.
+            vendorSettings = VendorSettingsSource(context),
         )
     }
 

@@ -4,7 +4,28 @@ package com.alaminahamed.batteryhealth.domain
  * Where a value came from. Surfaced in the UI so a manufacturer-reported number and
  * a number this app measured are never presented as the same kind of claim.
  */
-enum class Source { Framework, Measured, Privileged }
+enum class Source {
+    /** A standard Android API any app can call. */
+    Framework,
+
+    /** Derived by this app from its own recorded samples. */
+    Measured,
+
+    /** Obtained through the privileged tier -- an adb or root shell. */
+    Privileged,
+
+    /**
+     * A vendor's own value, read without any privilege -- currently
+     * `Settings.Global.protect_battery`, which Samsung populates and which any app may
+     * read.
+     *
+     * Kept apart from [Framework] because it is not a standard Android API and exists only
+     * on the vendors that happen to publish it, and apart from [Privileged] because it
+     * needed no shell and no setup. Collapsing it into either would misstate both how
+     * portable the reading is and what it cost the user to get.
+     */
+    Vendor,
+}
 
 /**
  * Every metric in this app is a Reading. Absence is a value, not an exception and

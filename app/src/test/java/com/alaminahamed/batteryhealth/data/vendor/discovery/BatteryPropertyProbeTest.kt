@@ -1,6 +1,7 @@
 package com.alaminahamed.batteryhealth.data.vendor.discovery
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -286,5 +287,45 @@ class BatteryPropertyProbeTest {
     fun everyPublicSdkPropertyIsUngated() {
         val gatedPublic = BatteryPropertyId.entries.filter { it.publicSdk && it.permissionGated }
         assertEquals(emptyList<BatteryPropertyId>(), gatedPublic)
+    }
+
+    // ---- values that must never reach a shareable report -----------------------------
+
+    /**
+     * `BATTERY_PROPERTY_SERIAL_NUMBER` returns a real per-cell serial once `BATTERY_STATS`
+     * is granted -- observed on a real device. The discovery report exists to be read and
+     * shared, so recording the serial would turn a diagnostic into a device fingerprint
+     * the user hands out without realising. That the property *reads* is the finding; the
+     * value is not.
+     */
+    @Test
+    fun theBatterySerialIsRecordedAsPresentButNotRecorded() {
+        val results = probeWith(
+            numeric = { ProbeSentinels.UNSUPPORTED },
+            text = { id -> if (id == BatteryPropertyId.SerialNumber.id) "GH4305293AAA1L328GS05334C" else null },
+        )
+        val outcome = outcome(results, BatteryPropertyId.SerialNumber)
+        assertTrue("serial must still register as readable", outcome is ProbeOutcome.Value)
+        val recorded = (outcome as ProbeOutcome.Value).raw
+        assertFalse("the serial itself must not appear", recorded.contains("GH4305293"))
+    }
+
+    /** Non-identifying text properties are recorded normally; redaction is not blanket. */
+    @Test
+    fun otherTextPropertiesAreNotRedacted() {
+        val results = probeWith(
+            numeric = { ProbeSentinels.UNSUPPORTED },
+            text = { id -> if (id == BatteryPropertyId.Manufacturer.id) "ATL" else null },
+        )
+        assertEquals(ProbeOutcome.Value("ATL"), outcome(results, BatteryPropertyId.Manufacturer))
+    }
+
+    /** Serial number is the only property flagged identifying; the flag is not decorative. */
+    @Test
+    fun serialNumberIsTheOnlyIdentifyingProperty() {
+        assertEquals(
+            listOf(BatteryPropertyId.SerialNumber),
+            BatteryPropertyId.entries.filter { it.identifying },
+        )
     }
 }

@@ -96,7 +96,8 @@ class BatteryPropertyProbe(
         } catch (t: Throwable) {
             return ProbeOutcome.Failed(describe(t))
         }
-        return raw?.takeIf { it.isNotBlank() }?.let { ProbeOutcome.Value(it) } ?: ProbeOutcome.Absent
+        if (raw.isNullOrBlank()) return ProbeOutcome.Absent
+        return ProbeOutcome.Value(if (property.identifying) REDACTED else raw)
     }
 
     /**
@@ -104,6 +105,20 @@ class BatteryPropertyProbe(
      * screen and a shared diagnostic report, so it stays short and free of anything
      * identifying.
      */
+    private companion object {
+        /**
+         * Stands in for a value that is real but must not be recorded.
+         *
+         * `BATTERY_PROPERTY_SERIAL_NUMBER` returns a genuine per-cell serial, and once
+         * `BATTERY_STATS` is granted it reads successfully. The discovery report exists to
+         * be read and shared as a diagnostic, so putting a hardware serial into it would
+         * turn a debugging aid into a device fingerprint the user hands out without
+         * realising. The fact that the property is *readable* is the finding worth
+         * recording; the value itself is not.
+         */
+        const val REDACTED = "<present, withheld>"
+    }
+
     private fun describe(t: Throwable): String {
         val name = t::class.simpleName ?: "Throwable"
         val message = t.message?.takeIf { it.isNotBlank() }

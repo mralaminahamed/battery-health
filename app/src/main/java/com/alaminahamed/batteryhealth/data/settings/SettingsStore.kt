@@ -113,6 +113,21 @@ class SettingsStore @Inject constructor(private val context: Context) {
         context.dataStore.edit { it[DESIGN_LANGUAGE] = choice.name }
     }
 
+    /**
+     * Whether the user has dismissed the Health screen's unlock card.
+     *
+     * Persisted rather than held per-session: the point of dismissing an offer is not
+     * being pitched it again, and a dismissal that reset on every launch would be a
+     * button that does nothing lasting. It only silences the card's offer states -- see
+     * `UnlockCardVisibility` for what it deliberately cannot hide.
+     */
+    val unlockCardDismissed: Flow<Boolean> =
+        context.dataStore.data.map { it[UNLOCK_CARD_DISMISSED] ?: false }.distinctUntilChanged()
+
+    suspend fun setUnlockCardDismissed(dismissed: Boolean) {
+        context.dataStore.edit { it[UNLOCK_CARD_DISMISSED] = dismissed }
+    }
+
     suspend fun setDesignCapacityOverride(mah: Int?) {
         context.dataStore.edit { prefs ->
             if (mah == null) prefs.remove(DESIGN_CAPACITY_OVERRIDE) else prefs[DESIGN_CAPACITY_OVERRIDE] = mah
@@ -172,6 +187,7 @@ class SettingsStore @Inject constructor(private val context: Context) {
         val CURRENT_SCALE = stringPreferencesKey("current_scale")
         val ADB_PORT = intPreferencesKey("adb_port")
         val ROOT_PREVIOUSLY_GRANTED = booleanPreferencesKey("root_previously_granted")
+        val UNLOCK_CARD_DISMISSED = booleanPreferencesKey("unlock_card_dismissed")
         val DESIGN_LANGUAGE = stringPreferencesKey("design_language_choice")
     }
 }

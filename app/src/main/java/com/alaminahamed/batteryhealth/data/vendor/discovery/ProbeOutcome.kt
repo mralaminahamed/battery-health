@@ -21,6 +21,13 @@ enum class ProbeChannel {
      * `BatteryManager` entirely.
      */
     PowerManager,
+
+    /**
+     * A battery-related key in the `Settings` provider. Readable with no permission, and
+     * the channel that found `protect_battery` -- Battery Protect's on/off state, which
+     * this app otherwise reads only through the privileged tier.
+     */
+    Settings,
 }
 
 /**
