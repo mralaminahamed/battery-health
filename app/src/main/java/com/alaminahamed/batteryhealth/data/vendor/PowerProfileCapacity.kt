@@ -28,7 +28,36 @@ import com.alaminahamed.batteryhealth.data.settings.CapacityEntry
  */
 internal object PowerProfileCapacity {
 
-    /** The `name` attribute of the `<item>` carrying the capacity. */
+    /**
+     * Candidate `<item name=...>` values carrying a capacity, most preferred first.
+     *
+     * `battery.capacity` is AOSP's, and on at least one vendor it holds the *rated*
+     * (minimum) capacity. `battery.typical.capacity` is not an AOSP field at all -- it does
+     * not appear in `frameworks/base/core/res/res/xml/power_profile.xml` -- but Samsung
+     * ships it alongside, carrying the typical figure.
+     *
+     * Observed on an SM-S948B running Android 16:
+     *
+     * ```
+     * battery.capacity          = 4855
+     * battery.typical.capacity  = 5000
+     * ```
+     *
+     * The typical figure is the right one for this app, and the device settles that rather
+     * than a preference: the same phone reported a 4580 mAh charge counter at level 91%,
+     * implying about 5033 mAh at full. Measured against 4855 that is 103.7% health; against
+     * 5000 it is 100.7%. Reading `battery.capacity` would have over-reported health by
+     * roughly 3% on every Samsung device -- silently, and in the flattering direction,
+     * which is the worst way for a health figure to be wrong.
+     *
+     * Order is preference, not fallback-on-error. See [selectCapacity].
+     */
+    val CAPACITY_ITEMS_IN_PREFERENCE_ORDER = listOf(
+        "battery.typical.capacity",
+        "battery.capacity",
+    )
+
+    /** AOSP's own field name, kept for callers that specifically mean that one. */
     const val ITEM_NAME = "battery.capacity"
 
     /** The resource this lives in: `@android:xml/power_profile`. */
@@ -64,4 +93,16 @@ internal object PowerProfileCapacity {
         val mah = Math.round(value).toInt()
         return if (mah in CapacityEntry.PLAUSIBLE_MAH) mah else null
     }
+
+    /**
+     * Picks the best capacity out of everything the profile declared.
+     *
+     * Walks [CAPACITY_ITEMS_IN_PREFERENCE_ORDER] and returns the first entry that is both
+     * present and passes [interpret]. A preferred item failing the plausibility check does
+     * not veto the next one: a vendor shipping `battery.typical.capacity` as an unfilled
+     * placeholder should fall through to AOSP's field rather than leaving the app with
+     * nothing at all.
+     */
+    fun selectCapacity(items: Map<String, String?>): Int? =
+        CAPACITY_ITEMS_IN_PREFERENCE_ORDER.firstNotNullOfOrNull { name -> interpret(items[name]) }
 }

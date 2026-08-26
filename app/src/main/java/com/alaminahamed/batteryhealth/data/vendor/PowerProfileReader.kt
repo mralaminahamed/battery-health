@@ -33,17 +33,7 @@ class PowerProfileReader(private val context: Context) {
      * codebase where a blanket catch is the correct shape, and the reason is that the
      * input is another package's private resource rather than anything this app controls.
      */
-    fun batteryCapacityMah(): Int? = try {
-        val resources = context.createPackageContext(PowerProfileCapacity.RESOURCE_PACKAGE, 0).resources
-        val id = resources.getIdentifier(
-            PowerProfileCapacity.RESOURCE_NAME,
-            PowerProfileCapacity.RESOURCE_TYPE,
-            PowerProfileCapacity.RESOURCE_PACKAGE,
-        )
-        if (id == 0) null else resources.getXml(id).use { parser -> parser.findBatteryCapacity() }
-    } catch (t: Throwable) {
-        null
-    }
+    fun batteryCapacityMah(): Int? = PowerProfileCapacity.selectCapacity(batteryItems())
 
     /**
      * Every `battery.*` item in the profile, as raw text.
