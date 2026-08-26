@@ -13,12 +13,14 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.inject.Named
 
 @HiltViewModel
 class AppsViewModel @Inject constructor(
     private val repository: BatteryRepository,
     private val privileged: PrivilegedBatterySource,
     private val rowMapper: AppRowMapper,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
 ) : ViewModel() {
 
     val state: StateFlow<AppsUiState> = combine(
@@ -35,6 +37,7 @@ class AppsViewModel @Inject constructor(
             // (PackageManager), which the repository layer has no dependency on.
             rows = entries.map { list -> list.map(rowMapper::toRow) },
             appPowerFailed = failed,
+            privilegedTierSupported = privilegedTierSupported,
             isLoading = loading,
         )
     }.stateIn(

@@ -21,10 +21,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.inject.Named
 
 @HiltViewModel
 class HealthViewModel @Inject constructor(
     private val granted: GrantedReadings,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
     private val repository: BatteryRepository,
     private val settings: SettingsStore,
     designCapacity: DesignCapacityProvider,
@@ -71,7 +73,10 @@ class HealthViewModel @Inject constructor(
             // while the app is open, and a card that kept offering a setup already done
             // would be the very staleness this field exists to remove. It is a cheap
             // PackageManager check, not a query.
-            state.copy(batteryStatsGranted = granted.isGranted)
+            state.copy(
+                batteryStatsGranted = granted.isGranted,
+                privilegedTierSupported = privilegedTierSupported,
+            )
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),

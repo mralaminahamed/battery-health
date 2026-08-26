@@ -50,8 +50,14 @@ enum class UnlockNeed {
             permissionGranted: Boolean,
             availability: PrivilegedAvailability,
             dumpFailed: Boolean,
+            shellSupported: Boolean = true,
         ): UnlockNeed {
-            val shellWorking = availability is PrivilegedAvailability.Ready && !dumpFailed
+            // A build with no transport compiled in cannot be helped by `adb tcpip`, so
+            // offering it would be telling the user to run a command that achieves
+            // nothing. Treated as satisfied for the same reason a screen the permission
+            // cannot help is treated as granted: there is no offer left to make.
+            val shellWorking =
+                !shellSupported || (availability is PrivilegedAvailability.Ready && !dumpFailed)
             return when {
                 permissionGranted && shellWorking -> Nothing
                 permissionGranted -> Shell

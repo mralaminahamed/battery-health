@@ -23,6 +23,16 @@ data class AppsUiState(
      * retry" case for this screen specifically, independent of the Health screen's own
      * `privilegedDumpFailed`. */
     val appPowerFailed: Boolean = false,
+    /**
+     * Whether this build has a privileged transport at all. False in the Play flavour.
+     *
+     * Per-app attribution has no unprivileged source -- `BATTERY_STATS` exposes no per-app
+     * property and `SystemHealthManager` reports only this app's own uid -- so where there
+     * is no transport there is no route to this screen's data at any price. Saying that
+     * plainly is the only honest thing left; offering an `adb tcpip` command that cannot
+     * work in this build would be worse than an empty screen.
+     */
+    val privilegedTierSupported: Boolean = true,
     /** See `BatteryRepository.appPowerLoading`'s own doc: true while a checkin call is
      * actually in flight. `AppsScreen` reads this alongside [rows] rather than instead of
      * it -- see that screen's own doc for why a skeleton only replaces [rows]'s ordinary

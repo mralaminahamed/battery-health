@@ -122,6 +122,25 @@ fun AppsContent(
             .testTag(AppsScreenTags.ROOT)
             .verticalScroll(rememberScrollState()),
     ) {
+        // A build with no transport has nothing to offer here, and the card's whole
+        // vocabulary is offers. Saying so plainly is the only honest option left: per-app
+        // attribution has no unprivileged source at any price, so there is no command to
+        // suggest and no permission to grant.
+        if (!state.privilegedTierSupported) {
+            OneUiCard {
+                SectionHeader("Not available in this build")
+                Text(
+                    text = "Per-app battery use comes from Android's own accounting, which " +
+                        "is only readable through a privileged shell. This build ships " +
+                        "without one, so this screen has no data source \u2014 no setup " +
+                        "would change that. Everything else in the app works without it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LocalOneUiColors.current.textSecondary,
+                )
+            }
+            return@Column
+        }
+
         UnlockCard(
             availability = state.privilegedAvailability,
             dumpFailed = state.appPowerFailed,

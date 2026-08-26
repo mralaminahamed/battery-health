@@ -56,18 +56,24 @@ internal object UnlockCardVisibility {
             is PrivilegedAvailability.Ready -> false
         }
 
+    /**
+     * Takes the [need] rather than recomputing it.
+     *
+     * It used to derive its own, and drifted from the copy the card renders with the
+     * moment a fourth input was added: this one kept defaulting `shellSupported` to true
+     * while the card passed false, so it said "show" while the text function said "there
+     * is nothing to say". The result was a card with a heading, a button, and no words at
+     * all -- visible on a real device.
+     *
+     * One derivation, passed in, is the only arrangement where those two cannot disagree.
+     */
     fun shouldShow(
+        need: UnlockNeed,
         availability: PrivilegedAvailability,
         dumpFailed: Boolean,
         dismissed: Boolean,
-        permissionGranted: Boolean = false,
     ): Boolean {
-        // Nothing left to offer, so nothing is shown. This used to test the shell tier
-        // alone, which meant a user who had granted the permission was still told to set
-        // up adb for readings already on their screen.
-        if (UnlockNeed.of(permissionGranted, availability, dumpFailed) == UnlockNeed.Nothing) {
-            return false
-        }
+        if (need == UnlockNeed.Nothing) return false
         return !(dismissed && isDismissible(availability, dumpFailed))
     }
 }
@@ -109,6 +115,7 @@ fun UnlockCard(
     onDismiss: () -> Unit = {},
     permissionGranted: Boolean = false,
     permissionRelevant: Boolean = true,
+    shellSupported: Boolean = true,
 ) {
     // A screen where the permission cannot supply anything is a screen where it is
     // already, effectively, satisfied. The Apps screen is exactly that: per-app
@@ -116,10 +123,9 @@ fun UnlockCard(
     // offer -- so without this flag, granting the permission would make the card appear on
     // Apps even with a perfectly working shell, advertising a route that cannot help.
     val effectivelyGranted = permissionGranted || !permissionRelevant
-    if (!UnlockCardVisibility.shouldShow(availability, dumpFailed, dismissed, effectivelyGranted)) {
-        return
-    }
-    val need = UnlockNeed.of(effectivelyGranted, availability, dumpFailed)
+    // Derived once, here, and handed to everything that needs it. See shouldShow's doc.
+    val need = UnlockNeed.of(effectivelyGranted, availability, dumpFailed, shellSupported)
+    if (!UnlockCardVisibility.shouldShow(need, availability, dumpFailed, dismissed)) return
 
     val colors = LocalOneUiColors.current
     val readyButFailed = availability is PrivilegedAvailability.Ready && dumpFailed

@@ -15,7 +15,13 @@ class UnlockCardVisibilityTest {
         dumpFailed: Boolean = false,
         dismissed: Boolean = false,
         permissionGranted: Boolean = false,
-    ) = UnlockCardVisibility.shouldShow(availability, dumpFailed, dismissed, permissionGranted)
+        shellSupported: Boolean = true,
+    ) = UnlockCardVisibility.shouldShow(
+        need = UnlockNeed.of(permissionGranted, availability, dumpFailed, shellSupported),
+        availability = availability,
+        dumpFailed = dumpFailed,
+        dismissed = dismissed,
+    )
 
     // ---- behaviour that predates dismissal, which must not regress -------------------
 
@@ -129,14 +135,34 @@ class UnlockCardVisibilityTest {
             ready to true,
         )
         states.forEach { (availability, dumpFailed) ->
-            val rendered = UnlockCardVisibility.shouldShow(availability, dumpFailed, dismissed = false)
+            val rendered = shows(availability, dumpFailed, dismissed = false)
             assertTrue("$availability should render", rendered)
             val dismissible = UnlockCardVisibility.isDismissible(availability, dumpFailed)
-            val persistsAnyway = UnlockCardVisibility.shouldShow(availability, dumpFailed, dismissed = true)
+            val persistsAnyway = shows(availability, dumpFailed, dismissed = true)
             assertTrue(
                 "$availability is neither dismissible nor deliberately persistent",
                 dismissible || persistsAnyway,
             )
         }
+    }
+
+    /**
+     * A build with no transport compiled in cannot be helped by `adb tcpip`, so with the
+     * permission granted there is nothing left to offer and the card must not appear.
+     *
+     * This is the case that exposed the split derivation: `shouldShow` computed its own
+     * need and defaulted `shellSupported` to true, so it returned "show" while the text
+     * function returned "" -- a card with a heading, a button and no words, on a real
+     * device. The need is now derived once and passed in.
+     */
+    @Test
+    fun aBuildWithoutATransportOffersNothingOnceThePermissionIsGranted() {
+        assertFalse(shows(PrivilegedAvailability.Unavailable, permissionGranted = true, shellSupported = false))
+    }
+
+    /** Without the permission there is still one real thing to offer, even with no shell. */
+    @Test
+    fun aBuildWithoutATransportStillOffersThePermission() {
+        assertTrue(shows(PrivilegedAvailability.Unavailable, permissionGranted = false, shellSupported = false))
     }
 }

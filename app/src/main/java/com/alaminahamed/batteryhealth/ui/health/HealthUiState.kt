@@ -91,6 +91,16 @@ data class HealthUiState(
      * grant.
      */
     val batteryStatsGranted: Boolean = false,
+    /**
+     * Whether this build has a privileged transport compiled in at all.
+     *
+     * False in the Play flavour, which ships no adb or root code and no INTERNET
+     * permission. The UI reads it rather than inferring from an availability that would
+     * simply never become Ready, because those two states want opposite things said: one
+     * is "run this command", the other is "this build cannot do that, and does not need
+     * to".
+     */
+    val privilegedTierSupported: Boolean = true,
 ) {
     /**
      * A value the platform reports directly beats one this app inferred, but beyond

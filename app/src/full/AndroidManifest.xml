@@ -18,4 +18,15 @@
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- `full` only. The privileged tier's adb transport connects to this device's own
+         adbd over loopback, and Android enforces INTERNET at socket creation regardless
+         of destination; it does not exempt 127.0.0.1.
+
+         The Play build compiles no transport in at all (see NoPrivilegedTier), so it
+         ships without this permission and cannot open a socket even in principle. That
+         ends the "why does a battery app need internet?" question at review rather than
+         answering it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+
 </manifest>
