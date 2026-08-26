@@ -140,23 +140,8 @@ private fun notificationSettingsIntent(context: Context) =
     Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
 
-/**
- * Deep-links to the system's Usage access list, the only route to `PACKAGE_USAGE_STATS`:
- * it is appop-gated with no runtime dialog of its own, so this and a manual toggle there
- * are the entire action.
- *
- * `resolveActivity` is checked first because some OEM builds ship no activity for
- * `ACTION_USAGE_ACCESS_SETTINGS` at all -- `startActivity` on an unresolvable intent throws
- * `ActivityNotFoundException`, and there is no fallback screen worth sending the user to
- * instead, so this silently does nothing rather than crash the settings screen over a
- * deep link with no working destination.
- */
-private fun openUsageAccessSettings(context: Context) {
-    val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-    if (intent.resolveActivity(context.packageManager) != null) {
-        context.startActivity(intent)
-    }
-}
+// openUsageAccessSettings now lives in UsageAccessDeepLink.kt (same package), shared with
+// AppsScreen's own estimate disclosure card -- see that file's doc.
 
 @Composable
 fun SettingsContent(
