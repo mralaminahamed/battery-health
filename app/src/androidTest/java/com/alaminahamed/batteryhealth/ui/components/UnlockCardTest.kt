@@ -220,4 +220,72 @@ class UnlockCardTest {
         compose.onNodeWithText("Connecting…").assertIsDisplayed()
         compose.onAllNodesWithTag(UnlockCardTags.ACTION).assertCountEquals(0)
     }
+
+    // ---- dismissal -------------------------------------------------------------------
+
+    @Test
+    fun anOfferCanBeDismissedAndThenStaysGone() {
+        var dismissed = false
+        compose.setContent {
+            BatteryHealthTheme {
+                UnlockCard(
+                    availability = PrivilegedAvailability.Unavailable,
+                    dumpFailed = false,
+                    onConnect = {},
+                    onLearnMore = {},
+                    onRetry = {},
+                    dismissed = dismissed,
+                    onDismiss = { dismissed = true },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UnlockCardTags.DISMISS).performClick()
+        compose.waitForIdle()
+        assertTrue("onDismiss should have fired", dismissed)
+    }
+
+    @Test
+    fun aDismissedOfferRendersNothingAtAll() {
+        compose.setContent {
+            BatteryHealthTheme {
+                UnlockCard(
+                    availability = PrivilegedAvailability.Unavailable,
+                    dumpFailed = false,
+                    onConnect = {},
+                    onLearnMore = {},
+                    onRetry = {},
+                    dismissed = true,
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UnlockCardTags.ROOT).assertDoesNotExist()
+    }
+
+    /**
+     * The line dismissal must not cross. A user staring at the system's authorization
+     * dialog needs the card that explains it, whatever they dismissed earlier, and a
+     * failed privileged read needs its retry -- without it every privileged row silently
+     * reads "needs privileged access" again with no way back.
+     */
+    @Test
+    fun dismissalDoesNotHideWhatTheUserThemselvesStarted() {
+        compose.setContent {
+            BatteryHealthTheme {
+                UnlockCard(
+                    availability = PrivilegedAvailability.AwaitingAuthorization,
+                    dumpFailed = false,
+                    onConnect = {},
+                    onLearnMore = {},
+                    onRetry = {},
+                    dismissed = true,
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UnlockCardTags.ROOT).assertIsDisplayed()
+        // ...and offers no dismiss control, because dismissing it would do nothing.
+        compose.onNodeWithTag(UnlockCardTags.DISMISS).assertDoesNotExist()
+    }
 }

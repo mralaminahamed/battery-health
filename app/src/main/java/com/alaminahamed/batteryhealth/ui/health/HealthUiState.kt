@@ -78,6 +78,12 @@ data class HealthUiState(
      * otherwise-unreachable "Ready but the read failed, retry" case.
      */
     val privilegedDumpFailed: Boolean = false,
+    /**
+     * Mirrors `SettingsStore.unlockCardDismissed`. Defaults to false only as the
+     * cold-start placeholder before the real flow first emits, the same convention the
+     * other mirrored fields here use.
+     */
+    val unlockCardDismissed: Boolean = false,
 ) {
     /**
      * A value the platform reports directly beats one this app inferred, but beyond

@@ -11,6 +11,17 @@
          Android enforces INTERNET at socket creation via the inet group, and loopback is
          not exempt, so staying on-device does not avoid it. The app makes no outbound
          network requests; PrivilegedShellLoopbackTest asserts that mechanically. -->
+    <!--
+      Signature|privileged|development. A normal app can never be granted this by a user
+      tap, but the "development" flag means adb can grant it directly:
+
+          adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STATS
+
+      Declared so that grant has something to attach to. Ungranted it does nothing at all
+      and the app behaves exactly as before, so this is inert on every device that has not
+      run the command.
+    -->
+    <uses-permission android:name="android.permission.BATTERY_STATS" />
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application

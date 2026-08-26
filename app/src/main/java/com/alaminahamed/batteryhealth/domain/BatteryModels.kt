@@ -96,8 +96,12 @@ data class BatterySnapshot(
 private val Source.directness: Int
     get() = when (this) {
         Source.Framework -> 0
-        Source.Privileged -> 1
-        Source.Measured -> 2
+        // A vendor's own published state, sitting just behind a standard Android API in
+        // directness: it is the manufacturer reporting its own setting rather than this
+        // app deriving anything, but it exists only where that vendor chose to publish it.
+        Source.Vendor -> 1
+        Source.Privileged -> 2
+        Source.Measured -> 3
     }
 
 /**

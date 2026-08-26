@@ -9,6 +9,7 @@ import com.alaminahamed.batteryhealth.data.privileged.ParsedBatteryDump
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.vendor.VendorSettingsSource
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.BatterySnapshot
 import com.alaminahamed.batteryhealth.domain.HealthReport
@@ -40,6 +41,7 @@ class BatteryRepository @Inject constructor(
     private val estimator: HealthEstimator,
     private val designCapacity: DesignCapacityProvider,
     private val privileged: PrivilegedBatterySource,
+    private val vendorSettings: VendorSettingsSource,
 ) {
     /**
      * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
@@ -155,7 +157,23 @@ class BatteryRepository @Inject constructor(
             manufacturingDateEpochDay = Reading.Unsupported,
             chargeTimeRemainingMs = properties.chargeTimeRemainingMs(),
             bsohPct = dump?.bsohPct.privilegedReading(dumpAvailable),
-            protectBatteryModeEnabled = dump?.protectBatteryModeEnabled.privilegedReading(dumpAvailable),
+            // The privileged dump wins when it actually has a value, and the vendor's own
+            // Settings key fills in otherwise. Both are Samsung reporting its own state,
+            // so neither is more truthful -- the order is about coherence: the dump
+            // supplies `protectionThresholdPct` on the row directly below this one, and
+            // taking the two fields from one dump at one instant keeps "Status: On" and
+            // "Charge limit: 80%" describing the same moment.
+            //
+            // The vendor key is what makes this work with no setup at all. Unconnected,
+            // the dump reads NeedsPrivilegedAccess and falls through to a value that cost
+            // the user nothing: no permission, no shell, no per-boot command. Prefering it
+            // outright was tried first and was wrong -- it silently made the privileged
+            // reading unreachable on every Samsung device, which
+            // `retryPrivilegedDumpRefreshesBatteryProtectFieldsOnDemand` caught by
+            // asserting a retry still refreshes this field.
+            protectBatteryModeEnabled = dump?.protectBatteryModeEnabled
+                .privilegedReading(dumpAvailable)
+                .orElse { vendorSettings.batteryProtectEnabled() },
             protectionThresholdPct = dump?.protectionThresholdPct.privilegedReading(dumpAvailable),
         )
     }
@@ -288,3 +306,13 @@ class BatteryRepository @Inject constructor(
         const val SESSION_WINDOW = 50
     }
 }
+
+/**
+ * The first reading if it actually carries a value, otherwise whatever [fallback] says.
+ *
+ * Only [Reading.Available] short-circuits. An [Reading.Unsupported] from a vendor source
+ * means "this device publishes nothing here", which must not shadow a privileged tier that
+ * could still answer -- the whole point of the fallback.
+ */
+private inline fun <T> Reading<T>.orElse(fallback: () -> Reading<T>): Reading<T> =
+    if (this is Reading.Available) this else fallback()

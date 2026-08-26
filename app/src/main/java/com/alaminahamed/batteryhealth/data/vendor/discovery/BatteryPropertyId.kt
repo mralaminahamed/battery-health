@@ -65,12 +65,18 @@ enum class PropertyKind { Numeric, Text }
  *   sentinel on every device, which is indistinguishable from the platform genuinely
  *   not having it. Types come from each constant's own AOSP documentation, where the
  *   three text ones say "as a string" outright.
+ * @property identifying whether the value uniquely identifies this physical device.
+ *   Only [SerialNumber] is: it returns a real per-cell serial once `BATTERY_STATS`
+ *   is granted. The discovery report is meant to be shared, so an identifying value
+ *   is recorded as present-but-withheld -- that the property reads at all is the
+ *   finding, and the serial itself would turn a diagnostic into a fingerprint.
  */
 enum class BatteryPropertyId(
     val id: Int,
     val publicSdk: Boolean,
     val permissionGated: Boolean,
     val kind: PropertyKind = PropertyKind.Numeric,
+    val identifying: Boolean = false,
 ) {
     ChargeCounter(1, publicSdk = true, permissionGated = false),
     CurrentNow(2, publicSdk = true, permissionGated = false),
@@ -89,7 +95,7 @@ enum class BatteryPropertyId(
      */
     StateOfHealth(10, publicSdk = false, permissionGated = false),
 
-    SerialNumber(11, publicSdk = false, permissionGated = true, kind = PropertyKind.Text),
+    SerialNumber(11, publicSdk = false, permissionGated = true, kind = PropertyKind.Text, identifying = true),
     PartStatus(12, publicSdk = false, permissionGated = true),
     Manufacturer(13, publicSdk = false, permissionGated = true, kind = PropertyKind.Text),
     ModelName(14, publicSdk = false, permissionGated = true, kind = PropertyKind.Text),

@@ -114,6 +114,7 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         state = state,
         modifier = modifier,
         onConnect = viewModel::connectPrivilegedTier,
+        onDismissUnlockCard = viewModel::dismissUnlockCard,
         onLearnMore = {
             context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
@@ -155,6 +156,7 @@ fun HealthContent(
     onConnect: () -> Unit = {},
     onLearnMore: () -> Unit = {},
     onRetryPrivilegedDump: () -> Unit = {},
+    onDismissUnlockCard: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
@@ -243,6 +245,8 @@ fun HealthContent(
             availability = state.privilegedAvailability,
             dumpFailed = state.privilegedDumpFailed,
             onConnect = onConnect,
+            dismissed = state.unlockCardDismissed,
+            onDismiss = onDismissUnlockCard,
             onLearnMore = onLearnMore,
             onRetry = onRetryPrivilegedDump,
         )
@@ -507,6 +511,10 @@ private fun SourceChip(source: Source) {
             Source.Framework -> "Reported"
             Source.Measured -> "Measured"
             Source.Privileged -> "ASOC"
+            // Named for who said it rather than how it was obtained. "Reported" would
+            // blur it into an ordinary Android reading, and the distinction is real: this
+            // is Samsung's own value, present only on Samsung devices.
+            Source.Vendor -> "Vendor"
         },
         style = MaterialTheme.typography.labelSmall,
         color = colors.accent,

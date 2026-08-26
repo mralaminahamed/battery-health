@@ -61,6 +61,8 @@ class HealthViewModel @Inject constructor(
             partial.copy(privilegedAvailability = availability)
         }.combine(repository.privilegedDumpFailed) { partial, dumpFailed ->
             partial.copy(privilegedDumpFailed = dumpFailed)
+        }.combine(settings.unlockCardDismissed) { partial, dismissed ->
+            partial.copy(unlockCardDismissed = dismissed)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -116,6 +118,17 @@ class HealthViewModel @Inject constructor(
      * `UnlockCard` only wires its action button to this while `state.privilegedAvailability`
      * is a state that actually has something to connect.
      */
+    /**
+     * Permanent, not per-session: the point of dismissing an offer is not being pitched
+     * it again. There is deliberately no un-dismiss here -- the card only ever explained
+     * a setup the user can still start from Settings, and the states that matter
+     * (awaiting authorization, connecting, a failed read needing retry) are shown
+     * regardless of dismissal. See `UnlockCardVisibility`.
+     */
+    fun dismissUnlockCard() {
+        viewModelScope.launch { settings.setUnlockCardDismissed(true) }
+    }
+
     fun connectPrivilegedTier() {
         viewModelScope.launch { privileged.connect() }
     }
