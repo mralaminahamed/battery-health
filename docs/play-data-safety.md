@@ -27,28 +27,43 @@ artifacts.
 
 ## Permission declarations
 
-### `INTERNET`
+### `INTERNET` — **not declared in the Play build**
 
-Required to open a socket to the on-device Android Debug Bridge daemon at `127.0.0.1`. Android
-enforces `INTERNET` at socket creation regardless of destination and does not exempt loopback,
-so an app cannot connect to its own device without it.
+The Play flavour compiles in no network code at all and ships without this permission. There
+is nothing to justify at review: the shipped package cannot open a socket to any address.
 
-No outbound network requests are made. This is enforced by an automated test, not merely
-asserted.
+The `full` flavour, distributed outside Google Play, declares it for one purpose — a socket to
+`127.0.0.1` so the optional privileged tier can reach the device's own `adbd`. Android
+enforces `INTERNET` at socket creation regardless of destination and does not exempt loopback.
 
-### `FOREGROUND_SERVICE_SPECIAL_USE`
+`PrivilegedShellLoopbackTest` fails the build if any production source constructs a socket
+outside `AdbConnection`, or constructs one with a named host rather than
+`InetAddress.getLoopbackAddress()`.
 
-Declared with a matching `<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE">`
-in the manifest. Justification, which should be pasted into the Play Console declaration
-verbatim:
+### `BATTERY_STATS`
 
-> Samples battery charge counters every five seconds while charging to measure full capacity,
-> which cannot be derived from 15-minute periodic work.
+Declared, and **not held by default**. Its protection level is
+`signature|privileged|development`, so it can never be granted by a user tapping
+something and is never granted on a normal install. The `development` flag means it can be
+granted over adb:
 
-The measurement this app exists to perform requires charge-counter deltas sampled densely
-across a charge session. `WorkManager`'s minimum periodic interval is 15 minutes, which is far
-too coarse: at that cadence the counter deltas are dominated by noise and the derived capacity
-is not trustworthy. No other foreground service type describes this use.
+```
+adb shell pm grant com.alaminahamed.batteryhealth android.permission.BATTERY_STATS
+```
+
+That is an explicit, deliberate action taken by the device's owner from their own computer.
+Ungranted, the declaration is inert: the app behaves exactly as it does without it, and the
+three affected readings (state of health, first-use date, manufacturing date) report as
+unavailable.
+
+Justification if a reviewer asks: the app's stated purpose is reporting battery health
+honestly, and these are the values that make that possible. It does not fail, degrade, or
+nag when the permission is absent — it says the readings are unavailable, which is the same
+thing it does for every other value it cannot obtain.
+
+Nothing read under this permission leaves the device. The battery serial number is
+deliberately **not** recorded even into the app's own diagnostic report — it is a
+per-device identifier, and the report is meant to be shareable.
 
 ### `RECEIVE_BOOT_COMPLETED`
 
@@ -82,4 +97,4 @@ The privileged surface is exactly two commands, `dumpsys battery` and
 a command string, so no caller-supplied or data-derived text can reach a shell. This is a
 structural property, not a filter that could be bypassed.
 
-**"Why does a battery app need INTERNET?"** See above — loopback only, enforced by test.
+**"Why does a battery app need INTERNET?"** The Play build does not have it. See above.

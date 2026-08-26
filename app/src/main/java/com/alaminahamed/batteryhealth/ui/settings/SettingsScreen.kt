@@ -7,11 +7,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import com.alaminahamed.batteryhealth.data.vendor.discovery.ProbeChannel
+import com.alaminahamed.batteryhealth.data.vendor.discovery.ProbeOutcome
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -23,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -34,7 +40,14 @@ import com.alaminahamed.batteryhealth.ui.components.KeyValueRow
 import com.alaminahamed.batteryhealth.ui.components.OneUiCard
 import com.alaminahamed.batteryhealth.ui.components.SectionHeader
 import com.alaminahamed.batteryhealth.ui.components.Value
+import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
+
+object DiagnosticsTags {
+    const val RUN = "diagnostics-run"
+    const val RESULTS = "diagnostics-results"
+    const val EMPTY = "diagnostics-empty"
+}
 
 object SettingsScreenTags {
     const val ROOT = "settings-root"
@@ -68,14 +81,23 @@ object SettingsAdbPortTags {
  * this app's second-best experience, not the one this screen exists for.
  */
 @Composable
-fun SettingsScreen(modifier: Modifier = Modifier, viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = hiltViewModel(),
+    diagnosticsViewModel: DiagnosticsViewModel = hiltViewModel(),
+    onDesignLanguageChange: (DesignLanguageChoice) -> Unit,
+) {
     val state by viewModel.state.collectAsState()
+    val diagnostics by diagnosticsViewModel.state.collectAsState()
     SettingsContent(
         state = state,
         modifier = modifier,
         onSaveDesignCapacity = viewModel::setDesignCapacityOverride,
         onClearDesignCapacity = viewModel::clearDesignCapacityOverride,
         onSaveAdbPort = viewModel::setAdbPort,
+        onDesignLanguageChange = onDesignLanguageChange,
+        diagnostics = diagnostics,
+        onRunDiagnostics = diagnosticsViewModel::run,
     )
 }
 
@@ -86,6 +108,17 @@ fun SettingsContent(
     onSaveDesignCapacity: (Int) -> Unit = {},
     onClearDesignCapacity: () -> Unit = {},
     onSaveAdbPort: (Int) -> Unit = {},
+    onDesignLanguageChange: (DesignLanguageChoice) -> Unit = {},
+    /**
+     * Diagnostics state and its trigger arrive as parameters rather than being pulled
+     * from a `hiltViewModel()` inside this composable. `SettingsContent` is exercised
+     * directly by `SettingsScreenTest` with a plain Compose rule and no Hilt harness --
+     * see this file's own doc -- and a `hiltViewModel()` call anywhere inside it breaks
+     * every one of those tests at once, which is exactly what happened when the
+     * diagnostics card was first added.
+     */
+    diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
+    onRunDiagnostics: () -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
@@ -97,6 +130,38 @@ fun SettingsContent(
             .testTag(SettingsScreenTags.ROOT)
             .verticalScroll(rememberScrollState()),
     ) {
+        OneUiCard {
+            SectionHeader("Appearance")
+            // selectableGroup + selectable(role = RadioButton) rather than plain clickable
+            // rows: these three are a single-choice group, not three unrelated buttons, and
+            // without this a screen reader announces them as undifferentiated clickable rows
+            // with no indication they are mutually exclusive or which one is selected.
+            Column(modifier = Modifier.selectableGroup()) {
+                DesignLanguageChoice.entries.forEachIndexed { index, choice ->
+                    val selected = state.designLanguage == choice
+                    KeyValueRow(
+                        label = when (choice) {
+                            DesignLanguageChoice.Auto -> "Match this device"
+                            DesignLanguageChoice.Samsung -> "One UI"
+                            DesignLanguageChoice.Material -> "Material"
+                        },
+                        showDivider = index != DesignLanguageChoice.entries.lastIndex,
+                        modifier = Modifier
+                            .selectable(
+                                selected = selected,
+                                onClick = { onDesignLanguageChange(choice) },
+                                role = Role.RadioButton,
+                            )
+                            .testTag("design-language-${choice.name}"),
+                    ) {
+                        if (selected) Value("Selected")
+                    }
+                }
+            }
+        }
+
+        DiagnosticsCard(diagnostics, onRunDiagnostics)
+
         OneUiCard {
             SectionHeader("Design capacity")
             Text(
@@ -121,7 +186,11 @@ fun SettingsContent(
             }
         }
 
-        OneUiCard {
+        // Hidden where no transport exists. The Play build compiles none in, so this card
+        // offered a port for a connection that build cannot make, describing a command
+        // ("adb tcpip") that would achieve nothing on it. A setting that cannot affect
+        // anything is worse than a missing one: it invites the user to go and try.
+        if (state.privilegedTierSupported) OneUiCard {
             SectionHeader("Privileged tier")
             Text(
                 text = "Only needed if you connect the optional privileged tier from " +
@@ -148,7 +217,14 @@ fun SettingsContent(
         DesignCapacityDialog(
             currentOverrideMah = when (state.designCapacity.source) {
                 DesignCapacitySource.Override -> state.designCapacity.mah
-                DesignCapacitySource.Table, DesignCapacitySource.None -> null
+                // Only the user's own override pre-fills the dialog. A table figure or the
+                // device's own declaration is not the user's claim to edit, and offering
+                // one as the starting value invites them to "confirm" a number they never
+                // supplied, turning a derived figure into a stored override by accident.
+                DesignCapacitySource.Table,
+                DesignCapacitySource.PowerProfile,
+                DesignCapacitySource.None,
+                -> null
             },
             onSave = { mah ->
                 onSaveDesignCapacity(mah)
@@ -176,7 +252,7 @@ fun SettingsContent(
 
 /**
  * "None" is included in this `when` only so the compiler can enforce exhaustiveness if a
- * fourth source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
+ * further source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
  * is already `None`, so the early return above is what actually handles that case. Mirrors
  * `HealthScreen`'s own `designCapacityValueText` -- kept as a separate copy rather than a
  * shared import because each screen's row has a different surrounding voice ("model
@@ -187,6 +263,10 @@ private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
     return when (info.source) {
         DesignCapacitySource.Override -> "$mah mAh, your override"
         DesignCapacitySource.Table -> "$mah mAh, model table"
+        // Named for where it came from, not dressed up as a measurement: this is the
+        // figure the manufacturer wrote into the platform image, which is real device
+        // data but still a declaration rather than something this app observed.
+        DesignCapacitySource.PowerProfile -> "$mah mAh, reported by this device"
         DesignCapacitySource.None -> "Not set — tap to add"
     }
 }
@@ -331,4 +411,79 @@ private fun AdbPortDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+/**
+ * What this device actually offered, channel by channel.
+ *
+ * The sweep is the only way to see what a given phone exposes, and until now it was
+ * reachable only from an instrumented test -- which meant the app could not answer the
+ * question on anyone's hardware but the developer's. Everything the app knows about
+ * devices it was not built on has to start here.
+ *
+ * Deliberately behind a button rather than run on entry. It is cheap but not free, most
+ * people opening Settings do not want it, and the result must describe the device now
+ * rather than at process start: a permission can be granted between launches and a
+ * platform flag can flip across an OS update.
+ */
+@Composable
+private fun DiagnosticsCard(state: DiagnosticsUiState, onRun: () -> Unit) {
+    val colors = LocalOneUiColors.current
+
+    OneUiCard {
+        SectionHeader("Device diagnostics")
+        Text(
+            text = "Asks this device for every battery value it might expose and reports " +
+                "exactly what came back \u2014 including what it has but will not share. " +
+                "Nothing leaves your phone.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.textSecondary,
+        )
+        Button(
+            onClick = onRun,
+            enabled = !state.running,
+            modifier = Modifier
+                .padding(top = 10.dp)
+                .testTag(DiagnosticsTags.RUN),
+        ) { Text(if (state.running) "Reading\u2026" else "Run") }
+
+        val report = state.report
+        if (report != null) {
+            state.identity?.let { identity ->
+                KeyValueRow("Device") { Value("${identity.manufacturer} ${identity.model}") }
+            }
+            // Counted rather than just listed: "6 withheld" is the line that tells a user
+            // there is something to unlock, and it is the single most actionable number
+            // the sweep produces.
+            KeyValueRow("Readable") { Value("${report.values.size}") }
+            KeyValueRow("Withheld", showDivider = false) { Value("${report.denied.size}") }
+
+            Column(modifier = Modifier.testTag(DiagnosticsTags.RESULTS)) {
+                ProbeChannel.entries.forEach { channel ->
+                    val rows = report.of(channel)
+                    if (rows.isEmpty()) return@forEach
+                    SectionHeader(channel.name)
+                    rows.forEachIndexed { index, row ->
+                        KeyValueRow(row.key, showDivider = index != rows.lastIndex) {
+                            Value(describe(row.outcome))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Renders an outcome as something a person can act on.
+ *
+ * "Withheld" rather than the exception's name: a `SecurityException` is not an error the
+ * user caused and framing it as one would be misleading. It is the platform confirming the
+ * value exists, which is the one outcome worth telling them about.
+ */
+private fun describe(outcome: ProbeOutcome): String = when (outcome) {
+    is ProbeOutcome.Value -> outcome.raw
+    ProbeOutcome.Absent -> "not available"
+    ProbeOutcome.Denied -> "withheld"
+    is ProbeOutcome.Failed -> "failed"
 }

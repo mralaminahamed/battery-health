@@ -27,8 +27,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
+import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageId
+import com.alaminahamed.batteryhealth.ui.theme.LocalDesignLanguage
 import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 
 @Composable
@@ -36,25 +37,34 @@ fun OneUiCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val colors = LocalOneUiColors.current
+    val language = LocalDesignLanguage.current
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(colors.card)
-            .padding(16.dp),
+            .padding(
+                horizontal = language.spacing.cardOuterHorizontal,
+                vertical = language.spacing.cardOuterVertical,
+            )
+            .clip(RoundedCornerShape(language.shapes.card))
+            .background(language.colors.card)
+            .padding(language.spacing.cardInner),
         content = content,
     )
 }
 
 @Composable
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
+    val language = LocalDesignLanguage.current
     Text(
         text = text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
-        color = LocalOneUiColors.current.accent,
-        modifier = modifier.padding(bottom = 6.dp),
+        // One UI puts section headers in the accent colour; Expressive uses a neutral
+        // label, so this reads from the bundle rather than always using the accent.
+        color = when (language.id) {
+            DesignLanguageId.OneUi -> language.colors.accent
+            DesignLanguageId.Expressive -> language.colors.textSecondary
+        },
+        modifier = modifier.padding(bottom = language.spacing.sectionHeaderBottom),
     )
 }
 
@@ -65,22 +75,22 @@ fun KeyValueRow(
     showDivider: Boolean = true,
     value: @Composable () -> Unit,
 ) {
-    val colors = LocalOneUiColors.current
+    val language = LocalDesignLanguage.current
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = language.spacing.rowVertical),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyLarge,
-                color = colors.textSecondary,
+                color = language.colors.textSecondary,
             )
             value()
         }
         if (showDivider) {
-            HorizontalDivider(color = colors.divider)
+            HorizontalDivider(color = language.colors.divider)
         }
     }
 }
@@ -94,7 +104,7 @@ fun Value(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
-        color = LocalOneUiColors.current.textPrimary,
+        color = LocalDesignLanguage.current.colors.textPrimary,
         modifier = modifier,
     )
 }
@@ -106,13 +116,17 @@ fun BigMetric(
     color: Color,
     modifier: Modifier = Modifier,
 ) {
+    val spacing = LocalDesignLanguage.current.spacing
     Row(modifier = modifier, verticalAlignment = Alignment.Bottom) {
         Text(text = value, style = MaterialTheme.typography.headlineMedium, color = color)
         Text(
             text = unit,
             style = MaterialTheme.typography.titleMedium,
             color = color,
-            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+            modifier = Modifier.padding(
+                start = spacing.unitOffsetStart,
+                bottom = spacing.unitOffsetBottom,
+            ),
         )
     }
 }
@@ -123,19 +137,21 @@ fun ProgressTrack(
     color: Color,
     modifier: Modifier = Modifier,
 ) {
-    val colors = LocalOneUiColors.current
+    val language = LocalDesignLanguage.current
+    val height = language.spacing.progressHeight
+    val pill = RoundedCornerShape(language.shapes.pill)
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(9.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(colors.divider),
+            .height(height)
+            .clip(pill)
+            .background(language.colors.divider),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                .height(9.dp)
-                .clip(RoundedCornerShape(999.dp))
+                .height(height)
+                .clip(pill)
                 .background(color),
         )
     }

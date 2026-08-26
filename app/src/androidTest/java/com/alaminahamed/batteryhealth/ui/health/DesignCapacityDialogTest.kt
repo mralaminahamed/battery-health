@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.Modifier
 import androidx.test.platform.app.InstrumentationRegistry
@@ -30,6 +31,29 @@ import org.junit.Test
  * `HealthViewModel.setDesignCapacityOverride` does in production -- so, per
  * `SettingsStoreTest`'s established pattern, this suite clears it before and after to
  * stay hermetic.
+ *
+ * ## Two things this suite needs, learned by running it
+ *
+ * **The screen must be awake and unlocked.** With the display dozing, every Compose test
+ * in the module fails with "No compose hierarchies found in the app" -- a message that
+ * blames the Activity and says nothing about the screen. On this device's 30-second
+ * timeout that turned a green suite into 47 failures spread across classes nobody had
+ * touched, differing run to run, which reads exactly like flaky product code. See
+ * `docs/running-instrumented-tests.md`.
+ *
+ * **Scroll to a row before clicking it.** `HealthContent` is a long `verticalScroll`
+ * column and the design-capacity row sits in its last card, below the fold on a phone.
+ * `performClick` does not scroll: it dispatches a touch at the node's centre, and for a
+ * node outside the viewport that touch lands nowhere. Nothing throws -- the node is in the
+ * semantics tree, so the call looks like it worked -- and it surfaces later and
+ * misleadingly as the dialog's input "not found". `SettingsScreenTest` has the same rows
+ * and dialog and got away without scrolling purely because that screen is shorter.
+ *
+ * Test bodies also avoid wrapping `compose.setContent` in `runBlocking`, and suspending
+ * calls take their own narrow `runBlocking { }`. That is on general principle -- a
+ * blocking event loop on the test thread has no business surrounding a Compose rule -- and
+ * not because it was shown to fix anything here: it was tried against these failures first
+ * and changed nothing. The screen and the scrolling were the real causes.
  */
 class DesignCapacityDialogTest {
 
@@ -56,12 +80,12 @@ class DesignCapacityDialogTest {
         }
 
         compose.onNodeWithTag(DesignCapacityTags.DIALOG).assertDoesNotExist()
-        compose.onNodeWithTag(DesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(DesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(DesignCapacityTags.DIALOG).assertIsDisplayed()
     }
 
     @Test
-    fun outOfRangeValueIsRejectedWithoutWriting() = runBlocking {
+    fun outOfRangeValueIsRejectedWithoutWriting() {
         var saveCalls = 0
         compose.setContent {
             BatteryHealthTheme {
@@ -73,7 +97,7 @@ class DesignCapacityDialogTest {
             }
         }
 
-        compose.onNodeWithTag(DesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(DesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(DesignCapacityTags.INPUT).performTextInput("99999")
         compose.onNodeWithTag(DesignCapacityTags.SAVE).performClick()
 
@@ -82,11 +106,11 @@ class DesignCapacityDialogTest {
         compose.onNodeWithText("Enter a value between 1000 and 10000 mAh").assertIsDisplayed()
         compose.onNodeWithTag(DesignCapacityTags.DIALOG).assertIsDisplayed()
         assertEquals(0, saveCalls)
-        assertNull(settings.designCapacityOverrideMah.first())
+        assertNull(runBlocking { settings.designCapacityOverrideMah.first() })
     }
 
     @Test
-    fun nonNumericValueIsRejectedWithoutWriting() = runBlocking {
+    fun nonNumericValueIsRejectedWithoutWriting() {
         var saveCalls = 0
         compose.setContent {
             BatteryHealthTheme {
@@ -98,17 +122,17 @@ class DesignCapacityDialogTest {
             }
         }
 
-        compose.onNodeWithTag(DesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(DesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(DesignCapacityTags.INPUT).performTextInput("banana")
         compose.onNodeWithTag(DesignCapacityTags.SAVE).performClick()
 
         compose.onNodeWithTag(DesignCapacityTags.ERROR).assertIsDisplayed()
         assertEquals(0, saveCalls)
-        assertNull(settings.designCapacityOverrideMah.first())
+        assertNull(runBlocking { settings.designCapacityOverrideMah.first() })
     }
 
     @Test
-    fun validValueRoundTripsThroughRealSettings() = runBlocking {
+    fun validValueRoundTripsThroughRealSettings() {
         compose.setContent {
             BatteryHealthTheme {
                 HealthContent(
@@ -121,17 +145,17 @@ class DesignCapacityDialogTest {
             }
         }
 
-        compose.onNodeWithTag(DesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(DesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(DesignCapacityTags.INPUT).performTextInput("4200")
         compose.onNodeWithTag(DesignCapacityTags.SAVE).performClick()
 
         compose.onNodeWithTag(DesignCapacityTags.DIALOG).assertDoesNotExist()
-        assertEquals(4200, settings.designCapacityOverrideMah.first())
+        assertEquals(4200, runBlocking { settings.designCapacityOverrideMah.first() })
     }
 
     @Test
-    fun clearRemovesAnExistingOverride() = runBlocking {
-        settings.setDesignCapacityOverride(4820)
+    fun clearRemovesAnExistingOverride() {
+        runBlocking { settings.setDesignCapacityOverride(4820) }
         var cleared = false
         compose.setContent {
             BatteryHealthTheme {
@@ -146,10 +170,10 @@ class DesignCapacityDialogTest {
             }
         }
 
-        compose.onNodeWithTag(DesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(DesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(DesignCapacityTags.CLEAR).performClick()
 
         assertEquals(true, cleared)
-        assertNull(settings.designCapacityOverrideMah.first())
+        assertNull(runBlocking { settings.designCapacityOverrideMah.first() })
     }
 }

@@ -1,6 +1,7 @@
 package com.alaminahamed.batteryhealth.data.repo
 
 import android.os.BatteryManager
+import android.os.PowerManager
 import androidx.room.Room
 import androidx.test.platform.app.InstrumentationRegistry
 import com.alaminahamed.batteryhealth.data.framework.BatteryBroadcastSource
@@ -13,6 +14,10 @@ import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.privileged.Transport
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
+import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
+import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
+import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.CapacityMethod
@@ -122,11 +127,41 @@ class BatteryRepositoryTest {
             broadcasts = BatteryBroadcastSource(context),
             properties = BatteryManagerSource(batteryManager, capabilities, settings),
             sessionDao = db.sessions(),
+            settings = settings,
             estimator = HealthEstimator(),
-            // The device's own model is irrelevant here: an explicit override makes the
+            // The device's own identity is irrelevant here: an explicit override makes the
             // design capacity deterministic regardless of which device runs this test.
-            designCapacity = DesignCapacityProvider(settings, model = "unused-in-this-test"),
+            // `DeviceIdentity.Unknown` and a null power-profile figure are passed for the
+            // same reason -- both lower-precedence sources are neutralised so nothing about
+            // the host device can influence the result.
+            designCapacity = DesignCapacityProvider(
+                settings,
+                identity = DeviceIdentity.Unknown,
+                powerProfileMah = null,
+            ),
             privileged = privileged,
+            // The real source, reading this device's own Settings provider. Not stubbed:
+            // on a Samsung host it answers and on any other it reports Unsupported, and
+            // both are outcomes these tests must tolerate rather than one being baked in.
+            // Deterministic, for the same reason `granted` below is. The real source
+            // reads this host's own Settings provider, so on a Samsung phone it answers
+            // and the dump-derived assertions below stop describing the repository and
+            // start describing the device.
+            vendorSettings = VendorReadings.None,
+            // Deliberately NOT the real source. The real one answers differently
+            // depending on whether this particular phone has had `pm grant
+            // android.permission.BATTERY_STATS` run against it, which made these tests
+            // pass or fail on host state rather than on the repository's behaviour --
+            // observed for real, three of them flipping the moment the grant landed.
+            // These tests assert what the repository does when the granted readings are
+            // absent, and that must hold on any device.
+            granted = GrantedReadings.None,
+            power = PowerManagerSource(context.getSystemService(PowerManager::class.java)),
+            // True regardless of which flavour runs this suite. These tests assert the
+            // NeedsPrivilegedAccess-versus-Unsupported distinction, which only exists in a
+            // build that has a tier -- pinning it here keeps them testing that rule rather
+            // than testing which flavour they happen to be compiled into.
+            privilegedTierSupported = true,
         )
     }
 

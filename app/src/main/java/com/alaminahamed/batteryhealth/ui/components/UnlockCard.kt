@@ -1,10 +1,15 @@
 package com.alaminahamed.batteryhealth.ui.components
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -15,6 +20,62 @@ import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 object UnlockCardTags {
     const val ROOT = "unlock-card"
     const val ACTION = "unlock-card-action"
+    const val DISMISS = "unlock-card-dismiss"
+}
+
+/**
+ * When the card renders, and when it offers to be dismissed.
+ *
+ * Pure and separate from the composable so both rules are provable on the JVM, and
+ * because the second one is a judgement rather than a detail: dismissal silences the card
+ * only where the card is an *offer*, never where it is the consequence of something the
+ * user themselves started.
+ *
+ * That distinction is the whole design. A dismissal that also swallowed
+ * [PrivilegedAvailability.AwaitingAuthorization] would leave a user staring at a system
+ * dialog with nothing on screen explaining it; one that swallowed the failed-dump state
+ * would remove the only retry and leave every privileged row reading "needs privileged
+ * access" with no way back. One tap would have turned into a permanently broken setup
+ * flow.
+ */
+internal object UnlockCardVisibility {
+
+    /**
+     * States that are purely an offer to set up a feature the user has not asked for.
+     * These are what dismissal is for: a user who has decided they do not want the
+     * privileged tier should not be pitched it on every launch forever.
+     */
+    fun isDismissible(availability: PrivilegedAvailability, dumpFailed: Boolean): Boolean =
+        when (availability) {
+            PrivilegedAvailability.Unavailable, PrivilegedAvailability.Denied -> true
+            PrivilegedAvailability.AwaitingAuthorization,
+            PrivilegedAvailability.Connecting,
+            -> false
+            // Ready renders only when the dump failed, and that state is a retry the user
+            // needs rather than an offer they can decline.
+            is PrivilegedAvailability.Ready -> false
+        }
+
+    /**
+     * Takes the [need] rather than recomputing it.
+     *
+     * It used to derive its own, and drifted from the copy the card renders with the
+     * moment a fourth input was added: this one kept defaulting `shellSupported` to true
+     * while the card passed false, so it said "show" while the text function said "there
+     * is nothing to say". The result was a card with a heading, a button, and no words at
+     * all -- visible on a real device.
+     *
+     * One derivation, passed in, is the only arrangement where those two cannot disagree.
+     */
+    fun shouldShow(
+        need: UnlockNeed,
+        availability: PrivilegedAvailability,
+        dumpFailed: Boolean,
+        dismissed: Boolean,
+    ): Boolean {
+        if (need == UnlockNeed.Nothing) return false
+        return !(dismissed && isDismissible(availability, dumpFailed))
+    }
 }
 
 /**
@@ -50,15 +111,53 @@ fun UnlockCard(
     onLearnMore: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    dismissed: Boolean = false,
+    onDismiss: () -> Unit = {},
+    permissionGranted: Boolean = false,
+    permissionRelevant: Boolean = true,
+    shellSupported: Boolean = true,
 ) {
-    if (availability is PrivilegedAvailability.Ready && !dumpFailed) return
+    // A screen where the permission cannot supply anything is a screen where it is
+    // already, effectively, satisfied. The Apps screen is exactly that: per-app
+    // attribution comes only from the shell, and BATTERY_STATS has no per-app property to
+    // offer -- so without this flag, granting the permission would make the card appear on
+    // Apps even with a perfectly working shell, advertising a route that cannot help.
+    val effectivelyGranted = permissionGranted || !permissionRelevant
+    // Derived once, here, and handed to everything that needs it. See shouldShow's doc.
+    val need = UnlockNeed.of(effectivelyGranted, availability, dumpFailed, shellSupported)
+    if (!UnlockCardVisibility.shouldShow(need, availability, dumpFailed, dismissed)) return
 
     val colors = LocalOneUiColors.current
     val readyButFailed = availability is PrivilegedAvailability.Ready && dumpFailed
     OneUiCard(modifier.testTag(UnlockCardTags.ROOT)) {
-        SectionHeader(if (readyButFailed) "Privileged read failed" else "Unlock more readings")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionHeader(if (readyButFailed) "Privileged read failed" else "Unlock more readings")
+            // Offered only where dismissing actually silences something -- see
+            // UnlockCardVisibility.isDismissible. A control that visibly did nothing on
+            // the other states would be worse than no control.
+            if (UnlockCardVisibility.isDismissible(availability, dumpFailed)) {
+                // A word rather than a bare glyph: material-icons is not a dependency of
+                // this module and is not worth adding for one control, and "Dismiss" is
+                // what a screen reader should say anyway -- an unlabelled multiplication
+                // sign is announced as punctuation or skipped entirely.
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.testTag(UnlockCardTags.DISMISS),
+                ) {
+                    Text(
+                        text = "Dismiss",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+        }
         Text(
-            text = explanation(availability, dumpFailed),
+            text = explanation(availability, dumpFailed, need),
             style = MaterialTheme.typography.bodyMedium,
             color = colors.textSecondary,
         )
@@ -82,13 +181,34 @@ fun UnlockCard(
  * which this app can set up on its own. That real burden is stated plainly rather than
  * papered over with a single friendly button that quietly can't do what it implies.
  */
-private fun explanation(availability: PrivilegedAvailability, dumpFailed: Boolean): String = when (availability) {
-    PrivilegedAvailability.Unavailable ->
-        "State of health, first-use date and Battery Protect status sit behind a " +
-            "permission this app cannot request on its own. Run \"adb tcpip 5555\" " +
-            "from a computer with your device connected, and this app takes it from " +
-            "there -- you'll need to repeat that command each time your phone " +
-            "restarts. A rooted device skips this step entirely."
+private fun explanation(
+    availability: PrivilegedAvailability,
+    dumpFailed: Boolean,
+    need: UnlockNeed,
+): String = when (availability) {
+    // Named per what is actually still missing. Telling someone to grant a permission
+    // they already hold, for values already on their screen, is the staleness UnlockNeed
+    // exists to remove.
+    PrivilegedAvailability.Unavailable -> when (need) {
+        UnlockNeed.Shell ->
+            "Battery health, first use and manufacturing date are unlocked. Samsung's " +
+                "own cycle count and BSOH need one more step, because neither has a " +
+                "public API: run \"adb tcpip 5555\" from a computer, repeated after " +
+                "every restart. A rooted device skips it."
+
+        UnlockNeed.Permission, UnlockNeed.Both ->
+            "State of health, first-use date and manufacturing date sit behind a " +
+                "permission this app cannot request on its own. From a computer with " +
+                "your device connected, run:\n\n" +
+                "adb shell pm grant com.alaminahamed.batteryhealth " +
+                "android.permission.BATTERY_STATS\n\n" +
+                "That is a one-time step -- it survives restarts. Samsung's cycle count " +
+                "and BSOH need the older route as well (\"adb tcpip 5555\", repeated " +
+                "after every restart). A rooted device skips all of this."
+
+        // Unreachable: shouldShow returns before rendering when nothing is needed.
+        UnlockNeed.Nothing -> ""
+    }
     PrivilegedAvailability.AwaitingAuthorization ->
         "Check your screen -- your device is asking whether to allow this. Approve " +
             "it and the readings appear."

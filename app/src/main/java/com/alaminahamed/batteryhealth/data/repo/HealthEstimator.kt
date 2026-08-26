@@ -41,7 +41,27 @@ class HealthEstimator @Inject constructor() {
         // and pull the median on its own repeated say, defeating the reason several
         // independent sessions are required to agree in the first place.
         val deduped = observations.distinctBy { it.sessionId }
-        val levelQualifying = deduped.filter { it.deltaLevelPct >= MIN_DELTA_LEVEL_PCT }
+        // Sessions recorded at a temperature where the fuel gauge itself is unreliable are
+        // dropped rather than corrected.
+        //
+        // This is a plausibility guard, the same family as MIN_PLAUSIBLE_RATIO -- not a
+        // temperature-compensation model. Correcting a reading would mean modelling how
+        // this particular cell behaves cold, and presenting the result beside genuine
+        // measurements, which is the trade this app refuses everywhere else. Excluding an
+        // untrustworthy input costs only time, and there are now discharges as well as
+        // charges to draw on.
+        //
+        // The band is deliberately wide. Phones routinely pass 40C on a fast charge and
+        // that is ordinary, not faulty; only the extremes are excluded, where the level
+        // reading stops tracking actual charge: below freezing, where lithium-ion charge
+        // acceptance collapses, and above 45C, where sustained heat and the vendor's own
+        // thermal protection are both in play.
+        //
+        // A session with no recorded temperature is kept. Absence is not an extreme, and
+        // dropping those would silently discard every session predating temperature
+        // recording along with every device that reports none.
+        val temperatureQualifying = deduped.filter { it.temperatureIsUsable() }
+        val levelQualifying = temperatureQualifying.filter { it.deltaLevelPct >= MIN_DELTA_LEVEL_PCT }
         val qualifying = levelQualifying.mapNotNull { it.toMeasurement() }
 
         // The derived-counter check must run on every qualifying counter session, before
@@ -94,7 +114,27 @@ class HealthEstimator @Inject constructor() {
         val ratio = median.toDouble() / designUah
         if (ratio < MIN_PLAUSIBLE_RATIO || ratio > MAX_PLAUSIBLE_RATIO) return Reading.Unsupported
 
-        val healthPct = (ratio * 100).roundToInt().coerceIn(1, 100)
+        // Not clamped to 100.
+        //
+        // A cell measuring above its design capacity is real and common -- vendors publish
+        // both a rated and a typical figure and they differ by a few per cent -- but it is
+        // also the loudest available signal that the design capacity this app is comparing
+        // against is the wrong one for the device. Clamping turned that signal into a
+        // serene "100%".
+        //
+        // It has already cost this project once. `power_profile.xml` on an SM-S948B
+        // carries battery.capacity 4855 alongside Samsung's own battery.typical.capacity
+        // 5000, and reading the first gave a health of 103.7% -- which the clamp would
+        // have displayed as 100%, with nothing anywhere in the app disagreeing. The bug
+        // was found by comparing spec sheets by hand, not by using the app.
+        //
+        // The plausibility guard above already refuses anything past MAX_PLAUSIBLE_RATIO,
+        // so what survives here is a percentage between 40 and 130 -- a range in which
+        // every value is worth showing, including the ones above 100.
+        //
+        // The old lower bound of 1 was unreachable in any case: MIN_PLAUSIBLE_RATIO of
+        // 0.40 means nothing below 40 ever reached it.
+        val healthPct = (ratio * 100).roundToInt()
         val method =
             if (measurements.count { it.method == CapacityMethod.Counter } * 2 >= measurements.size) {
                 CapacityMethod.Counter
@@ -142,6 +182,17 @@ class HealthEstimator @Inject constructor() {
      * can shrink the spread below the threshold and hide a synthesised counter that the
      * wider, discarded sessions would have exposed.
      */
+    /**
+     * Whether this session's temperature makes its reading worth using.
+     *
+     * True when no temperature was recorded: that is an absence, not an extreme, and
+     * treating it as one would discard every session from a device that reports none.
+     */
+    private fun CapacityObservation.temperatureIsUsable(): Boolean {
+        val temp = peakTempDeciC ?: return true
+        return temp in MIN_USABLE_TEMP_DECI_C..MAX_USABLE_TEMP_DECI_C
+    }
+
     private fun looksDerivedFromLevel(measurements: List<Measurement>, designUah: Long): Boolean {
         val counterOnly = measurements.filter { it.method == CapacityMethod.Counter }
         if (counterOnly.size < MIN_SESSIONS) return false
@@ -172,6 +223,15 @@ class HealthEstimator @Inject constructor() {
 
     companion object {
         /** Level is an integer percent, so narrow windows carry ruinous quantisation error. */
+        /** Below freezing, lithium-ion charge acceptance collapses and the level reading
+         * stops tracking actual charge. In tenths of a degree Celsius. */
+        const val MIN_USABLE_TEMP_DECI_C = 0
+
+        /** Above this, sustained heat and the vendor's own thermal protection are both in
+         * play. Set well above the 40C a fast charge routinely reaches, so ordinary
+         * charging is never excluded. In tenths of a degree Celsius. */
+        const val MAX_USABLE_TEMP_DECI_C = 450
+
         const val MIN_DELTA_LEVEL_PCT = 20
         const val WIDE_DELTA_LEVEL_PCT = 40
         const val MIN_SESSIONS = 3

@@ -12,10 +12,14 @@ fun interface IntPropertyReader {
  * compile-time constants, so referencing them from JVM tests is safe.
  *
  * StateOfHealth, ManufacturingDate and FirstUsageDate deliberately do not appear here:
- * they are @SystemApi/@hide in AOSP (frameworks/base/core/java/android/os/BatteryManager.java),
- * gated behind the signature-level BATTERY_STATS permission, and throw SecurityException
- * for this app on real hardware regardless of API level. They belong to the privileged
- * tier, not the framework layer — a later task wires them to
+ * they are @SystemApi/@hide in AOSP (frameworks/base/core/java/android/os/BatteryManager.java)
+ * and gated behind BATTERY_STATS, so they throw SecurityException for an ordinary install.
+ *
+ * "Regardless of API level" is what this comment used to say next, and that was wrong.
+ * BATTERY_STATS is signature|privileged|**development**, and the development flag means
+ * adb can grant it directly -- after which all three read normally, verified on real
+ * hardware. `GrantedBatterySource` is where that route lives. They stay out of this enum
+ * because this one describes what an app can read with nothing granted at all — a later task wires them to
  * Reading.NeedsPrivilegedAccess on BatterySnapshot. Every property remaining here is API 21, well
  * below this app's minSdk 26, so there is no API-floor filtering left to do.
  */

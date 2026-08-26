@@ -33,3 +33,17 @@ val OneUiTypography = Typography(
     bodyMedium = numeric(12, FontWeight.Normal),
     labelSmall = numeric(11, FontWeight.Bold, 0.6),
 )
+
+/**
+ * Material 3 Expressive runs heavier and slightly larger than One UI at every level —
+ * that weight is the most recognisable part of the language. Tabular figures still apply,
+ * because the readings jitter without them regardless of which language is active.
+ */
+val ExpressiveTypography = Typography(
+    headlineLarge = numeric(29, FontWeight.ExtraBold, -0.7),
+    headlineMedium = numeric(46, FontWeight.ExtraBold, -2.2),
+    titleMedium = numeric(16, FontWeight.Bold),
+    bodyLarge = numeric(15, FontWeight.Normal),
+    bodyMedium = numeric(13, FontWeight.Normal),
+    labelSmall = numeric(11, FontWeight.Bold, 0.7),
+)

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.alaminahamed.batteryhealth.data.framework.CurrentScale
 import com.alaminahamed.batteryhealth.sampling.ChargeRecorderService
+import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -70,6 +71,24 @@ class SettingsStore @Inject constructor(private val context: Context) {
     val rootPreviouslyGranted: Flow<Boolean> =
         context.dataStore.data.map { it[ROOT_PREVIOUSLY_GRANTED] ?: false }.distinctUntilChanged()
 
+    /**
+     * Which design language the user asked for. Defaults to
+     * [DesignLanguageChoice.Auto], which resolves from the device — see
+     * `resolveDesignLanguageId`.
+     *
+     * `runCatching` for the same reason `currentScale` uses it: an unrecognised stored
+     * string (a downgrade from a future version, or a corrupted preference) must not throw
+     * out of a Flow the entire UI collects. Falling back to Auto is safe because Auto is
+     * also the default.
+     */
+    val designLanguageChoice: Flow<DesignLanguageChoice> = context.dataStore.data
+        .map { prefs ->
+            prefs[DESIGN_LANGUAGE]
+                ?.let { stored -> runCatching { DesignLanguageChoice.valueOf(stored) }.getOrNull() }
+                ?: DesignLanguageChoice.Auto
+        }
+        .distinctUntilChanged()
+
     suspend fun setCurrentScale(scale: CurrentScale) {
         context.dataStore.edit { it[CURRENT_SCALE] = scale.name }
     }
@@ -88,6 +107,58 @@ class SettingsStore @Inject constructor(private val context: Context) {
 
     suspend fun setRootPreviouslyGranted(granted: Boolean) {
         context.dataStore.edit { it[ROOT_PREVIOUSLY_GRANTED] = granted }
+    }
+
+    suspend fun setDesignLanguageChoice(choice: DesignLanguageChoice) {
+        context.dataStore.edit { it[DESIGN_LANGUAGE] = choice.name }
+    }
+
+    /**
+     * Whether the user has dismissed the Health screen's unlock card.
+     *
+     * Persisted rather than held per-session: the point of dismissing an offer is not
+     * being pitched it again, and a dismissal that reset on every launch would be a
+     * button that does nothing lasting. It only silences the card's offer states -- see
+     * `UnlockCardVisibility` for what it deliberately cannot hide.
+     */
+    val unlockCardDismissed: Flow<Boolean> =
+        context.dataStore.data.map { it[UNLOCK_CARD_DISMISSED] ?: false }.distinctUntilChanged()
+
+    /**
+     * Whether the adb transport has ever connected successfully on this install.
+     *
+     * Gates the *unprompted* reconnect on `ON_RESUME`, mirroring [rootPreviouslyGranted].
+     * Without it the app dials adb every time the user opens a screen, and on a device
+     * with `adb tcpip` enabled that raises Android's "Allow USB debugging?" dialog at
+     * someone who never asked for the privileged tier -- observed on real hardware, on a
+     * fresh install, with no interaction beyond launching the app.
+     */
+    val adbPreviouslyConnected: Flow<Boolean> =
+        context.dataStore.data.map { it[ADB_PREVIOUSLY_CONNECTED] ?: false }.distinctUntilChanged()
+
+    /**
+     * A cycle count the user read from their phone's own screen, used as the starting
+     * point for this app's count.
+     *
+     * Null means nobody has said, which is different from a stored zero -- a user
+     * reporting zero is telling this app something true. `remove` rather than writing a
+     * sentinel keeps those two states distinct in DataStore itself.
+     */
+    val cycleCountBaseline: Flow<Int?> =
+        context.dataStore.data.map { it[CYCLE_COUNT_BASELINE] }.distinctUntilChanged()
+
+    suspend fun setCycleCountBaseline(cycles: Int?) {
+        context.dataStore.edit { prefs ->
+            if (cycles == null) prefs.remove(CYCLE_COUNT_BASELINE) else prefs[CYCLE_COUNT_BASELINE] = cycles
+        }
+    }
+
+    suspend fun setAdbPreviouslyConnected(connected: Boolean) {
+        context.dataStore.edit { it[ADB_PREVIOUSLY_CONNECTED] = connected }
+    }
+
+    suspend fun setUnlockCardDismissed(dismissed: Boolean) {
+        context.dataStore.edit { it[UNLOCK_CARD_DISMISSED] = dismissed }
     }
 
     suspend fun setDesignCapacityOverride(mah: Int?) {
@@ -134,11 +205,24 @@ class SettingsStore @Inject constructor(private val context: Context) {
         context.dataStore.edit { it.clear() }
     }
 
+    /**
+     * Writes an arbitrary string to the design-language key so a test can exercise the
+     * unrecognised-value path. Nothing in production writes anything but an enum name.
+     */
+    @VisibleForTesting
+    suspend fun writeRawDesignLanguageForTesting(raw: String) {
+        context.dataStore.edit { it[DESIGN_LANGUAGE] = raw }
+    }
+
     private companion object {
         val DESIGN_CAPACITY_OVERRIDE = intPreferencesKey("design_capacity_override_mah")
         val RECORDER_ENABLED = booleanPreferencesKey("recorder_enabled")
         val CURRENT_SCALE = stringPreferencesKey("current_scale")
         val ADB_PORT = intPreferencesKey("adb_port")
         val ROOT_PREVIOUSLY_GRANTED = booleanPreferencesKey("root_previously_granted")
+        val UNLOCK_CARD_DISMISSED = booleanPreferencesKey("unlock_card_dismissed")
+        val ADB_PREVIOUSLY_CONNECTED = booleanPreferencesKey("adb_previously_connected")
+        val CYCLE_COUNT_BASELINE = intPreferencesKey("cycle_count_baseline")
+        val DESIGN_LANGUAGE = stringPreferencesKey("design_language_choice")
     }
 }

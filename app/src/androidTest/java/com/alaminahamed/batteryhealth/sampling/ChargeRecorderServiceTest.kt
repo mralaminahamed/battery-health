@@ -4,7 +4,9 @@ import android.app.ActivityManager
 import android.content.ComponentName
 import androidx.test.platform.app.InstrumentationRegistry
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -44,26 +46,26 @@ class ChargeRecorderServiceTest {
     @Before
     fun disableAndAwaitBefore() = runBlocking {
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "@Before cleanup")
     }
 
     @After
     fun disableAndAwaitAfter() = runBlocking {
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "@After cleanup")
     }
 
     @Test
     fun rapidDisableThenEnableEndsRunningAndStaysStoppableAfterwards() = runBlocking {
         store.setRecorderEnabled(true)
-        awaitServiceState(running = true)
+        awaitServiceState(running = true, step = "initial enable")
 
         // The rapid toggle: whether or not it lands in the exact refusal window is not
         // controlled here (see class doc). Either way, ending on enable must leave the
         // service running.
         store.setRecorderEnabled(false)
         store.setRecorderEnabled(true)
-        awaitServiceState(running = true)
+        awaitServiceState(running = true, step = "rapid disable-then-enable")
         assertTrue("service should be running after ending on enable", isServiceRunning())
 
         // The assertion that actually distinguishes the fix from the bug it replaced:
@@ -73,25 +75,64 @@ class ChargeRecorderServiceTest {
         // be noticed -- the service would keep running (and sampling, and showing its
         // notification) indefinitely, regardless of what the flag says.
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "later unambiguous disable")
         assertFalse("a later disable must still be able to stop the service", isServiceRunning())
     }
 
     @Test
     fun endingOnDisableLeavesNoServiceRunning() = runBlocking {
         store.setRecorderEnabled(true)
-        awaitServiceState(running = true)
+        awaitServiceState(running = true, step = "enable")
 
         store.setRecorderEnabled(false)
-        awaitServiceState(running = false)
+        awaitServiceState(running = false, step = "disable")
         assertFalse(isServiceRunning())
     }
 
-    private suspend fun awaitServiceState(running: Boolean, timeoutMs: Long = 5_000) {
-        withTimeout(timeoutMs) {
-            while (isServiceRunning() != running) {
-                delay(50)
+    /**
+     * [timeoutMs] is a generous upper bound, not a performance assertion.
+     *
+     * Each transition here is a DataStore write, then a collector waking, then Android
+     * actually starting or stopping a foreground service and posting its notification.
+     * None of that is under this test's control and all of it competes with whatever else
+     * the suite is doing. At the original 5s this test failed intermittently on a real
+     * SM-S948B -- twice in five consecutive full-suite runs, while passing every time the
+     * class ran alone -- which is the signature of a bound set to the observed time rather
+     * than to the worst plausible one.
+     *
+     * Raising it does not weaken what the test proves. The defect it guards against is a
+     * service that never stops at all, and that still fails here, just later. A test that
+     * cries wolf under load is worse than one that takes longer to do so, because the
+     * response to a flaky failure is to stop reading failures.
+     *
+     * Do not lower this back to the time a passing run happened to take.
+     */
+    private suspend fun awaitServiceState(
+        running: Boolean,
+        step: String,
+        timeoutMs: Long = 20_000,
+    ) {
+        try {
+            withTimeout(timeoutMs) {
+                while (isServiceRunning() != running) {
+                    delay(50)
+                }
             }
+        } catch (e: TimeoutCancellationException) {
+            // Rethrown as a named failure rather than propagated.
+            //
+            // A bare TimeoutCancellationException names neither the step nor the
+            // expectation, and its stack is the coroutine machinery's, not this file's
+            // -- so a full-suite failure reported only "Timed out waiting for 20000 ms"
+            // with no line number, and there are five distinct waits in this class. Two
+            // separate rounds of diagnosis started by having to guess which one it was.
+            throw AssertionError(
+                "Timed out after ${timeoutMs}ms waiting for the service to be " +
+                    "${if (running) "running" else "stopped"} at step \"$step\"; " +
+                    "recorderEnabled=${store.recorderEnabled.first()}, " +
+                    "isServiceRunning=${isServiceRunning()}",
+                e,
+            )
         }
     }
 

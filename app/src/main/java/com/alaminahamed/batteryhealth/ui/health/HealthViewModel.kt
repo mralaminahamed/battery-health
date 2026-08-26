@@ -1,6 +1,7 @@
 package com.alaminahamed.batteryhealth.ui.health
 
 import android.content.Context
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
@@ -15,13 +16,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.inject.Named
 
 @HiltViewModel
 class HealthViewModel @Inject constructor(
+    private val granted: GrantedReadings,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
     private val repository: BatteryRepository,
     private val settings: SettingsStore,
     designCapacity: DesignCapacityProvider,
@@ -61,6 +66,19 @@ class HealthViewModel @Inject constructor(
             partial.copy(privilegedAvailability = availability)
         }.combine(repository.privilegedDumpFailed) { partial, dumpFailed ->
             partial.copy(privilegedDumpFailed = dumpFailed)
+        }.combine(settings.cycleCountBaseline) { partial, baseline ->
+            partial.copy(cycleBaseline = baseline)
+        }.combine(settings.unlockCardDismissed) { partial, dismissed ->
+            partial.copy(unlockCardDismissed = dismissed)
+        }.map { state ->
+            // Read on every emission rather than once at construction: `pm grant` can run
+            // while the app is open, and a card that kept offering a setup already done
+            // would be the very staleness this field exists to remove. It is a cheap
+            // PackageManager check, not a query.
+            state.copy(
+                batteryStatsGranted = granted.isGranted,
+                privilegedTierSupported = privilegedTierSupported,
+            )
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -116,6 +134,27 @@ class HealthViewModel @Inject constructor(
      * `UnlockCard` only wires its action button to this while `state.privilegedAvailability`
      * is a state that actually has something to connect.
      */
+    /**
+     * Permanent, not per-session: the point of dismissing an offer is not being pitched
+     * it again. There is deliberately no un-dismiss here -- the card only ever explained
+     * a setup the user can still start from Settings, and the states that matter
+     * (awaiting authorization, connecting, a failed read needing retry) are shown
+     * regardless of dismissal. See `UnlockCardVisibility`.
+     */
+    fun dismissUnlockCard() {
+        viewModelScope.launch { settings.setUnlockCardDismissed(true) }
+    }
+
+    /**
+     * Stores a cycle count the user read from their phone.
+     *
+     * Null clears it. Their figure is a real measurement this app could not take itself,
+     * so it is kept apart from anything derived -- see `CycleCountResolver`.
+     */
+    fun setCycleBaseline(cycles: Int?) {
+        viewModelScope.launch { settings.setCycleCountBaseline(cycles) }
+    }
+
     fun connectPrivilegedTier() {
         viewModelScope.launch { privileged.connect() }
     }

@@ -42,6 +42,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.alaminahamed.batteryhealth.data.settings.CycleBaselineValidation
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacitySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityValidation
 import com.alaminahamed.batteryhealth.data.settings.EffectiveDesignCapacity
@@ -68,6 +69,18 @@ private const val PRIVILEGED_TIER_INFO_URL = "https://developer.android.com/tool
 
 object HealthScreenTags {
     const val ROOT = "health-root"
+
+    /** The line under the headline explaining why there is no measured percentage yet. */
+    const val MEASUREMENT_NOTE = "health-measurement-note"
+}
+
+object CycleBaselineTags {
+    const val ROW = "cycle-baseline-row"
+    const val DIALOG = "cycle-baseline-dialog"
+    const val INPUT = "cycle-baseline-input"
+    const val SAVE = "cycle-baseline-save"
+    const val CLEAR = "cycle-baseline-clear"
+    const val ERROR = "cycle-baseline-error"
 }
 
 object DesignCapacityTags {
@@ -111,6 +124,8 @@ fun HealthScreen(modifier: Modifier = Modifier, viewModel: HealthViewModel = hil
         state = state,
         modifier = modifier,
         onConnect = viewModel::connectPrivilegedTier,
+        onDismissUnlockCard = viewModel::dismissUnlockCard,
+        onSetCycleBaseline = viewModel::setCycleBaseline,
         onLearnMore = {
             context.startActivity(Intent(Intent.ACTION_VIEW, PRIVILEGED_TIER_INFO_URL.toUri()))
         },
@@ -152,10 +167,13 @@ fun HealthContent(
     onConnect: () -> Unit = {},
     onLearnMore: () -> Unit = {},
     onRetryPrivilegedDump: () -> Unit = {},
+    onDismissUnlockCard: () -> Unit = {},
+    onSetCycleBaseline: (Int?) -> Unit = {},
 ) {
     val colors = LocalOneUiColors.current
     val report = state.measured.valueOrNull()
     var showDesignCapacityDialog by rememberSaveable { mutableStateOf(false) }
+    var showCycleBaselineDialog by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -173,11 +191,47 @@ fun HealthContent(
                 )
                 SourceChip(source)
             }
-            if (state.measured is Reading.NotYetMeasured) {
+            // Exhaustive over MeasurementNote rather than keyed on `measured` alone: the
+            // subtitle used to read "Needs N full charge sessions" whenever nothing had
+            // been measured, including while the recorder switch further down this very
+            // screen was off. That promised progress towards a number that could never
+            // arrive. See HealthUiState.measurementNote.
+            val measurementText = when (state.measurementNote) {
+                MeasurementNote.NeedsSessions ->
+                    "Needs ${HealthEstimator.MIN_SESSIONS} full charge sessions"
+
+                MeasurementNote.NotRecording ->
+                    "Turn on \u201CRecord charge sessions\u201D below to start measuring"
+
+                MeasurementNote.RecordingBlocked ->
+                    "Recording is on but couldn\u2019t start \u2014 battery saver can block it"
+
+                MeasurementNote.None -> null
+            }
+            // A figure above 100% needs saying out loud, or it just looks broken. It is
+            // usually not a remarkable battery -- vendors publish a rated and a typical
+            // capacity a few per cent apart, and measuring a healthy cell against the
+            // rated one lands here routinely. What it reliably means is that the design
+            // capacity this app is comparing against is probably the wrong one, which the
+            // user can fix from Settings. Before this, the number was silently clamped and
+            // they had no way to know.
+            if (report?.exceedsDesign == true) {
                 Text(
-                    text = "Needs ${HealthEstimator.MIN_SESSIONS} full charge sessions",
+                    text = "Measured above the design capacity being compared against " +
+                        "(${state.designCapacity.mah ?: 0} mAh). That usually means the " +
+                        "design figure is wrong for this device rather than that the " +
+                        "battery gained capacity \u2014 you can set the right one in Settings.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            if (measurementText != null) {
+                Text(
+                    text = measurementText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textSecondary,
+                    modifier = Modifier.testTag(HealthScreenTags.MEASUREMENT_NOTE),
                 )
             }
             // The whole reason a fresh install on an unlisted device is a bad first-run
@@ -222,13 +276,33 @@ fun HealthContent(
             availability = state.privilegedAvailability,
             dumpFailed = state.privilegedDumpFailed,
             onConnect = onConnect,
+            dismissed = state.unlockCardDismissed,
+            permissionGranted = state.batteryStatsGranted,
+            shellSupported = state.privilegedTierSupported,
+            onDismiss = onDismissUnlockCard,
             onLearnMore = onLearnMore,
             onRetry = onRetryPrivilegedDump,
         )
 
         OneUiCard {
             SectionHeader("Battery information")
-            KeyValueRow("Cycles") {
+            // Tappable only where this app's own count is what is shown. A vendor figure
+            // is already a lifetime total and a baseline would double-count the very
+            // history it exists to stand in for, so offering the dialog there would invite
+            // a user to break a correct number.
+            val baselineEditable = state.privilegedTierSupported.not() ||
+                (state.snapshot?.cycleCount as? Reading.Available)?.source != Source.Privileged
+            KeyValueRow(
+                "Cycles",
+                modifier = if (baselineEditable) {
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { showCycleBaselineDialog = true }
+                        .testTag(CycleBaselineTags.ROW)
+                } else {
+                    Modifier
+                },
+            ) {
                 ReadingSlot(state.snapshot?.cycleCount ?: Reading.NotYetMeasured) { cycles, _ ->
                     Value(cycles.toString())
                 }
@@ -240,17 +314,46 @@ fun HealthContent(
             // (Source.Privileged): a plain framework EXTRA_CYCLE_COUNT reading, on the
             // rare device that reports one, has no such documented partial-cycle
             // behaviour to disclose.
-            if ((state.snapshot?.cycleCount as? Reading.Available)?.source == Source.Privileged) {
+            // "Measuring" on its own says nothing about what would end the wait. The count
+            // comes from charge sessions this app records, so with recording off it reads
+            // that way forever -- the same defect the headline's own subtitle was fixed for.
+            val cycleCaption = if (state.snapshot?.cycleCount is Reading.NotYetMeasured) {
+                if (state.recorderEnabled) {
+                    "Counting charge as it goes in \u2014 a figure appears after a full " +
+                        "cycle's worth"
+                } else {
+                    "Turn on \u201CRecord charge sessions\u201D below to start counting"
+                }
+            } else when ((state.snapshot?.cycleCount as? Reading.Available)?.source) {
+                Source.Privileged -> "Counts every partial charge, not just full cycles"
+                // The distinction that matters most about this number. Samsung's counts
+                // from the day the battery was made; this one counts charge this app
+                // actually watched go in, so a phone that is already a year old starts
+                // from zero here. Without saying so, a low number reads as a healthy
+                // battery rather than as a young measurement.
+                Source.Measured ->
+                    "Measured by this app, so it counts from when recording started \u2014 " +
+                        "not the battery's whole life"
+                Source.Framework, Source.Vendor, null -> null
+            }
+            if (cycleCaption != null) {
                 Text(
-                    text = "Counts every partial charge, not just full cycles",
+                    text = cycleCaption,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.textSecondary,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
-            KeyValueRow("BSOH") {
-                ReadingSlot(state.snapshot?.bsohPct ?: Reading.NotYetMeasured) { pct, _ ->
-                    Value("$pct%")
+            // BSOH is Samsung's own second health figure, read only from `dumpsys`. A
+            // build with no shell has no source for it at any price, and the headline
+            // above already shows the platform's state of health -- so the row would be a
+            // permanent "not available" sitting under a number that answers the same
+            // question. Hidden rather than shown empty; `full` still has it.
+            if (state.privilegedTierSupported) {
+                KeyValueRow("BSOH") {
+                    ReadingSlot(state.snapshot?.bsohPct ?: Reading.NotYetMeasured) { pct, _ ->
+                        Value("$pct%")
+                    }
                 }
             }
             KeyValueRow("First use") {
@@ -357,11 +460,33 @@ fun HealthContent(
         }
     }
 
+    if (showCycleBaselineDialog) {
+        CycleBaselineDialog(
+            current = state.cycleBaseline,
+            onSave = { cycles ->
+                onSetCycleBaseline(cycles)
+                showCycleBaselineDialog = false
+            },
+            onClear = {
+                onSetCycleBaseline(null)
+                showCycleBaselineDialog = false
+            },
+            onDismiss = { showCycleBaselineDialog = false },
+        )
+    }
+
     if (showDesignCapacityDialog) {
         DesignCapacityDialog(
             currentOverrideMah = when (state.designCapacity.source) {
                 DesignCapacitySource.Override -> state.designCapacity.mah
-                DesignCapacitySource.Table, DesignCapacitySource.None -> null
+                // Only the user's own override pre-fills the dialog. A table figure or the
+                // device's own declaration is not the user's claim to edit, and offering
+                // one as the starting value invites them to "confirm" a number they never
+                // supplied, turning a derived figure into a stored override by accident.
+                DesignCapacitySource.Table,
+                DesignCapacitySource.PowerProfile,
+                DesignCapacitySource.None,
+                -> null
             },
             onSave = { mah ->
                 onSaveDesignCapacity(mah)
@@ -378,7 +503,7 @@ fun HealthContent(
 
 /**
  * "None" is included in this `when` only so the compiler can enforce exhaustiveness if a
- * fourth source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
+ * further source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
  * is already `None`, so the early return above is what actually handles that case.
  */
 private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
@@ -386,6 +511,10 @@ private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
     return when (info.source) {
         DesignCapacitySource.Override -> "$mah mAh, your override"
         DesignCapacitySource.Table -> "$mah mAh, model table"
+        // Named for where it came from, not dressed up as a measurement: this is the
+        // figure the manufacturer wrote into the platform image, which is real device
+        // data but still a declaration rather than something this app observed.
+        DesignCapacitySource.PowerProfile -> "$mah mAh, reported by this device"
         DesignCapacitySource.None -> "Not set — tap to add"
     }
 }
@@ -475,6 +604,10 @@ private fun SourceChip(source: Source) {
             Source.Framework -> "Reported"
             Source.Measured -> "Measured"
             Source.Privileged -> "ASOC"
+            // Named for who said it rather than how it was obtained. "Reported" would
+            // blur it into an ordinary Android reading, and the distinction is real: this
+            // is Samsung's own value, present only on Samsung devices.
+            Source.Vendor -> "Vendor"
         },
         style = MaterialTheme.typography.labelSmall,
         color = colors.accent,
@@ -483,5 +616,91 @@ private fun SourceChip(source: Source) {
             .clip(RoundedCornerShape(999.dp))
             .background(colors.divider)
             .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+/**
+ * Lets the user supply a cycle count they read from their phone.
+ *
+ * The dialog names where to find it, because a user who cannot locate the number cannot
+ * use the feature, and a vague "enter your cycle count" would invite a guess -- which is
+ * the one thing this must not collect. A guessed baseline would be indistinguishable, in
+ * the row above, from a measured one.
+ */
+@Composable
+private fun CycleBaselineDialog(
+    current: Int?,
+    onSave: (Int) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(current?.toString() ?: "") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag(CycleBaselineTags.DIALOG),
+        title = { Text("Cycle count so far") },
+        text = {
+            Column {
+                Text(
+                    text = "This app can only count charge it has watched go in, so on a " +
+                        "phone that is not new its count starts at zero. If your phone " +
+                        "reports a real figure \u2014 on Samsung: Settings, Battery, " +
+                        "Battery information \u2014 enter it here and this app will count " +
+                        "on from there.\n\nEnter only a number your phone actually shows. " +
+                        "A guess here would look exactly like a measurement afterwards.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        error = null
+                    },
+                    label = { Text("Cycles") },
+                    singleLine = true,
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .testTag(CycleBaselineTags.INPUT),
+                )
+                val currentError = error
+                if (currentError != null) {
+                    Text(
+                        text = currentError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .testTag(CycleBaselineTags.ERROR),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when (val result = CycleBaselineValidation.validate(text)) {
+                        is CycleBaselineValidation.Result.Valid -> onSave(result.cycles)
+                        is CycleBaselineValidation.Result.Invalid -> error = result.message
+                    }
+                },
+                modifier = Modifier.testTag(CycleBaselineTags.SAVE),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            Row {
+                if (current != null) {
+                    TextButton(
+                        onClick = onClear,
+                        modifier = Modifier.testTag(CycleBaselineTags.CLEAR),
+                    ) { Text("Clear") }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
     )
 }

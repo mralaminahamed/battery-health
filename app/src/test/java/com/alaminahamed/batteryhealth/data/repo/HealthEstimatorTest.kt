@@ -124,10 +124,19 @@ class HealthEstimatorTest {
         assertEquals(Source.Measured, (reading as Reading.Available).source)
     }
 
+    /**
+     * Superseded. This asserted `coerceIn(1, 100)`, which flattened every measurement
+     * between 100% and 130% into a serene "100%" -- and with it the clearest signal this
+     * app has that the design capacity it is comparing against is wrong for the device.
+     * See `aCapacityAboveDesignIsReportedRatherThanFlattenedToOneHundred` for the real
+     * bug that hid behind it.
+     */
     @Test
-    fun healthIsClampedToOneHundred() {
+    fun aCapacityAboveDesignKeepsItsRealFigure() {
         val observations = List(3) { counterObservation(it.toLong(), 60, 5_400_000) }
-        assertEquals(100, estimator.estimate(observations, 5000).valueOrNull()!!.healthPct)
+        val report = estimator.estimate(observations, 5000).valueOrNull()!!
+        assertEquals(108, report.healthPct)
+        assertEquals(true, report.exceedsDesign)
     }
 
     @Test
@@ -250,10 +259,15 @@ class HealthEstimatorTest {
 
     @Test
     fun ratioJustInsideUpperPlausibilityBoundStillYieldsANumber() {
-        // ratio = 6_450_000 / 5_000_000 = 1.29, just inside MAX_PLAUSIBLE_RATIO (1.30);
-        // clamped to 100 by the separate 1..100 clamp, not rejected by the plausibility band.
+        // ratio = 6_450_000 / 5_000_000 = 1.29, just inside MAX_PLAUSIBLE_RATIO (1.30).
+        // Reported as 129, not flattened to 100: the plausibility band is what decides
+        // whether a figure is worth showing, and this one is inside it. A reading this far
+        // above design is a strong statement that the design capacity is wrong, which is
+        // exactly what the user needs to see.
         val observations = List(3) { counterObservation(it.toLong(), 60, 6_450_000) }
-        assertEquals(100, estimator.estimate(observations, 5000).valueOrNull()!!.healthPct)
+        val report = estimator.estimate(observations, 5000).valueOrNull()!!
+        assertEquals(129, report.healthPct)
+        assertEquals(true, report.exceedsDesign)
     }
 
     @Test
@@ -267,5 +281,158 @@ class HealthEstimatorTest {
             counterObservation(2, 55, 4_300_000),
         )
         assertEquals(Reading.NotYetMeasured, estimator.estimate(observations, 5000))
+    }
+
+    // ---- capacity above the design figure ---------------------------------------------
+
+    /**
+     * The exact case that cost this project a real bug and hid it.
+     *
+     * `power_profile.xml` on an SM-S948B carries `battery.capacity` 4855 alongside
+     * Samsung's own `battery.typical.capacity` 5000. Measuring a healthy 5033 mAh cell
+     * against the first gives 103.7%, and the old `coerceIn(1, 100)` displayed that as a
+     * serene 100% -- so nothing in the app disagreed with a design capacity that was
+     * wrong. The bug was found by comparing spec sheets by hand instead.
+     */
+    @Test
+    fun aCapacityAboveDesignIsReportedRatherThanFlattenedToOneHundred() {
+        val observations = List(3) { counterObservation(it.toLong(), 60, 5_033_000) }
+        val report = estimator.estimate(observations, designCapacityMah = 4_855).valueOrNull()
+
+        assertEquals(104, report?.healthPct)
+        assertEquals(true, report?.exceedsDesign)
+    }
+
+    /** An ordinary reading below design is unaffected and does not raise the signal. */
+    @Test
+    fun anOrdinaryReadingDoesNotClaimToExceedDesign() {
+        val observations = List(3) { counterObservation(it.toLong(), 60, 4_300_000) }
+        val report = estimator.estimate(observations, designCapacityMah = 5_000).valueOrNull()
+
+        assertEquals(86, report?.healthPct)
+        assertEquals(false, report?.exceedsDesign)
+    }
+
+    /** Exactly at design is not "exceeding" it. */
+    @Test
+    fun exactlyAtDesignIsNotExceedingIt() {
+        val observations = List(3) { counterObservation(it.toLong(), 60, 5_000_000) }
+        val report = estimator.estimate(observations, designCapacityMah = 5_000).valueOrNull()
+
+        assertEquals(100, report?.healthPct)
+        assertEquals(false, report?.exceedsDesign)
+    }
+
+    /**
+     * The plausibility guard still refuses the extremes the clamp was never protecting
+     * against anyway -- a unit or scale fault must decline to answer, not report 130%.
+     */
+    @Test
+    fun animplausiblyHighRatioIsStillRefusedOutright() {
+        val observations = List(3) { counterObservation(it.toLong(), 60, 10_000_000) }
+        assertEquals(
+            Reading.Unsupported,
+            estimator.estimate(observations, designCapacityMah = 5_000),
+        )
+    }
+
+    /**
+     * The old lower clamp of 1 was unreachable: MIN_PLAUSIBLE_RATIO of 0.40 means nothing
+     * below 40% ever reached it, and anything worse is refused as a fault rather than
+     * reported as a nearly-dead battery.
+     */
+    @Test
+    fun aVeryDegradedButPlausibleBatteryStillReportsItsRealFigure() {
+        val observations = List(3) { counterObservation(it.toLong(), 60, 2_100_000) }
+        val report = estimator.estimate(observations, designCapacityMah = 5_000).valueOrNull()
+
+        assertEquals(42, report?.healthPct)
+    }
+
+    // ---- temperature ------------------------------------------------------------------
+
+    private fun observationAt(id: Long, tempDeciC: Int?, fullUah: Long = 4_300_000) =
+        CapacityObservation(
+            sessionId = id,
+            deltaLevelPct = 60,
+            counterDeltaUah = fullUah * 60 / 100,
+            coulombUah = null,
+            peakTempDeciC = tempDeciC,
+        )
+
+    /**
+     * Ordinary charging temperatures must not be excluded. Phones routinely pass 40C on a
+     * fast charge; a band tight enough to reject that would starve the estimate of the
+     * sessions it exists to use.
+     */
+    @Test
+    fun anOrdinaryFastChargeTemperatureIsUsable() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = 410) }
+        assertEquals(86, estimator.estimate(observations, 5000).valueOrNull()?.healthPct)
+    }
+
+    /**
+     * Below freezing, lithium-ion charge acceptance collapses and the level reading stops
+     * tracking actual charge. Excluded rather than corrected: correcting would mean
+     * modelling this cell's cold behaviour and showing the result beside real
+     * measurements.
+     */
+    @Test
+    fun aFreezingSessionIsExcludedRatherThanCorrected() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = -50) }
+        assertEquals(Reading.NotYetMeasured, estimator.estimate(observations, 5000))
+    }
+
+    @Test
+    fun anOverheatedSessionIsExcluded() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = 520) }
+        assertEquals(Reading.NotYetMeasured, estimator.estimate(observations, 5000))
+    }
+
+    /**
+     * Absence is not an extreme. Dropping sessions with no recorded temperature would
+     * discard every device that reports none, and every session predating the recording of
+     * it.
+     */
+    @Test
+    fun aSessionWithNoRecordedTemperatureIsKept() {
+        val observations = List(3) { observationAt(it.toLong(), tempDeciC = null) }
+        assertEquals(86, estimator.estimate(observations, 5000).valueOrNull()?.healthPct)
+    }
+
+    @Test
+    fun theBandBoundariesThemselvesAreUsable() {
+        val cold = List(3) { observationAt(it.toLong(), tempDeciC = HealthEstimator.MIN_USABLE_TEMP_DECI_C) }
+        assertEquals(86, estimator.estimate(cold, 5000).valueOrNull()?.healthPct)
+
+        val hot = List(3) { observationAt(it.toLong(), tempDeciC = HealthEstimator.MAX_USABLE_TEMP_DECI_C) }
+        assertEquals(86, estimator.estimate(hot, 5000).valueOrNull()?.healthPct)
+    }
+
+    /**
+     * An excluded session must not merely be ignored in the median -- it must not count
+     * toward the three independent sessions either, or a set of two good readings plus one
+     * frozen one would report as measured on the strength of a session it refused to use.
+     */
+    @Test
+    fun anExcludedSessionDoesNotCountTowardTheMinimum() {
+        val observations = listOf(
+            observationAt(1, tempDeciC = 300),
+            observationAt(2, tempDeciC = 300),
+            observationAt(3, tempDeciC = 900),
+        )
+        assertEquals(Reading.NotYetMeasured, estimator.estimate(observations, 5000))
+    }
+
+    /** A hot outlier among usable sessions is dropped, and the rest still measure. */
+    @Test
+    fun onlyTheUnusableSessionIsDropped() {
+        val observations = listOf(
+            observationAt(1, tempDeciC = 300),
+            observationAt(2, tempDeciC = 300),
+            observationAt(3, tempDeciC = 300),
+            observationAt(4, tempDeciC = 900, fullUah = 9_000_000),
+        )
+        assertEquals(86, estimator.estimate(observations, 5000).valueOrNull()?.healthPct)
     }
 }

@@ -89,4 +89,167 @@ class CycleCountResolverTest {
 
         assertEquals(Reading.NeedsPrivilegedAccess, reading)
     }
+
+    // ---- this app's own count --------------------------------------------------------
+
+    /**
+     * The reading that took the last privileged-only value off the critical path.
+     * Samsung's cycle count has no BATTERY_PROPERTY id and `EXTRA_CYCLE_COUNT` reads 0 on
+     * the hardware this was verified against, so before this an ordinary user saw "needs
+     * privileged access" on that row forever.
+     */
+    @Test
+    fun thisAppsOwnCountIsUsedWhenNoVendorFigureExists() {
+        val measured = Reading.Available(3, Source.Measured)
+        assertEquals(
+            measured,
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = measured,
+            ),
+        )
+    }
+
+    /**
+     * Never blended with a vendor figure. Samsung counts from the day the battery was
+     * made; this counts from the day the app was installed. On a year-old phone those
+     * differ enormously, so the vendor's wins outright wherever it exists.
+     */
+    @Test
+    fun aVendorFigureAlwaysOutranksOurOwn() {
+        val measured = Reading.Available(3, Source.Measured)
+        assertEquals(
+            Reading.Available(412, Source.Privileged),
+            CycleCountResolver.resolve(412, dumpAvailable = true, broadcastCycles = null, measured = measured),
+        )
+        assertEquals(
+            Reading.Available(97, Source.Framework),
+            CycleCountResolver.resolve(null, dumpAvailable = false, broadcastCycles = 97, measured = measured),
+        )
+    }
+
+    /**
+     * "A count is coming once you charge a few times" is true and actionable. Falling
+     * through to NeedsPrivilegedAccess would instead tell that user to go and set up adb,
+     * which is advice they do not need.
+     */
+    @Test
+    fun stillAccumulatingBeatsTellingTheUserToSetUpAdb() {
+        assertEquals(
+            Reading.NotYetMeasured,
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.NotYetMeasured,
+            ),
+        )
+    }
+
+    /**
+     * With no design capacity our count is Unsupported, and the old behaviour must still
+     * apply: the privileged tier might genuinely help, so say so.
+     */
+    @Test
+    fun withNothingMeasurableTheOriginalAbsenceRuleStillHolds() {
+        assertEquals(
+            Reading.NeedsPrivilegedAccess,
+            CycleCountResolver.resolve(null, dumpAvailable = false, broadcastCycles = null, measured = Reading.Unsupported),
+        )
+        assertEquals(
+            Reading.Unsupported,
+            CycleCountResolver.resolve(null, dumpAvailable = true, broadcastCycles = null, measured = Reading.Unsupported),
+        )
+    }
+
+    // ---- the user-supplied baseline ----------------------------------------------------
+
+    /**
+     * The feature that makes this app's own count usable on a phone that is not new.
+     *
+     * It can only count charge it watched go in, so on an old battery it starts at zero.
+     * Samsung shows the real figure to the user; adding what they read to what this app
+     * has since counted gives an accurate total without inventing anything.
+     */
+    @Test
+    fun theUsersBaselineIsAddedToWhatThisAppHasCounted() {
+        assertEquals(
+            Reading.Available(10, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.Available(3, Source.Measured),
+                baselineCycles = 7,
+            ),
+        )
+    }
+
+    /**
+     * Their figure is real and already useful before this app has counted a full cycle.
+     * Showing "Measuring" over the top of it would discard something true they entered.
+     */
+    @Test
+    fun aBaselineAloneIsShownBeforeAnythingIsMeasured() {
+        assertEquals(
+            Reading.Available(7, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.NotYetMeasured,
+                baselineCycles = 7,
+            ),
+        )
+    }
+
+    /**
+     * Vendor figures are already lifetime totals. Adding a baseline to one would
+     * double-count the very history the baseline exists to stand in for.
+     */
+    @Test
+    fun aBaselineIsNeverAddedToAVendorFigure() {
+        assertEquals(
+            Reading.Available(412, Source.Privileged),
+            CycleCountResolver.resolve(412, dumpAvailable = true, broadcastCycles = null, baselineCycles = 7),
+        )
+        assertEquals(
+            Reading.Available(97, Source.Framework),
+            CycleCountResolver.resolve(null, dumpAvailable = false, broadcastCycles = 97, baselineCycles = 7),
+        )
+    }
+
+    /**
+     * Zero is a real baseline, not an absent one -- a user reporting it is saying this
+     * app's count and their phone's now agree, which must not be discarded as "unset".
+     */
+    @Test
+    fun aZeroBaselineIsHonouredRatherThanTreatedAsUnset() {
+        assertEquals(
+            Reading.Available(0, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.NotYetMeasured,
+                baselineCycles = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun withNoBaselineNothingChanges() {
+        assertEquals(
+            Reading.Available(3, Source.Measured),
+            CycleCountResolver.resolve(
+                privilegedCycles = null,
+                dumpAvailable = false,
+                broadcastCycles = null,
+                measured = Reading.Available(3, Source.Measured),
+                baselineCycles = null,
+            ),
+        )
+    }
 }

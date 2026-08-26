@@ -56,7 +56,11 @@ android {
         versionCode = 2
         versionName = "0.1.1"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Holds the display on for the run. The stock runner does not, and a screen
+        // that sleeps mid-suite fails whichever Compose class is running at that
+        // moment -- which reads as a test isolation problem and is not one. See
+        // ScreenAwakeRunner.
+        testInstrumentationRunner = "com.alaminahamed.batteryhealth.ScreenAwakeRunner"
     }
 
     flavorDimensions += "distribution"

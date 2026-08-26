@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Merges into the test APK only, never the shipped one. ScreenAwakeRunner holds the
+      display on for the duration of an instrumented run, because Compose cannot find a
+      hierarchy to assert against once the screen sleeps; see that class for what the
+      failure looks like and why it reads as a test isolation problem when it is not.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+</manifest>

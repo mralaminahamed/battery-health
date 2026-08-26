@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
+import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -11,18 +12,26 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.inject.Named
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settings: SettingsStore,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
     designCapacity: DesignCapacityProvider,
 ) : ViewModel() {
 
     val state: StateFlow<SettingsUiState> = combine(
         designCapacity.effective,
         settings.adbPort,
-    ) { capacity, port ->
-        SettingsUiState(designCapacity = capacity, adbPort = port)
+        settings.designLanguageChoice,
+    ) { capacity, port, language ->
+        SettingsUiState(
+            designCapacity = capacity,
+            adbPort = port,
+            designLanguage = language,
+            privilegedTierSupported = privilegedTierSupported,
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -52,5 +61,14 @@ class SettingsViewModel @Inject constructor(
      */
     fun setAdbPort(port: Int) {
         viewModelScope.launch { settings.setAdbPort(port) }
+    }
+
+    /**
+     * Applies immediately: `MainActivity` collects the same flow, so the whole app
+     * recomposes into the chosen language without a restart. That instant feedback is what
+     * makes the setting useful for checking both languages on one device.
+     */
+    fun setDesignLanguage(choice: DesignLanguageChoice) {
+        viewModelScope.launch { settings.setDesignLanguageChoice(choice) }
     }
 }

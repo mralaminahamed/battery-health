@@ -4,6 +4,8 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.Modifier
@@ -60,7 +62,16 @@ class HealthScreenTest {
 
     @Test
     fun measuringStateShowsProgressInsteadOfANumber() {
-        val state = HealthUiState(snapshot = snapshot(), measured = Reading.NotYetMeasured)
+        // `recorderEnabled = true` is load-bearing and was missing. This test previously
+        // relied on the field's default of false, so it asserted "Needs 3 full charge
+        // sessions" for a state in which nothing was recording and no session could ever
+        // be counted -- pinning the defect rather than the behaviour. Counting sessions
+        // is only the right thing to say while something is actually recording.
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
         compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
 
         compose.onNodeWithText("Measuring").assertIsDisplayed()
@@ -168,5 +179,212 @@ class HealthScreenTest {
 
         compose.onNodeWithText("On").assertIsDisplayed()
         compose.onNodeWithText("80%").assertIsDisplayed()
+    }
+
+    // ---- the subtitle under the headline --------------------------------------------
+
+    private fun measuringState(
+        recorderEnabled: Boolean,
+        recorderStartFailed: Boolean = false,
+    ) = HealthUiState(
+        snapshot = null,
+        measured = Reading.NotYetMeasured,
+        recorderEnabled = recorderEnabled,
+        recorderStartFailed = recorderStartFailed,
+    )
+
+    /**
+     * Found by running the app on a real device: the card said "Needs 3 full charge
+     * sessions" while the recorder switch further down the same screen was off, so no
+     * session would ever be counted and the line would have stood there forever. The
+     * screen must not promise progress that cannot happen.
+     */
+    @Test
+    fun withTheRecorderOffTheHeadlineSaysHowToStartRatherThanCountingSessions() {
+        compose.setContent {
+            BatteryHealthTheme { HealthContent(measuringState(recorderEnabled = false), Modifier) }
+        }
+
+        compose.onNodeWithTag(HealthScreenTags.MEASUREMENT_NOTE)
+            .performScrollTo()
+            .assertTextContains("Record charge sessions", substring = true)
+    }
+
+    @Test
+    fun withTheRecorderOnItCountsTheSessionsItStillNeeds() {
+        compose.setContent {
+            BatteryHealthTheme { HealthContent(measuringState(recorderEnabled = true), Modifier) }
+        }
+
+        compose.onNodeWithTag(HealthScreenTags.MEASUREMENT_NOTE)
+            .performScrollTo()
+            .assertTextContains("full charge sessions", substring = true)
+    }
+
+    @Test
+    fun aRefusedRecorderSaysSoRatherThanCountingSessions() {
+        compose.setContent {
+            BatteryHealthTheme {
+                HealthContent(
+                    measuringState(recorderEnabled = true, recorderStartFailed = true),
+                    Modifier,
+                )
+            }
+        }
+
+        compose.onNodeWithTag(HealthScreenTags.MEASUREMENT_NOTE)
+            .performScrollTo()
+            .assertTextContains("couldn", substring = true)
+    }
+
+    // ---- cycles and BSOH ---------------------------------------------------------------
+
+    /**
+     * The distinction that matters most about this app's own cycle count: Samsung's counts
+     * from the day the battery was made, this counts charge the app actually watched go
+     * in. Without saying so, a low number on a year-old phone reads as a healthy battery
+     * rather than as a young measurement.
+     */
+    @Test
+    fun anAppMeasuredCycleCountSaysItCountsFromWhenRecordingStarted() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.Available(3, Source.Measured)),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("not the battery's whole life", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /** Samsung's own figure keeps its own, different caveat. */
+    @Test
+    fun aVendorCycleCountKeepsThePartialChargeCaveat() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.Available(412, Source.Privileged)),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("Counts every partial charge", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /**
+     * A build with no shell has no source for BSOH at any price, and the headline already
+     * answers the same question -- so the row would be a permanent "not available" sitting
+     * under a number that supersedes it.
+     */
+    @Test
+    fun bsohIsHiddenEntirelyInABuildWithNoPrivilegedTier() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.NotYetMeasured,
+            privilegedTierSupported = false,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("BSOH").assertDoesNotExist()
+    }
+
+    @Test
+    fun bsohIsShownWhereATierCouldSupplyIt() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.NotYetMeasured,
+            privilegedTierSupported = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("BSOH").performScrollTo().assertIsDisplayed()
+    }
+
+    /**
+     * "Measuring" alone says nothing about what would end the wait, and with recording off
+     * it would say it forever -- the same defect the headline's own subtitle was fixed
+     * for earlier.
+     */
+    @Test
+    fun aCycleCountWaitingOnRecordingSaysHowToStartIt() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.NotYetMeasured),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = false,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("start counting", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun aCycleCountAlreadyRecordingSaysWhatItIsWaitingFor() {
+        val state = HealthUiState(
+            snapshot = snapshot().copy(cycleCount = Reading.NotYetMeasured),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("Counting charge as it goes in", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /**
+     * A figure above 100% has to explain itself or it just looks broken. It usually means
+     * the design capacity being compared against is wrong for the device -- something the
+     * user can fix -- and before the clamp was removed they had no way to know it was even
+     * happening.
+     */
+    @Test
+    fun aReadingAboveDesignExplainsItselfRatherThanLookingBroken() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.Available(
+                HealthReport(
+                    healthPct = 104,
+                    measuredFullUah = 5_033_000,
+                    designCapacityMah = 4_855,
+                    method = CapacityMethod.Counter,
+                    sessionsUsed = 3,
+                ),
+                Source.Measured,
+            ),
+            designCapacity = EffectiveDesignCapacity(4_855, DesignCapacitySource.PowerProfile),
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("104").assertIsDisplayed()
+        compose.onNodeWithText("design figure is wrong", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /** An ordinary reading says nothing of the sort. */
+    @Test
+    fun anOrdinaryReadingCarriesNoSuchWarning() {
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.Available(
+                HealthReport(
+                    healthPct = 86,
+                    measuredFullUah = 4_300_000,
+                    designCapacityMah = 5_000,
+                    method = CapacityMethod.Counter,
+                    sessionsUsed = 3,
+                ),
+                Source.Measured,
+            ),
+            designCapacity = EffectiveDesignCapacity(5_000, DesignCapacitySource.Table),
+        )
+        compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
+
+        compose.onNodeWithText("design figure is wrong", substring = true).assertDoesNotExist()
     }
 }

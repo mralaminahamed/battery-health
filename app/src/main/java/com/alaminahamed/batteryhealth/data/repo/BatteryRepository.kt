@@ -9,6 +9,10 @@ import com.alaminahamed.batteryhealth.data.privileged.ParsedBatteryDump
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.settings.SettingsStore
+import com.alaminahamed.batteryhealth.data.framework.GrantedReadings
+import com.alaminahamed.batteryhealth.data.framework.PowerManagerSource
+import com.alaminahamed.batteryhealth.data.vendor.VendorReadings
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.BatterySnapshot
 import com.alaminahamed.batteryhealth.domain.HealthReport
@@ -25,6 +29,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 /**
@@ -37,9 +42,14 @@ class BatteryRepository @Inject constructor(
     private val broadcasts: BatteryBroadcastSource,
     private val properties: BatteryManagerSource,
     private val sessionDao: SessionDao,
+    private val settings: SettingsStore,
     private val estimator: HealthEstimator,
     private val designCapacity: DesignCapacityProvider,
     private val privileged: PrivilegedBatterySource,
+    private val vendorSettings: VendorReadings,
+    private val granted: GrantedReadings,
+    private val power: PowerManagerSource,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
 ) {
     /**
      * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
@@ -110,10 +120,29 @@ class BatteryRepository @Inject constructor(
         redumpRequests.tryEmit(Unit)
     }
 
+    /**
+     * This app's own cycle count, from charge it recorded going in.
+     *
+     * Unwindowed on purpose -- see `SessionDao.observeChargeAddedUah`. Combined with the
+     * design capacity because a cycle is meaningless without one, and refused rather than
+     * guessed when that is unknown.
+     */
+    private fun measuredCycleCount(): Flow<Reading<Int>> = combine(
+        sessionDao.observeChargeAddedUah(SESSION_TYPE_CHARGE),
+        designCapacity.designCapacityMah,
+    ) { chargedUah, designMah ->
+        MeasuredCycles.fromSessions(chargedUah, designMah)
+    }
+
+    /** The user's own starting figure; see `CycleCountResolver` for why it exists. */
+    private fun cycleBaseline(): Flow<Int?> = settings.cycleCountBaseline
+
     fun snapshots(): Flow<BatterySnapshot> = combine(
         broadcasts.broadcasts(),
         privilegedDump(),
-    ) { broadcast, dump ->
+        measuredCycleCount(),
+        cycleBaseline(),
+    ) { broadcast, dump, measuredCycles, baseline ->
         // A dump actually in hand (even one whose fields all came back null) is the
         // difference between "ask the user to connect the privileged tier, it might
         // help" and "this was tried with full shell privilege and the device still does
@@ -134,9 +163,24 @@ class BatteryRepository @Inject constructor(
                 privilegedCycles = dump?.cycleCount,
                 dumpAvailable = dumpAvailable,
                 broadcastCycles = broadcast.cycleCount,
+                measured = measuredCycles,
+                baselineCycles = baseline,
             ),
-            stateOfHealthPct = dump?.asocPct.privilegedReading(dumpAvailable),
-            firstUsageDateEpochDay = dump?.firstUseDateEpochDay.privilegedReading(dumpAvailable),
+            // The granted-permission route first, the adb shell second.
+            //
+            // Both are the same underlying figure, so this is not about which is more
+            // truthful -- it is about what each costs the user. A granted BATTERY_STATS
+            // is one adb command ever and survives reboots; the shell tier needs
+            // `adb tcpip 5555` re-run after every restart plus an RSA handshake over a
+            // loopback socket. Preferring the cheaper route means a user who ran the
+            // grant never has to think about the shell tier at all.
+            //
+            // Falls through on anything but a real value, so a device with the permission
+            // granted but no state-of-health property still gets the dump's answer.
+            stateOfHealthPct = granted.stateOfHealthPct()
+                .orElse { dump?.asocPct.privilegedReading(dumpAvailable) },
+            firstUsageDateEpochDay = granted.firstUsageDateEpochDay()
+                .orElse { dump?.firstUseDateEpochDay.privilegedReading(dumpAvailable) },
             // No key resembling a manufacturing date appears anywhere in the real dump
             // this app was built against (see DumpsysBatteryParser's doc) -- the
             // framework tier categorically cannot supply it (BATTERY_STATS,
@@ -152,11 +196,45 @@ class BatteryRepository @Inject constructor(
             // rejected as a substitute: it reads as a bootloader/firmware calibration
             // date, not this physical unit's manufacturing date, and nothing in the dump
             // labels it as the latter.
-            manufacturingDateEpochDay = Reading.Unsupported,
+            manufacturingDateEpochDay = granted.manufacturingDateEpochDay()
+                .orElse { Reading.Unsupported },
             chargeTimeRemainingMs = properties.chargeTimeRemainingMs(),
             bsohPct = dump?.bsohPct.privilegedReading(dumpAvailable),
-            protectBatteryModeEnabled = dump?.protectBatteryModeEnabled.privilegedReading(dumpAvailable),
-            protectionThresholdPct = dump?.protectionThresholdPct.privilegedReading(dumpAvailable),
+            // The privileged dump wins when it actually has a value, and the vendor's own
+            // Settings key fills in otherwise. Both are Samsung reporting its own state,
+            // so neither is more truthful -- the order is about coherence: the dump
+            // supplies `protectionThresholdPct` on the row directly below this one, and
+            // taking the two fields from one dump at one instant keeps "Status: On" and
+            // "Charge limit: 80%" describing the same moment.
+            //
+            // The vendor key is what makes this work with no setup at all. Unconnected,
+            // the dump reads NeedsPrivilegedAccess and falls through to a value that cost
+            // the user nothing: no permission, no shell, no per-boot command. Prefering it
+            // outright was tried first and was wrong -- it silently made the privileged
+            // reading unreachable on every Samsung device, which
+            // `retryPrivilegedDumpRefreshesBatteryProtectFieldsOnDemand` caught by
+            // asserting a retry still refreshes this field.
+            protectBatteryModeEnabled = dump?.protectBatteryModeEnabled
+                .privilegedReading(dumpAvailable)
+                .orElse { vendorSettings.batteryProtectEnabled() },
+            // The vendor's settings key, NOT the dump's mProtectionThreshold.
+            //
+            // Those disagree, and the dump is the wrong one: it reports 80 where Samsung's
+            // own Battery protection screen says "stop charging when it reaches 95%".
+            // mProtectionThreshold is the floor of the Maximum-mode slider (80/85/90/95),
+            // not the stop the user selected. The app shipped 80 and it was simply wrong
+            // -- a number the user could contradict by opening their own Settings.
+            //
+            // Falls back to the dump rather than to nothing: on a device that publishes no
+            // settings key there is no evidence the dump is wrong there too, and an
+            // approximate limit beats no limit for a value the user can sanity-check.
+            protectionThresholdPct = vendorSettings.batteryProtectThresholdPct()
+                .orElse { dump?.protectionThresholdPct.privilegedReading(dumpAvailable) },
+            // Public API, no permission, present on every device -- so these are populated
+            // unconditionally rather than behind any tier. Each is API-gated inside
+            // PowerManagerSource and reports Unsupported below its floor.
+            thermalStatus = power.thermalStatus(),
+            dischargePredictionMs = power.dischargePredictionMs(),
         )
     }
 
@@ -262,19 +340,43 @@ class BatteryRepository @Inject constructor(
         else -> privilegedAbsence(dumpAvailable)
     }
 
-    private fun privilegedAbsence(dumpAvailable: Boolean): Reading<Nothing> =
-        if (dumpAvailable) Reading.Unsupported else Reading.NeedsPrivilegedAccess
+    /**
+     * Why a privileged-only field has no value.
+     *
+     * [Reading.NeedsPrivilegedAccess] means "connecting the tier might produce this",
+     * which is only ever true in a build that has a tier to connect. The Play flavour
+     * ships none -- no adb, no root, no INTERNET permission -- so there the answer is
+     * [Reading.Unsupported]: nothing the user does will produce it.
+     *
+     * Without this check the Play build told users that BSOH "needs privileged access",
+     * inviting them to unlock something that build cannot unlock at any price. Observed
+     * on a real device.
+     */
+    private fun privilegedAbsence(dumpAvailable: Boolean): Reading<Nothing> = when {
+        !privilegedTierSupported -> Reading.Unsupported
+        dumpAvailable -> Reading.Unsupported
+        else -> Reading.NeedsPrivilegedAccess
+    }
 
     fun measuredHealth(): Flow<Reading<HealthReport>> = combine(
-        // Filtered to charge sessions in SQL, not after the LIMIT: the window must be
-        // spent on rows that can actually qualify. A recency window across both session
-        // types burns half its rows on discharges before Kotlin ever sees them, which can
-        // push genuinely qualifying charges outside the window forever for a user whose
-        // recent charges are frequent top-ups.
+        // Each direction gets its own window rather than the two sharing one.
+        //
+        // A single recency window across both types burns rows on whichever direction
+        // happened more recently, which for a user who tops up often means charges could
+        // push every discharge out of view (or the reverse on a phone left off the
+        // charger for days). Separate windows mean neither direction can starve the other,
+        // and both are still filtered in SQL rather than after the LIMIT, so a window is
+        // never spent on rows that cannot qualify.
         sessionDao.observeCompletedSessionsOfType(SESSION_TYPE_CHARGE, limit = SESSION_WINDOW),
+        sessionDao.observeCompletedSessionsOfType(SESSION_TYPE_DISCHARGE, limit = SESSION_WINDOW),
         designCapacity.designCapacityMah,
-    ) { sessions, designMah ->
-        val observations = sessions
+    ) { charges, discharges, designMah ->
+        // Both directions measure the same quantity -- see `toObservation`, which is where
+        // they are made comparable -- so the estimator sees one pooled list and its
+        // MIN_SESSIONS requirement is satisfied by independent sessions of either kind.
+        // That roughly halves the wait for a first reading on a phone that is charged
+        // infrequently.
+        val observations = (charges + discharges)
             .mapNotNull { it.toDomain() }
             .map { it.toObservation() }
         estimator.estimate(observations, designMah)
@@ -288,3 +390,13 @@ class BatteryRepository @Inject constructor(
         const val SESSION_WINDOW = 50
     }
 }
+
+/**
+ * The first reading if it actually carries a value, otherwise whatever [fallback] says.
+ *
+ * Only [Reading.Available] short-circuits. An [Reading.Unsupported] from a vendor source
+ * means "this device publishes nothing here", which must not shadow a privileged tier that
+ * could still answer -- the whole point of the fallback.
+ */
+private inline fun <T> Reading<T>.orElse(fallback: () -> Reading<T>): Reading<T> =
+    if (this is Reading.Available) this else fallback()

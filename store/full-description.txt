@@ -18,7 +18,7 @@ What Android will and will not tell an app
 
 Readable by any app: charge level, voltage, current, temperature, battery technology, charge counter, and time remaining.
 
-Not readable by any ordinary app, on any device: state of health, first-use date, and manufacturing date. These sit behind a system-level permission, and two of them are hidden APIs that appear in no public SDK. This was verified against real hardware, not assumed from documentation.
+Not readable by an ordinary install: state of health, first-use date, and manufacturing date. These sit behind a system-level permission and appear in no public SDK. One command from a computer unlocks them, once, and it survives restarts. Without it they report as unavailable. Verified against real hardware.
 
 Features
 
@@ -32,7 +32,7 @@ Per-app battery use
 See which apps are consuming power, based on the system's own accounting.
 
 Advanced metrics (optional)
-Some values are restricted to system apps. If you want them, the app can read them through Android's own debug bridge — running on your own phone, over a local connection that never leaves the device. This takes a one-time setup step from a computer, and is entirely optional. Without it the app works normally and simply reports those metrics as unavailable.
+A few values are restricted to system apps. If you want them, one command run once from a computer grants permission to read them directly, and it survives restarts. Entirely optional: without it the app works normally and reports those values as unavailable. This app requests no internet permission at all.
 
 Privacy
 

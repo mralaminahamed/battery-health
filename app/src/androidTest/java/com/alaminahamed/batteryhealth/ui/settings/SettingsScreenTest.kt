@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacitySource
@@ -29,9 +30,11 @@ import org.junit.Test
  * directly, so this suite clears it before and after to stay hermetic, per that same
  * test's established pattern.
  *
- * NEVER RUN: this module's androidTest suite could not be executed in the environment
- * this was written in (no attached device/emulator) -- only compiled, via
- * `:app:assemblePlayDebugAndroidTest`.
+ * Run for the first time on an SM-S948B (Android 16), which exposed two defects this
+ * suite had carried since it was written but never executed. Both are documented on
+ * `DesignCapacityDialogTest`, which had the same two: a test body wrapped in
+ * `runBlocking` breaks the Compose rule intermittently, and `performClick` without
+ * `performScrollTo` silently misses a row below the fold.
  */
 class SettingsScreenTest {
 
@@ -60,7 +63,7 @@ class SettingsScreenTest {
         }
 
         compose.onNodeWithTag(SettingsDesignCapacityTags.DIALOG).assertDoesNotExist()
-        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsDesignCapacityTags.DIALOG).assertIsDisplayed()
     }
 
@@ -96,7 +99,7 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun outOfRangeDesignCapacityIsRejectedWithoutWriting() = runBlocking {
+    fun outOfRangeDesignCapacityIsRejectedWithoutWriting() {
         var saveCalls = 0
         compose.setContent {
             BatteryHealthTheme {
@@ -108,18 +111,18 @@ class SettingsScreenTest {
             }
         }
 
-        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsDesignCapacityTags.INPUT).performTextInput("99999")
         compose.onNodeWithTag(SettingsDesignCapacityTags.SAVE).performClick()
 
         compose.onNodeWithText("Enter a value between 1000 and 10000 mAh").assertIsDisplayed()
         compose.onNodeWithTag(SettingsDesignCapacityTags.DIALOG).assertIsDisplayed()
         assertEquals(0, saveCalls)
-        assertNull(settings.designCapacityOverrideMah.first())
+        assertNull(runBlocking { settings.designCapacityOverrideMah.first() })
     }
 
     @Test
-    fun nonNumericDesignCapacityIsRejectedWithoutWriting() = runBlocking {
+    fun nonNumericDesignCapacityIsRejectedWithoutWriting() {
         var saveCalls = 0
         compose.setContent {
             BatteryHealthTheme {
@@ -131,17 +134,17 @@ class SettingsScreenTest {
             }
         }
 
-        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsDesignCapacityTags.INPUT).performTextInput("banana")
         compose.onNodeWithTag(SettingsDesignCapacityTags.SAVE).performClick()
 
         compose.onNodeWithTag(SettingsDesignCapacityTags.ERROR).assertIsDisplayed()
         assertEquals(0, saveCalls)
-        assertNull(settings.designCapacityOverrideMah.first())
+        assertNull(runBlocking { settings.designCapacityOverrideMah.first() })
     }
 
     @Test
-    fun validDesignCapacityRoundTripsThroughRealSettings() = runBlocking {
+    fun validDesignCapacityRoundTripsThroughRealSettings() {
         compose.setContent {
             BatteryHealthTheme {
                 SettingsContent(
@@ -152,17 +155,17 @@ class SettingsScreenTest {
             }
         }
 
-        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsDesignCapacityTags.INPUT).performTextInput("4200")
         compose.onNodeWithTag(SettingsDesignCapacityTags.SAVE).performClick()
 
         compose.onNodeWithTag(SettingsDesignCapacityTags.DIALOG).assertDoesNotExist()
-        assertEquals(4200, settings.designCapacityOverrideMah.first())
+        assertEquals(4200, runBlocking { settings.designCapacityOverrideMah.first() })
     }
 
     @Test
-    fun clearingADesignCapacityOverrideFallsBackToTheTable() = runBlocking {
-        settings.setDesignCapacityOverride(4820)
+    fun clearingADesignCapacityOverrideFallsBackToTheTable() {
+        runBlocking { settings.setDesignCapacityOverride(4820) }
         var cleared = false
         compose.setContent {
             BatteryHealthTheme {
@@ -177,11 +180,11 @@ class SettingsScreenTest {
             }
         }
 
-        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsDesignCapacityTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsDesignCapacityTags.CLEAR).performClick()
 
         assertEquals(true, cleared)
-        assertNull(settings.designCapacityOverrideMah.first())
+        assertNull(runBlocking { settings.designCapacityOverrideMah.first() })
     }
 
     @Test
@@ -189,12 +192,12 @@ class SettingsScreenTest {
         compose.setContent { BatteryHealthTheme { SettingsContent(state(adbPort = 5555), Modifier) } }
 
         compose.onNodeWithTag(SettingsAdbPortTags.DIALOG).assertDoesNotExist()
-        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsAdbPortTags.DIALOG).assertIsDisplayed()
     }
 
     @Test
-    fun outOfRangeAdbPortIsRejectedWithoutWriting() = runBlocking {
+    fun outOfRangeAdbPortIsRejectedWithoutWriting() {
         var saveCalls = 0
         compose.setContent {
             BatteryHealthTheme {
@@ -206,7 +209,7 @@ class SettingsScreenTest {
             }
         }
 
-        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsAdbPortTags.INPUT).performTextClearance()
         compose.onNodeWithTag(SettingsAdbPortTags.INPUT).performTextInput("70000")
         compose.onNodeWithTag(SettingsAdbPortTags.SAVE).performClick()
@@ -214,11 +217,11 @@ class SettingsScreenTest {
         compose.onNodeWithText("Enter a port between 1 and 65535").assertIsDisplayed()
         compose.onNodeWithTag(SettingsAdbPortTags.DIALOG).assertIsDisplayed()
         assertEquals(0, saveCalls)
-        assertEquals(5555, settings.adbPort.first())
+        assertEquals(5555, runBlocking { settings.adbPort.first() })
     }
 
     @Test
-    fun nonNumericAdbPortIsRejectedWithoutWriting() = runBlocking {
+    fun nonNumericAdbPortIsRejectedWithoutWriting() {
         var saveCalls = 0
         compose.setContent {
             BatteryHealthTheme {
@@ -230,18 +233,18 @@ class SettingsScreenTest {
             }
         }
 
-        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsAdbPortTags.INPUT).performTextClearance()
         compose.onNodeWithTag(SettingsAdbPortTags.INPUT).performTextInput("banana")
         compose.onNodeWithTag(SettingsAdbPortTags.SAVE).performClick()
 
         compose.onNodeWithTag(SettingsAdbPortTags.ERROR).assertIsDisplayed()
         assertEquals(0, saveCalls)
-        assertEquals(5555, settings.adbPort.first())
+        assertEquals(5555, runBlocking { settings.adbPort.first() })
     }
 
     @Test
-    fun validAdbPortRoundTripsThroughRealSettings() = runBlocking {
+    fun validAdbPortRoundTripsThroughRealSettings() {
         compose.setContent {
             BatteryHealthTheme {
                 SettingsContent(
@@ -252,12 +255,43 @@ class SettingsScreenTest {
             }
         }
 
-        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performClick()
+        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performScrollTo().performClick()
         compose.onNodeWithTag(SettingsAdbPortTags.INPUT).performTextClearance()
         compose.onNodeWithTag(SettingsAdbPortTags.INPUT).performTextInput("5037")
         compose.onNodeWithTag(SettingsAdbPortTags.SAVE).performClick()
 
         compose.onNodeWithTag(SettingsAdbPortTags.DIALOG).assertDoesNotExist()
-        assertEquals(5037, settings.adbPort.first())
+        assertEquals(5037, runBlocking { settings.adbPort.first() })
+    }
+
+    // ---- staleness that reached the screen ----------------------------------------------
+
+    /**
+     * The Play build compiles in no transport, so this card offered a port for a
+     * connection that build cannot make and named a command ("adb tcpip") that would
+     * achieve nothing on it. A setting that cannot affect anything is worse than a missing
+     * one: it invites the user to go and try.
+     */
+    @Test
+    fun theAdbPortSettingIsHiddenWhereNoTransportExists() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(privilegedTierSupported = false), Modifier)
+            }
+        }
+
+        compose.onNodeWithText("ADB port").assertDoesNotExist()
+        compose.onNodeWithText("Privileged tier").assertDoesNotExist()
+    }
+
+    @Test
+    fun theAdbPortSettingIsShownWhereATransportExists() {
+        compose.setContent {
+            BatteryHealthTheme {
+                SettingsContent(state().copy(privilegedTierSupported = true), Modifier)
+            }
+        }
+
+        compose.onNodeWithTag(SettingsAdbPortTags.ROW).performScrollTo().assertIsDisplayed()
     }
 }

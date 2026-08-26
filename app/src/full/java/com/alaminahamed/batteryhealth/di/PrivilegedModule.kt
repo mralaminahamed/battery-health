@@ -11,11 +11,21 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.flow.first
+import javax.inject.Named
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
 object PrivilegedModule {
+
+    /**
+     * True: this flavour compiles the real transports in. See the Play flavour's own
+     * copy of this module for why that build reports false instead.
+     */
+    @Provides
+    @Named("privilegedTierSupported")
+    fun providePrivilegedTierSupported(): Boolean = true
+
 
     /**
      * `BatteryRepository` and the ViewModels depend on the interface, not this concrete

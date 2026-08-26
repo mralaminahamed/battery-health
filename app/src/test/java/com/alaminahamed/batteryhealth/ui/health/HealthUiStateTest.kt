@@ -98,4 +98,58 @@ class HealthUiStateTest {
         )
         assertEquals(Reading.NotYetMeasured, state.headlinePct)
     }
+
+    // ---- what the headline says while nothing has been measured yet -----------------
+
+    private fun measuring(
+        recorderEnabled: Boolean = true,
+        recorderStartFailed: Boolean = false,
+    ) = HealthUiState(
+        snapshot = null,
+        measured = Reading.NotYetMeasured,
+        recorderEnabled = recorderEnabled,
+        recorderStartFailed = recorderStartFailed,
+    ).measurementNote
+
+    /**
+     * The defect this was written for, found by running the app on a real device: the
+     * screen said "Measuring -- needs 3 full charge sessions" while the recorder switch
+     * two cards below it was off. Nothing was recording, so no session would ever be
+     * counted and that subtitle would have stood there forever. It promised progress that
+     * could not happen.
+     */
+    @Test
+    fun withTheRecorderOffTheHeadlineDoesNotPromiseProgress() {
+        assertEquals(MeasurementNote.NotRecording, measuring(recorderEnabled = false))
+    }
+
+    @Test
+    fun withTheRecorderOnItSaysHowManySessionsAreNeeded() {
+        assertEquals(MeasurementNote.NeedsSessions, measuring(recorderEnabled = true))
+    }
+
+    /**
+     * `recorderEnabled` records the user's intent, not whether the service actually runs
+     * -- see its own doc. A refused start (battery saver refuses the foreground service,
+     * as observed on a real device) leaves the flag true while nothing records, and
+     * "needs 3 charge sessions" would be just as false there as with the switch off.
+     */
+    @Test
+    fun anEnabledButRefusedRecorderIsNotProgressEither() {
+        assertEquals(
+            MeasurementNote.RecordingBlocked,
+            measuring(recorderEnabled = true, recorderStartFailed = true),
+        )
+    }
+
+    /** Once there is a real measurement there is nothing to say about waiting for one. */
+    @Test
+    fun anActualMeasurementLeavesNoNote() {
+        val state = HealthUiState(
+            snapshot = null,
+            measured = Reading.Unsupported,
+            recorderEnabled = false,
+        )
+        assertEquals(MeasurementNote.None, state.measurementNote)
+    }
 }

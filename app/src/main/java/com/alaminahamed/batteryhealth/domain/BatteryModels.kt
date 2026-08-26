@@ -63,6 +63,17 @@ data class BatterySnapshot(
     /** The charge percentage Battery Protect caps charging at when enabled, from
      * `mProtectionThreshold`. */
     val protectionThresholdPct: Reading<Int> = Reading.NeedsPrivilegedAccess,
+    /**
+     * Thermal throttling state from `PowerManager`, 0 (none) to 6 (shutdown). Public API,
+     * no permission, every device. Sustained heat is the largest driver of capacity loss
+     * after time, so this is battery data rather than a curiosity.
+     *
+     * Defaults to [Reading.Unsupported] rather than [Reading.NeedsPrivilegedAccess]: no
+     * privilege can supply it, so inviting the user to unlock something would be a lie.
+     */
+    val thermalStatus: Reading<Int> = Reading.Unsupported,
+    /** The platform's own estimate of time left on this charge, in milliseconds. */
+    val dischargePredictionMs: Reading<Long> = Reading.Unsupported,
 ) {
     /**
      * Instantaneous power in milliwatts, derived from voltage (mV) and current (µA).
@@ -96,8 +107,12 @@ data class BatterySnapshot(
 private val Source.directness: Int
     get() = when (this) {
         Source.Framework -> 0
-        Source.Privileged -> 1
-        Source.Measured -> 2
+        // A vendor's own published state, sitting just behind a standard Android API in
+        // directness: it is the manufacturer reporting its own setting rather than this
+        // app deriving anything, but it exists only where that vendor chose to publish it.
+        Source.Vendor -> 1
+        Source.Privileged -> 2
+        Source.Measured -> 3
     }
 
 /**
@@ -116,6 +131,17 @@ data class HealthReport(
 ) {
     val band: HealthBand get() = HealthBand.of(healthPct)
     val measuredFullMah: Int get() = (measuredFullUah / 1000L).toInt()
+
+    /**
+     * The measured capacity came out above the design figure it was compared against.
+     *
+     * Not an error, and not necessarily a remarkable battery: vendors publish a rated and
+     * a typical capacity that differ by a few per cent, so a healthy new cell measured
+     * against the rated one lands here routinely. It is, however, the clearest signal this
+     * app has that the design capacity it is using is the wrong one for the device -- so
+     * the screen says so rather than presenting an unexplained figure over 100%.
+     */
+    val exceedsDesign: Boolean get() = healthPct > 100
 }
 
 /** A completed charge or discharge session as stored and displayed. */
@@ -144,4 +170,13 @@ data class CapacityObservation(
     val deltaLevelPct: Int,
     val counterDeltaUah: Long?,
     val coulombUah: Long?,
+    /**
+     * The hottest the cell got during the session, in tenths of a degree Celsius, or null
+     * where the session recorded no temperature.
+     *
+     * Defaulted so every existing construction stays valid: an observation with no
+     * temperature is not a cold or hot one, it is one this app knows nothing about, and
+     * `HealthEstimator` treats those two cases differently.
+     */
+    val peakTempDeciC: Int? = null,
 )

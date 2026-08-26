@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -22,6 +23,7 @@ import com.alaminahamed.batteryhealth.ui.health.HealthScreen
 import com.alaminahamed.batteryhealth.ui.history.HistoryScreen
 import com.alaminahamed.batteryhealth.ui.live.LiveScreen
 import com.alaminahamed.batteryhealth.ui.settings.SettingsScreen
+import com.alaminahamed.batteryhealth.ui.settings.SettingsViewModel
 import com.alaminahamed.batteryhealth.ui.theme.LocalOneUiColors
 
 /**
@@ -116,7 +118,10 @@ fun BatteryHealthApp() {
             composable(Destination.Live.route) { LiveScreen() }
             composable(Destination.History.route) { HistoryScreen() }
             composable(Destination.Apps.route) { AppsScreen() }
-            composable(Destination.Settings.route) { SettingsScreen() }
+            composable(Destination.Settings.route) {
+                val viewModel: SettingsViewModel = hiltViewModel()
+                SettingsScreen(viewModel = viewModel, onDesignLanguageChange = viewModel::setDesignLanguage)
+            }
         }
     }
 }
