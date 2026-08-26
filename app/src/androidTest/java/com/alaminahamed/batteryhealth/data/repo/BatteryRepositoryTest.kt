@@ -13,6 +13,7 @@ import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedBatterySource
 import com.alaminahamed.batteryhealth.data.privileged.Transport
 import com.alaminahamed.batteryhealth.data.settings.DesignCapacityProvider
+import com.alaminahamed.batteryhealth.data.vendor.DeviceIdentity
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
 import com.alaminahamed.batteryhealth.domain.AppPowerEntry
 import com.alaminahamed.batteryhealth.domain.CapacityMethod
@@ -123,9 +124,16 @@ class BatteryRepositoryTest {
             properties = BatteryManagerSource(batteryManager, capabilities, settings),
             sessionDao = db.sessions(),
             estimator = HealthEstimator(),
-            // The device's own model is irrelevant here: an explicit override makes the
+            // The device's own identity is irrelevant here: an explicit override makes the
             // design capacity deterministic regardless of which device runs this test.
-            designCapacity = DesignCapacityProvider(settings, model = "unused-in-this-test"),
+            // `DeviceIdentity.Unknown` and a null power-profile figure are passed for the
+            // same reason -- both lower-precedence sources are neutralised so nothing about
+            // the host device can influence the result.
+            designCapacity = DesignCapacityProvider(
+                settings,
+                identity = DeviceIdentity.Unknown,
+                powerProfileMah = null,
+            ),
             privileged = privileged,
         )
     }

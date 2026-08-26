@@ -148,7 +148,14 @@ fun SettingsContent(
         DesignCapacityDialog(
             currentOverrideMah = when (state.designCapacity.source) {
                 DesignCapacitySource.Override -> state.designCapacity.mah
-                DesignCapacitySource.Table, DesignCapacitySource.None -> null
+                // Only the user's own override pre-fills the dialog. A table figure or the
+                // device's own declaration is not the user's claim to edit, and offering
+                // one as the starting value invites them to "confirm" a number they never
+                // supplied, turning a derived figure into a stored override by accident.
+                DesignCapacitySource.Table,
+                DesignCapacitySource.PowerProfile,
+                DesignCapacitySource.None,
+                -> null
             },
             onSave = { mah ->
                 onSaveDesignCapacity(mah)
@@ -176,7 +183,7 @@ fun SettingsContent(
 
 /**
  * "None" is included in this `when` only so the compiler can enforce exhaustiveness if a
- * fourth source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
+ * further source is ever added -- `EffectiveDesignCapacity.mah` is null only when `source`
  * is already `None`, so the early return above is what actually handles that case. Mirrors
  * `HealthScreen`'s own `designCapacityValueText` -- kept as a separate copy rather than a
  * shared import because each screen's row has a different surrounding voice ("model
@@ -187,6 +194,10 @@ private fun designCapacityValueText(info: EffectiveDesignCapacity): String {
     return when (info.source) {
         DesignCapacitySource.Override -> "$mah mAh, your override"
         DesignCapacitySource.Table -> "$mah mAh, model table"
+        // Named for where it came from, not dressed up as a measurement: this is the
+        // figure the manufacturer wrote into the platform image, which is real device
+        // data but still a declaration rather than something this app observed.
+        DesignCapacitySource.PowerProfile -> "$mah mAh, reported by this device"
         DesignCapacitySource.None -> "Not set — tap to add"
     }
 }
