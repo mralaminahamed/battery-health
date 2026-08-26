@@ -1,15 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.BatteryHealth" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+      windowBackground is set explicitly rather than inherited. The parent is a Light
+      theme, so in dark mode the window would paint white for the frame between the splash
+      handing over and Compose drawing its first surface, a flash between two dark
+      screens. Pointing it at the same day/night colour the splash uses removes that.
+    -->
+    <style name="Theme.BatteryHealth" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
 
     <!--
-      The splash keeps the brand field in both light and dark rather than following the
-      system, so the first frame is always the same recognisable blue.
+      The splash shows the launcher icon itself, not a separate splash drawable. It used to
+      carry its own flat white glyph on a saturated blue field, which silently stopped
+      matching the launcher when the icon became a graphite instrument on a near-neutral
+      plate. Referencing @mipmap/ic_launcher means the two cannot drift again: there is one
+      piece of art, and the adaptive icon's own plate travels with it, so the mark reads
+      the same whether the field behind it is light or dark.
+
+      The field follows the system rather than pinning one brand colour, so the first frame
+      matches the canvas the app is about to draw instead of contrasting with it.
     -->
     <style name="Theme.BatteryHealth.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/brand_blue</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="postSplashScreenTheme">@style/Theme.BatteryHealth</item>
     </style>
 </resources>
