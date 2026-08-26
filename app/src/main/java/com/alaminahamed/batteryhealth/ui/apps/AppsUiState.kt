@@ -2,6 +2,7 @@ package com.alaminahamed.batteryhealth.ui.apps
 
 import com.alaminahamed.batteryhealth.data.apps.AppRow
 import com.alaminahamed.batteryhealth.data.privileged.PrivilegedAvailability
+import com.alaminahamed.batteryhealth.data.apps.AppCpuRow
 import com.alaminahamed.batteryhealth.domain.Reading
 
 data class AppsUiState(
@@ -33,6 +34,14 @@ data class AppsUiState(
      * work in this build would be worse than an empty screen.
      */
     val privilegedTierSupported: Boolean = true,
+    /**
+     * Per-uid CPU time, the only per-app figure a build with no shell can obtain.
+     *
+     * Kept as its own field rather than mapped into [rows]: those carry mAh the platform
+     * attributed, and this carries milliseconds. One list holding both would let the
+     * screen render time under a heading that says power.
+     */
+    val cpuRows: Reading<List<AppCpuRow>> = Reading.NeedsPrivilegedAccess,
     /** See `BatteryRepository.appPowerLoading`'s own doc: true while a checkin call is
      * actually in flight. `AppsScreen` reads this alongside [rows] rather than instead of
      * it -- see that screen's own doc for why a skeleton only replaces [rows]'s ordinary

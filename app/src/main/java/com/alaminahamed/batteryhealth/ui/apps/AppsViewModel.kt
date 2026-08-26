@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.alaminahamed.batteryhealth.data.apps.AppCpuRowMapper
+import com.alaminahamed.batteryhealth.data.apps.UidCpuTimeSource
+import com.alaminahamed.batteryhealth.domain.AppCpuRanking
 import javax.inject.Inject
 import javax.inject.Named
 
@@ -21,6 +24,8 @@ class AppsViewModel @Inject constructor(
     private val privileged: PrivilegedBatterySource,
     private val rowMapper: AppRowMapper,
     @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
+    private val cpuTimes: UidCpuTimeSource,
+    private val cpuRowMapper: AppCpuRowMapper,
 ) : ViewModel() {
 
     val state: StateFlow<AppsUiState> = combine(
@@ -38,6 +43,9 @@ class AppsViewModel @Inject constructor(
             rows = entries.map { list -> list.map(rowMapper::toRow) },
             appPowerFailed = failed,
             privilegedTierSupported = privilegedTierSupported,
+            cpuRows = cpuTimes.cpuTimes()
+                .map(AppCpuRanking::ranked)
+                .map { ranked -> ranked.map(cpuRowMapper::toRow) },
             isLoading = loading,
         )
     }.stateIn(
