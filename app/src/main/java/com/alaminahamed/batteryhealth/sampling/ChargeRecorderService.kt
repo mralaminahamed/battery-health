@@ -15,6 +15,7 @@ import com.alaminahamed.batteryhealth.data.local.SampleDao
 import com.alaminahamed.batteryhealth.data.local.SessionDao
 import com.alaminahamed.batteryhealth.data.local.SessionEntity
 import com.alaminahamed.batteryhealth.data.repo.SESSION_TYPE_CHARGE
+import com.alaminahamed.batteryhealth.data.repo.SESSION_TYPE_DISCHARGE
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
 import com.alaminahamed.batteryhealth.domain.PlugType
 import dagger.hilt.android.AndroidEntryPoint
@@ -222,7 +223,7 @@ class ChargeRecorderService : Service() {
             .onEach { plugged ->
                 if (plugged) {
                     if (samplingJob != null) return@onEach
-                    val id = openSession()
+                    val id = openSession(SESSION_TYPE_CHARGE)
                     if (id == null) {
                         // Left unlogged before, this failure was invisible: the cable is
                         // in, nothing above changes, and the notification keeps saying
@@ -235,7 +236,7 @@ class ChargeRecorderService : Service() {
                     samplingJob = scope.launch {
                         while (true) {
                             sampleWriter.writeOne(sessionId = id)
-                            delay(SAMPLE_INTERVAL_MS)
+                            delay(CHARGE_SAMPLE_INTERVAL_MS)
                         }
                     }
                 } else {
@@ -254,12 +255,35 @@ class ChargeRecorderService : Service() {
                     sessionId?.let { closeSession(it, endedAtMs = nowMs.get()) }
                     sessionId = null
                     updateNotification(isCharging = false)
+
+                    // A discharge measures full capacity exactly as a charge does -- see
+                    // `Mappers.toObservation` -- and until now every one of them was lived
+                    // through and thrown away, leaving the estimate waiting on charges
+                    // alone.
+                    //
+                    // Sampled far less often than a charge, because it is a different
+                    // shape of event: a charge is minutes and its counter moves fast, a
+                    // discharge is hours and moves slowly. Keeping the 5-second cadence
+                    // here would write thousands of near-identical rows a day and spend
+                    // the battery this app exists to measure, for resolution nothing uses.
+                    val dischargeId = openSession(SESSION_TYPE_DISCHARGE)
+                    if (dischargeId == null) {
+                        Log.w(TAG, "Could not open a discharge session; will retry on the next transition")
+                        return@onEach
+                    }
+                    sessionId = dischargeId
+                    samplingJob = scope.launch {
+                        while (true) {
+                            sampleWriter.writeOne(sessionId = dischargeId)
+                            delay(DISCHARGE_SAMPLE_INTERVAL_MS)
+                        }
+                    }
                 }
             }
             .launchIn(scope)
     }
 
-    private suspend fun openSession(): Long? {
+    private suspend fun openSession(type: String): Long? {
         // A session left open by an earlier crash is closed by its own id, before this
         // one is inserted -- closeSession() below only ever acts on the specific id it
         // is given, so it cannot be confused with the session about to be opened here.
@@ -276,7 +300,7 @@ class ChargeRecorderService : Service() {
 
         val id = sessionDao.insert(
             SessionEntity(
-                type = SESSION_TYPE_CHARGE,
+                type = type,
                 startedAtMs = first.timestampMs,
                 endedAtMs = null,
                 startLevelPct = first.levelPct,
@@ -394,7 +418,21 @@ class ChargeRecorderService : Service() {
     companion object {
         private const val CHANNEL_ID = "charge-recorder"
         private const val NOTIFICATION_ID = 1
-        private const val SAMPLE_INTERVAL_MS = 5_000L
+        /**
+         * A charge is minutes long and its counter moves fast, so it is sampled densely:
+         * the capacity measurement is built from counter deltas across it, and at a
+         * coarser cadence those deltas are dominated by noise.
+         */
+        private const val CHARGE_SAMPLE_INTERVAL_MS = 5_000L
+
+        /**
+         * A discharge is hours long and moves slowly, so it is sampled at a twelfth of the
+         * rate. The same 5-second cadence would write over seventeen thousand
+         * near-identical rows a day and spend the battery this app exists to measure, for
+         * resolution the estimate never uses -- only the endpoints of a session enter the
+         * capacity calculation.
+         */
+        private const val DISCHARGE_SAMPLE_INTERVAL_MS = 60_000L
         private const val TAG = "ChargeRecorderService"
 
         /** Bounds the retry spin in [watchRecorderEnabled] for the startId-not-yet-set case. */
