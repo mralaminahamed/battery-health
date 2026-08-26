@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 /**
@@ -46,6 +47,7 @@ class BatteryRepository @Inject constructor(
     private val vendorSettings: VendorReadings,
     private val granted: GrantedReadings,
     private val power: PowerManagerSource,
+    @param:Named("privilegedTierSupported") private val privilegedTierSupported: Boolean,
 ) {
     /**
      * Every reason this app wants a fresh `dumpsys battery` beyond the bind-boundary
@@ -331,8 +333,23 @@ class BatteryRepository @Inject constructor(
         else -> privilegedAbsence(dumpAvailable)
     }
 
-    private fun privilegedAbsence(dumpAvailable: Boolean): Reading<Nothing> =
-        if (dumpAvailable) Reading.Unsupported else Reading.NeedsPrivilegedAccess
+    /**
+     * Why a privileged-only field has no value.
+     *
+     * [Reading.NeedsPrivilegedAccess] means "connecting the tier might produce this",
+     * which is only ever true in a build that has a tier to connect. The Play flavour
+     * ships none -- no adb, no root, no INTERNET permission -- so there the answer is
+     * [Reading.Unsupported]: nothing the user does will produce it.
+     *
+     * Without this check the Play build told users that BSOH "needs privileged access",
+     * inviting them to unlock something that build cannot unlock at any price. Observed
+     * on a real device.
+     */
+    private fun privilegedAbsence(dumpAvailable: Boolean): Reading<Nothing> = when {
+        !privilegedTierSupported -> Reading.Unsupported
+        dumpAvailable -> Reading.Unsupported
+        else -> Reading.NeedsPrivilegedAccess
+    }
 
     fun measuredHealth(): Flow<Reading<HealthReport>> = combine(
         // Filtered to charge sessions in SQL, not after the LIMIT: the window must be

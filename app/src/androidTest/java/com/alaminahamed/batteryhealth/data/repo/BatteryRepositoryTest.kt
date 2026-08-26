@@ -156,6 +156,11 @@ class BatteryRepositoryTest {
             // absent, and that must hold on any device.
             granted = GrantedReadings.None,
             power = PowerManagerSource(context.getSystemService(PowerManager::class.java)),
+            // True regardless of which flavour runs this suite. These tests assert the
+            // NeedsPrivilegedAccess-versus-Unsupported distinction, which only exists in a
+            // build that has a tier -- pinning it here keeps them testing that rule rather
+            // than testing which flavour they happen to be compiled into.
+            privilegedTierSupported = true,
         )
     }
 
