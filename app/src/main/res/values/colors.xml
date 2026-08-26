@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Consumed by the splash theme, which is XML and cannot read Compose tokens. -->
-    <color name="brand_blue">#0F62FE</color>
+    <!--
+      The splash window's field, and the activity window background behind Compose.
+      Consumed by themes.xml, which is XML and cannot read the Compose tokens, so this
+      tracks LightOneUiColors.canvas by hand. values-night carries the dark counterpart.
+    -->
+    <color name="splash_background">#F3F4F6</color>
 </resources>

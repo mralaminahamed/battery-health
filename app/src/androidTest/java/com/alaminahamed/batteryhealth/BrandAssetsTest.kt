@@ -2,6 +2,7 @@ package com.alaminahamed.batteryhealth
 
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.os.Build
+import android.view.ContextThemeWrapper
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -48,9 +49,27 @@ class BrandAssetsTest {
         assertEquals(24, (drawable!!.intrinsicWidth / context.resources.displayMetrics.density).toInt())
     }
 
+    /**
+     * The splash used to draw its own flat glyph, which silently stopped matching the
+     * launcher when the icon was redrawn as a graphite instrument on a neutral plate.
+     * Asserting the splash resolves to the same adaptive icon is what catches a separate
+     * drawable being reintroduced.
+     */
     @Test
-    fun splashIconResolves() {
-        assertNotNull(context.getDrawable(R.drawable.ic_splash))
+    fun splashShowsTheLauncherIconRatherThanItsOwnDrawable() {
+        val themed = ContextThemeWrapper(context, R.style.Theme_BatteryHealth_Starting)
+        val attrs = intArrayOf(androidx.core.splashscreen.R.attr.windowSplashScreenAnimatedIcon)
+        val typed = themed.obtainStyledAttributes(attrs)
+        try {
+            val drawable = typed.getDrawable(0)
+            assertNotNull("splash icon missing", drawable)
+            assertTrue(
+                "splash icon must be the adaptive launcher icon, not a separate drawable",
+                drawable is AdaptiveIconDrawable,
+            )
+        } finally {
+            typed.recycle()
+        }
     }
 
     @Test
