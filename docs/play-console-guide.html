@@ -416,12 +416,13 @@
     <div>
       <h3>Build the bundle</h3>
       <p>Play takes an <code>.aab</code>. An APK will be rejected at upload.</p>
-<pre>./gradlew clean :app:bundlePlayRelease</pre>
-      <p class="where">app/build/outputs/bundle/playRelease/app-play-release.aab</p>
+<pre>./gradlew clean :app:bundleRelease</pre>
+      <p class="where">app/build/outputs/bundle/release/app-release.aab</p>
       <p>
-        Build the <code>play</code> flavour, never <code>full</code>. The <code>full</code> flavour
-        declares <code>QUERY_ALL_PACKAGES</code>, which Play does not accept for battery
-        attribution; <code>play</code> deliberately omits it.
+        There is one variant. The app used to build two flavours, and only one was submittable
+        because the other declared <code>QUERY_ALL_PACKAGES</code> — which Play does not accept for
+        battery attribution. That permission and the flavour split are both gone, so there is no
+        longer a wrong artifact to pick.
       </p>
     </div>
   </div>
@@ -431,7 +432,7 @@
     <div>
       <h3>Verify it is actually signed</h3>
       <p>Cheaper to check here than to be rejected at upload.</p>
-<pre>unzip -l app/build/outputs/bundle/playRelease/app-play-release.aab \
+<pre>unzip -l app/build/outputs/bundle/release/app-release.aab \
   | grep -E 'META-INF/.*\.(RSA|DSA|EC)'</pre>
       <p>
         A match means signed. <strong>No output means unsigned</strong> — your credentials were not

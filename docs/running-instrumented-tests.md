@@ -42,13 +42,13 @@ it either.
 ## Running
 
 ```sh
-./gradlew connectedPlayDebugAndroidTest
+./gradlew connectedDebugAndroidTest
 ```
 
 One class only:
 
 ```sh
-./gradlew connectedPlayDebugAndroidTest \
+./gradlew connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=com.alaminahamed.batteryhealth.ui.health.DesignCapacityDialogTest
 ```
 
@@ -59,7 +59,7 @@ assertions. It runs the full sweep and prints everything the attached device off
 
 ```sh
 adb logcat -c
-./gradlew connectedPlayDebugAndroidTest \
+./gradlew connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=com.alaminahamed.batteryhealth.data.vendor.discovery.BatteryDiscoveryOnDeviceTest
 adb logcat -d -s BatteryDiscovery
 ```
