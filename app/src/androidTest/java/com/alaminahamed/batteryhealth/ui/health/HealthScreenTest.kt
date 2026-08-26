@@ -4,6 +4,8 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.Modifier
@@ -60,7 +62,16 @@ class HealthScreenTest {
 
     @Test
     fun measuringStateShowsProgressInsteadOfANumber() {
-        val state = HealthUiState(snapshot = snapshot(), measured = Reading.NotYetMeasured)
+        // `recorderEnabled = true` is load-bearing and was missing. This test previously
+        // relied on the field's default of false, so it asserted "Needs 3 full charge
+        // sessions" for a state in which nothing was recording and no session could ever
+        // be counted -- pinning the defect rather than the behaviour. Counting sessions
+        // is only the right thing to say while something is actually recording.
+        val state = HealthUiState(
+            snapshot = snapshot(),
+            measured = Reading.NotYetMeasured,
+            recorderEnabled = true,
+        )
         compose.setContent { BatteryHealthTheme { HealthContent(state, Modifier) } }
 
         compose.onNodeWithText("Measuring").assertIsDisplayed()
@@ -168,5 +179,61 @@ class HealthScreenTest {
 
         compose.onNodeWithText("On").assertIsDisplayed()
         compose.onNodeWithText("80%").assertIsDisplayed()
+    }
+
+    // ---- the subtitle under the headline --------------------------------------------
+
+    private fun measuringState(
+        recorderEnabled: Boolean,
+        recorderStartFailed: Boolean = false,
+    ) = HealthUiState(
+        snapshot = null,
+        measured = Reading.NotYetMeasured,
+        recorderEnabled = recorderEnabled,
+        recorderStartFailed = recorderStartFailed,
+    )
+
+    /**
+     * Found by running the app on a real device: the card said "Needs 3 full charge
+     * sessions" while the recorder switch further down the same screen was off, so no
+     * session would ever be counted and the line would have stood there forever. The
+     * screen must not promise progress that cannot happen.
+     */
+    @Test
+    fun withTheRecorderOffTheHeadlineSaysHowToStartRatherThanCountingSessions() {
+        compose.setContent {
+            BatteryHealthTheme { HealthContent(measuringState(recorderEnabled = false), Modifier) }
+        }
+
+        compose.onNodeWithTag(HealthScreenTags.MEASUREMENT_NOTE)
+            .performScrollTo()
+            .assertTextContains("Record charge sessions", substring = true)
+    }
+
+    @Test
+    fun withTheRecorderOnItCountsTheSessionsItStillNeeds() {
+        compose.setContent {
+            BatteryHealthTheme { HealthContent(measuringState(recorderEnabled = true), Modifier) }
+        }
+
+        compose.onNodeWithTag(HealthScreenTags.MEASUREMENT_NOTE)
+            .performScrollTo()
+            .assertTextContains("full charge sessions", substring = true)
+    }
+
+    @Test
+    fun aRefusedRecorderSaysSoRatherThanCountingSessions() {
+        compose.setContent {
+            BatteryHealthTheme {
+                HealthContent(
+                    measuringState(recorderEnabled = true, recorderStartFailed = true),
+                    Modifier,
+                )
+            }
+        }
+
+        compose.onNodeWithTag(HealthScreenTags.MEASUREMENT_NOTE)
+            .performScrollTo()
+            .assertTextContains("couldn", substring = true)
     }
 }

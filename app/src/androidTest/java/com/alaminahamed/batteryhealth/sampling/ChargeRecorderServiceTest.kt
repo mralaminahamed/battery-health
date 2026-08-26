@@ -87,7 +87,25 @@ class ChargeRecorderServiceTest {
         assertFalse(isServiceRunning())
     }
 
-    private suspend fun awaitServiceState(running: Boolean, timeoutMs: Long = 5_000) {
+    /**
+     * [timeoutMs] is a generous upper bound, not a performance assertion.
+     *
+     * Each transition here is a DataStore write, then a collector waking, then Android
+     * actually starting or stopping a foreground service and posting its notification.
+     * None of that is under this test's control and all of it competes with whatever else
+     * the suite is doing. At the original 5s this test failed intermittently on a real
+     * SM-S948B -- twice in five consecutive full-suite runs, while passing every time the
+     * class ran alone -- which is the signature of a bound set to the observed time rather
+     * than to the worst plausible one.
+     *
+     * Raising it does not weaken what the test proves. The defect it guards against is a
+     * service that never stops at all, and that still fails here, just later. A test that
+     * cries wolf under load is worse than one that takes longer to do so, because the
+     * response to a flaky failure is to stop reading failures.
+     *
+     * Do not lower this back to the time a passing run happened to take.
+     */
+    private suspend fun awaitServiceState(running: Boolean, timeoutMs: Long = 20_000) {
         withTimeout(timeoutMs) {
             while (isServiceRunning() != running) {
                 delay(50)

@@ -68,6 +68,9 @@ private const val PRIVILEGED_TIER_INFO_URL = "https://developer.android.com/tool
 
 object HealthScreenTags {
     const val ROOT = "health-root"
+
+    /** The line under the headline explaining why there is no measured percentage yet. */
+    const val MEASUREMENT_NOTE = "health-measurement-note"
 }
 
 object DesignCapacityTags {
@@ -173,11 +176,29 @@ fun HealthContent(
                 )
                 SourceChip(source)
             }
-            if (state.measured is Reading.NotYetMeasured) {
+            // Exhaustive over MeasurementNote rather than keyed on `measured` alone: the
+            // subtitle used to read "Needs N full charge sessions" whenever nothing had
+            // been measured, including while the recorder switch further down this very
+            // screen was off. That promised progress towards a number that could never
+            // arrive. See HealthUiState.measurementNote.
+            val measurementText = when (state.measurementNote) {
+                MeasurementNote.NeedsSessions ->
+                    "Needs ${HealthEstimator.MIN_SESSIONS} full charge sessions"
+
+                MeasurementNote.NotRecording ->
+                    "Turn on \u201CRecord charge sessions\u201D below to start measuring"
+
+                MeasurementNote.RecordingBlocked ->
+                    "Recording is on but couldn\u2019t start \u2014 battery saver can block it"
+
+                MeasurementNote.None -> null
+            }
+            if (measurementText != null) {
                 Text(
-                    text = "Needs ${HealthEstimator.MIN_SESSIONS} full charge sessions",
+                    text = measurementText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.textSecondary,
+                    modifier = Modifier.testTag(HealthScreenTags.MEASUREMENT_NOTE),
                 )
             }
             // The whole reason a fresh install on an unlisted device is a bad first-run
