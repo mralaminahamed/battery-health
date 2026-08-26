@@ -23,6 +23,28 @@
     -->
     <uses-permission android:name="android.permission.BATTERY_STATS" />
 
+    <!--
+      Signature|privileged|development, same tier as BATTERY_STATS above and grantable the
+      same way:
+
+          adb shell pm grant com.alaminahamed.batteryhealth android.permission.DUMP
+
+      Declared to test one specific question: whether it opens a real per-app battery
+      attribution path via a "dumpsys batterystats" checkin dump, which BATTERY_STATS alone
+      does not reach. See the permissions-visibility report for the verdict; this permission
+      stays declared only because that experiment came back positive.
+    -->
+    <uses-permission android:name="android.permission.DUMP" />
+
+    <!--
+      Appop-gated: declaring this grants nothing by itself. The user must flip it on from
+      Settings, Apps, Special access, Usage access, which this app can only deep-link to
+      (Settings.ACTION_USAGE_ACCESS_SETTINGS): there is no dialog. See
+      AppOpPermissionState for how "held" is actually determined, which is not the same
+      question as whether this permission is merely declared.
+    -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+
     <application
         android:name=".BatteryHealthApplication"
         android:allowBackup="true"

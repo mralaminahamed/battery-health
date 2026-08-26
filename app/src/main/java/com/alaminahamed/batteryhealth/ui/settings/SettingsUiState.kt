@@ -56,4 +56,14 @@ data class SettingsUiState(
      * change it in system settings while this screen is in the background.
      */
     val notificationsGranted: Boolean = true,
+    /**
+     * Every permission this app declares, each already carrying its live state -- the
+     * Permissions section's whole content. Empty only as the cold-start placeholder before
+     * `SettingsViewModel` first reads the platform, the same convention every other field
+     * here uses; the real value always has at least nine rows. Deliberately not read by any
+     * existing section: [batteryStatsGranted] and [notificationsGranted] above stay in
+     * place for "Privileged readings" and "Notifications", which say more about each of
+     * those two than a single table row could.
+     */
+    val permissions: List<PermissionRow> = emptyList(),
 )

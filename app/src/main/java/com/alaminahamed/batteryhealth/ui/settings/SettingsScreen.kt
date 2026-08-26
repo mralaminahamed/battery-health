@@ -3,6 +3,8 @@ package com.alaminahamed.batteryhealth.ui.settings
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -96,6 +98,18 @@ object SettingsAdbPortTags {
 }
 
 /**
+ * Row and action tags are per-permission rather than fixed constants: this section has as
+ * many rows as [SettingsUiState.permissions] does, and a test targeting "the BATTERY_STATS
+ * row" needs a tag that says which one, the same reason `DiagnosticsCard`'s per-channel
+ * rows are found by text rather than a fixed tag.
+ */
+object SettingsPermissionsTags {
+    const val SECTION = "settings-permissions-section"
+    fun row(shortName: String) = "settings-permissions-row-$shortName"
+    fun action(shortName: String) = "settings-permissions-action-$shortName"
+}
+
+/**
  * The fifth destination: where `SettingsStore.designCapacityOverrideMah` and
  * `SettingsStore.adbPort` are actually reachable from the UI. Both already had a
  * production write path before this screen existed -- `adbPort` had none at all, and
@@ -115,6 +129,17 @@ fun SettingsScreen(
     val state by viewModel.state.collectAsState()
     val diagnostics by diagnosticsViewModel.state.collectAsState()
     val context = LocalContext.current
+
+    // A no-op if already granted, and a no-op below API 33 where there is no such runtime
+    // permission -- safe to launch unconditionally rather than pre-checking. Refreshed
+    // explicitly in the callback rather than waiting on the resume observer below: the
+    // system dialog's own show/dismiss does cycle this Activity through pause/resume (the
+    // same behaviour HealthScreen's equivalent launcher relies on), but reading the new
+    // state the moment the user answers is one call and removes any dependency on that
+    // ordering holding on every OEM build.
+    val requestNotificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { viewModel.refreshPermissions() }
 
     // Both permissions this screen reports are granted from outside the app -- one over
     // adb from a computer, one from the system's own notification settings -- and
@@ -140,6 +165,10 @@ fun SettingsScreen(
         onSetCycleBaseline = viewModel::setCycleBaseline,
         onRestoreUnlockCard = viewModel::restoreUnlockCard,
         onOpenNotificationSettings = { context.startActivity(notificationSettingsIntent(context)) },
+        onRequestNotificationPermission = {
+            requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        },
+        onOpenUsageAccessSettings = { openUsageAccessSettings(context) },
         diagnostics = diagnostics,
         onRunDiagnostics = diagnosticsViewModel::run,
     )
@@ -161,6 +190,24 @@ private fun notificationSettingsIntent(context: Context) =
     Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
 
+/**
+ * Deep-links to the system's Usage access list, the only route to `PACKAGE_USAGE_STATS`:
+ * it is appop-gated with no runtime dialog of its own, so this and a manual toggle there
+ * are the entire action.
+ *
+ * `resolveActivity` is checked first because some OEM builds ship no activity for
+ * `ACTION_USAGE_ACCESS_SETTINGS` at all -- `startActivity` on an unresolvable intent throws
+ * `ActivityNotFoundException`, and there is no fallback screen worth sending the user to
+ * instead, so this silently does nothing rather than crash the settings screen over a
+ * deep link with no working destination.
+ */
+private fun openUsageAccessSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+    if (intent.resolveActivity(context.packageManager) != null) {
+        context.startActivity(intent)
+    }
+}
+
 @Composable
 fun SettingsContent(
     state: SettingsUiState,
@@ -172,6 +219,8 @@ fun SettingsContent(
     onSetCycleBaseline: (Int?) -> Unit = {},
     onRestoreUnlockCard: () -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
+    onRequestNotificationPermission: () -> Unit = {},
+    onOpenUsageAccessSettings: () -> Unit = {},
     /**
      * Diagnostics state and its trigger arrive as parameters rather than being pulled
      * from a `hiltViewModel()` inside this composable. `SettingsContent` is exercised
@@ -389,6 +438,77 @@ fun SettingsContent(
                 showDivider = false,
             ) {
                 Value(state.adbPort.toString())
+            }
+        }
+
+        // Empty only before SettingsViewModel's first real read (see
+        // SettingsUiState.permissions's own doc) -- there is nothing honest to show yet,
+        // so the card itself stays off rather than rendering an empty shell.
+        if (state.permissions.isNotEmpty()) {
+            OneUiCard(modifier = Modifier.testTag(SettingsPermissionsTags.SECTION)) {
+                SectionHeader("Permissions")
+                Text(
+                    text = "Every permission this app declares, and the one thing that " +
+                        "actually moves each one forward. Six of these cannot be granted " +
+                        "from inside the app at all -- they are said here rather than " +
+                        "left silent.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                state.permissions.forEachIndexed { index, row ->
+                    KeyValueRow(
+                        row.shortName,
+                        showDivider = index != state.permissions.lastIndex,
+                        modifier = Modifier.testTag(SettingsPermissionsTags.row(row.shortName)),
+                    ) {
+                        Value(permissionStateLabel(row))
+                    }
+                    // Offered only where it would change something -- the same rule the
+                    // Notifications and Privileged readings cards above already follow: a
+                    // control that leads somewhere with nothing to do is worse than no
+                    // control.
+                    when (row.kind) {
+                        PermissionKind.Requestable -> if (!row.held) {
+                            Button(
+                                onClick = onRequestNotificationPermission,
+                                modifier = Modifier
+                                    .padding(top = 6.dp, bottom = 10.dp)
+                                    .testTag(SettingsPermissionsTags.action(row.shortName)),
+                            ) { Text("Request permission") }
+                        }
+                        PermissionKind.AppOp -> if (!row.held) {
+                            Button(
+                                onClick = onOpenUsageAccessSettings,
+                                modifier = Modifier
+                                    .padding(top = 6.dp, bottom = 10.dp)
+                                    .testTag(SettingsPermissionsTags.action(row.shortName)),
+                            ) { Text("Open Usage access settings") }
+                        }
+                        PermissionKind.AdbGrant -> if (!row.held) {
+                            Text(
+                                text = row.adbCommand.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.textSecondary,
+                                modifier = Modifier
+                                    .padding(top = 2.dp, bottom = 10.dp)
+                                    .testTag(SettingsPermissionsTags.action(row.shortName)),
+                            )
+                        }
+                        // Always shown, not just when !row.held: it is true regardless of
+                        // this row's state, and saying so plainly is the whole point of
+                        // this row existing rather than a "Grant" button that could never
+                        // do anything.
+                        PermissionKind.InstallTime -> Text(
+                            text = "No action needed — granted automatically at install.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.textSecondary,
+                            modifier = Modifier
+                                .padding(top = 2.dp, bottom = 10.dp)
+                                .testTag(SettingsPermissionsTags.action(row.shortName)),
+                        )
+                    }
+                }
             }
         }
     }
