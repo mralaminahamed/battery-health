@@ -38,17 +38,4 @@ class FormattersTest {
         // 2024-06-30 is epoch day 19904.
         assertEquals("2024-06-30", Formatters.epochDay(19_904))
     }
-
-    @Test
-    fun milliampHoursRendersTwoDecimalsEvenForTinyValues() {
-        assertEquals("422.00 mAh", Formatters.milliampHours(422.0))
-        assertEquals("15.60 mAh", Formatters.milliampHours(15.6))
-        assertEquals("0.00 mAh", Formatters.milliampHours(0.000008))
-    }
-
-    @Test
-    fun percentShareRendersOneDecimalWithASignSuffix() {
-        assertEquals("94.7%", Formatters.percentShare(94.7271543693461))
-        assertEquals("0.0%", Formatters.percentShare(0.0))
-    }
 }

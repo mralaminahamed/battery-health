@@ -12,9 +12,7 @@ package com.alaminahamed.batteryhealth.domain
  */
 enum class UidKind {
     /** A user-installed app, per Android's own uid-space convention
-     * ([Process.FIRST_APPLICATION_UID][android.os.Process.FIRST_APPLICATION_UID] == 10000).
-     * The only kind [AppLabelResolver][com.alaminahamed.batteryhealth.data.apps.AppLabelResolver]
-     * is ever asked to resolve a label for. */
+     * ([Process.FIRST_APPLICATION_UID][android.os.Process.FIRST_APPLICATION_UID] == 10000). */
     App,
 
     /** A platform/system uid below the app boundary -- the phone's own services, radios

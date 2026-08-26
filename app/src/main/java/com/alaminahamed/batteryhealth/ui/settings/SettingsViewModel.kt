@@ -7,7 +7,6 @@ import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.alaminahamed.batteryhealth.data.settings.SettingsStore
-import com.alaminahamed.batteryhealth.data.settings.UsageAccessState
 import com.alaminahamed.batteryhealth.ui.theme.DesignLanguageChoice
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -18,23 +17,20 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import javax.inject.Named
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settings: SettingsStore,
-    @param:Named("queryAllPackagesDeclared") private val queryAllPackagesDeclared: Boolean,
     @param:ApplicationContext private val context: Context,
-    private val usageAccess: UsageAccessState,
 ) : ViewModel() {
 
     /**
      * Permission state, which is not a flow because nothing emits when it changes.
      *
-     * `PACKAGE_USAGE_STATS` is granted from the system's own Usage access screen and
-     * notifications from the system settings screen -- neither produces a broadcast or
-     * callback this process would otherwise see. [refresh] is called from the screen on
-     * every resume, which is what notices the user coming back having changed either.
+     * Notifications are granted from the system settings screen, which produces no
+     * broadcast or callback this process would otherwise see. [refresh] is called from
+     * the screen on every resume, which is what notices the user coming back having
+     * changed it.
      */
     private val permissions = MutableStateFlow(readPermissions())
 
@@ -80,7 +76,6 @@ class SettingsViewModel @Inject constructor(
             notificationsGranted = notificationsGranted,
             rows = PermissionCatalog.rows(
                 notificationsGranted = notificationsGranted,
-                usageAccessHeld = usageAccess.isHeld(),
                 installTimeGranted = installTimePermissions(),
             ),
         )
@@ -88,12 +83,7 @@ class SettingsViewModel @Inject constructor(
 
     /**
      * Every permission this app declares that the platform grants outright at install,
-     * keyed by [PermissionRow.shortName] in the order they should render. `QUERY_ALL_PACKAGES`
-     * is appended only when [queryAllPackagesDeclared] is true -- that flag tracks exactly
-     * the `full`/`play` split this one permission follows (see `AppsModule` in each
-     * flavour source set and `app/src/full/AndroidManifest.xml`'s own doc on why `play`
-     * must never declare it), so reusing it here means this list needs no flavour source
-     * set of its own.
+     * keyed by [PermissionRow.shortName] in the order they should render.
      *
      * Read with [isGranted] rather than assumed true: every one of these is normal or
      * signature-consistent protection and will read granted on any device that installed
@@ -106,9 +96,6 @@ class SettingsViewModel @Inject constructor(
         put("RECEIVE_BOOT_COMPLETED", isGranted(Manifest.permission.RECEIVE_BOOT_COMPLETED))
         put("ACCESS_NETWORK_STATE", isGranted(Manifest.permission.ACCESS_NETWORK_STATE))
         put("WAKE_LOCK", isGranted(Manifest.permission.WAKE_LOCK))
-        if (queryAllPackagesDeclared) {
-            put("QUERY_ALL_PACKAGES", isGranted(Manifest.permission.QUERY_ALL_PACKAGES))
-        }
     }
 
     private fun isGranted(permission: String): Boolean =

@@ -6,24 +6,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!--
-      Appop-gated: declaring this grants nothing by itself. The user must flip it on from
-      Settings, Apps, Special access, Usage access, which this app can only deep-link to
-      (Settings.ACTION_USAGE_ACCESS_SETTINGS): there is no dialog. See
-      AppOpPermissionState for how "held" is actually determined, which is not the same
-      question as whether this permission is merely declared.
-    -->
-    <!-- ProtectedPermissions: lint reports this is only granted to system apps, which is
-         true of the permission alone and misses the appop. PACKAGE_USAGE_STATS is
-         signature|privileged|appop: an ordinary app declares it and the user grants the
-         appop through Settings > Special app access > Usage access, which is exactly the
-         flow the Permissions section links to. Declaring it is required for that toggle to
-         exist at all, so this is the sanctioned route rather than a reach for a system
-         permission. -->
-    <uses-permission
-        android:name="android.permission.PACKAGE_USAGE_STATS"
-        tools:ignore="ProtectedPermissions" />
-
     <application
         android:name=".BatteryHealthApplication"
         android:allowBackup="true"

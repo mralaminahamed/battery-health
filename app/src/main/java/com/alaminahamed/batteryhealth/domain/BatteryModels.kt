@@ -116,13 +116,6 @@ private val Source.directness: Int
         Source.Vendor -> 1
         Source.Privileged -> 2
         Source.Measured -> 3
-        // The least direct claim this app makes. Measured is this app's own direct
-        // counter/level arithmetic on data that genuinely is charge; Inferred multiplies
-        // that same arithmetic by a proxy (foreground screen time) that has no direct
-        // bearing on energy at all. Ranked last so a derived number never claims to be as
-        // direct as even the weakest of the other four just because an Inferred value
-        // happened to be one of its inputs.
-        Source.Inferred -> 4
     }
 
 /**

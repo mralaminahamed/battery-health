@@ -21,7 +21,6 @@ class ReadingTest {
         val absent = listOf(
             Reading.Unsupported,
             Reading.NeedsPrivilegedAccess,
-            Reading.NeedsUsageAccess,
             Reading.NotYetMeasured,
         )
         absent.forEach { reading ->
@@ -39,7 +38,6 @@ class ReadingTest {
     @Test
     fun mapOnAbsentReadingPreservesTheReason() {
         assertEquals(Reading.NeedsPrivilegedAccess, Reading.NeedsPrivilegedAccess.map { 1 })
-        assertEquals(Reading.NeedsUsageAccess, Reading.NeedsUsageAccess.map { 1 })
         assertEquals(Reading.Unsupported, Reading.Unsupported.map { 1 })
         assertEquals(Reading.NotYetMeasured, Reading.NotYetMeasured.map { 1 })
     }
